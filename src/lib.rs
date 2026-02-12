@@ -5,6 +5,7 @@ use clap::Parser;
 
 mod app;
 mod cli;
+mod commands;
 mod infra;
 mod nix_scan;
 mod output;

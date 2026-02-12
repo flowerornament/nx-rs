@@ -11,32 +11,37 @@ use crate::cli::{
     WhereArgs,
 };
 use crate::nix_scan::{PackageBuckets, find_package, find_package_fuzzy, scan_packages};
+use crate::output::printer::Printer;
+use crate::output::style::OutputStyle;
 
 const VALID_SOURCES_TEXT: &str =
     "  Valid sources: brew, brews, cask, casks, homebrew, mas, nix, nxs, service,\n  services";
 const DARWIN_REBUILD: &str = "/run/current-system/sw/bin/darwin-rebuild";
 
 pub fn execute(cli: Cli) -> i32 {
+    let style = OutputStyle::from_flags(cli.plain, cli.unicode, cli.minimal);
+    let printer = Printer::new(style);
+
     let repo_root = match find_repo_root() {
         Ok(path) => path,
         Err(message) => {
-            eprintln!("x {message}");
+            printer.error(&message);
             return 1;
         }
     };
 
     match cli.command {
-        CommandKind::Install(args) => cmd_install(&args, &repo_root),
-        CommandKind::Remove(args) => cmd_remove(&args, &repo_root),
+        CommandKind::Install(args) => cmd_install(&args, &repo_root, &printer),
+        CommandKind::Remove(args) => cmd_remove(&args, &repo_root, &printer),
         CommandKind::Where(args) => cmd_where(&args, &repo_root),
         CommandKind::List(args) => cmd_list(&args, &repo_root),
         CommandKind::Info(args) => cmd_info(&args, &repo_root),
         CommandKind::Status => cmd_status(&repo_root),
         CommandKind::Installed(args) => cmd_installed(&args, &repo_root),
         CommandKind::Undo => 0,
-        CommandKind::Update(args) => cmd_update(&args, &repo_root),
-        CommandKind::Test => cmd_test(&repo_root),
-        CommandKind::Rebuild(args) => cmd_rebuild(&args, &repo_root),
+        CommandKind::Update(args) => cmd_update(&args, &repo_root, &printer),
+        CommandKind::Test => cmd_test(&repo_root, &printer),
+        CommandKind::Rebuild(args) => cmd_rebuild(&args, &repo_root, &printer),
         CommandKind::Upgrade(_args) => 0,
     }
 }
@@ -110,6 +115,7 @@ fn run_indented_command(
     program: &str,
     args: &[String],
     cwd: Option<&Path>,
+    printer: &Printer,
     indent: &str,
 ) -> Result<i32, String> {
     let output = run_captured_command(program, args, cwd)?;
@@ -122,69 +128,39 @@ fn run_indented_command(
             println!();
             continue;
         }
-        print_wrapped_plain_line(trimmed, indent, 80);
+        printer.stream_line(trimmed, indent, 80);
     }
 
     Ok(output.code)
 }
 
-fn print_wrapped_plain_line(line: &str, indent: &str, width: usize) {
-    let max_content = width.saturating_sub(indent.len()).max(20);
-    let mut remaining = line;
-
-    while remaining.chars().count() > max_content {
-        let candidate = nth_char_boundary(remaining, max_content);
-        let split = remaining[..candidate]
-            .rfind(' ')
-            .unwrap_or(candidate)
-            .max(1);
-        println!("{indent}{}", &remaining[..split]);
-        remaining = remaining[split..].trim_start();
-        if remaining.is_empty() {
-            return;
-        }
-    }
-
-    println!("{indent}{remaining}");
-}
-
-fn nth_char_boundary(input: &str, n: usize) -> usize {
-    if input.chars().count() <= n {
-        return input.len();
-    }
-    input
-        .char_indices()
-        .nth(n)
-        .map(|(idx, _)| idx)
-        .unwrap_or(input.len())
-}
-
-fn cmd_install(args: &InstallArgs, repo_root: &Path) -> i32 {
+fn cmd_install(args: &InstallArgs, repo_root: &Path, printer: &Printer) -> i32 {
     if args.packages.is_empty() {
-        eprintln!("x No packages specified");
+        printer.error("No packages specified");
         return 1;
     }
 
     if args.dry_run {
-        println!("\n~ Dry Run (no changes will be made)");
+        printer.dry_run_banner();
     }
 
-    println!("\n> Installing {}", args.packages[0]);
+    printer.action(&format!("Installing {}", args.packages[0]));
 
     for package in &args.packages {
         match find_package(package, repo_root) {
             Ok(Some(location)) => {
-                println!(
-                    "\n+ {package} already installed ({})",
+                println!();
+                printer.success(&format!(
+                    "{package} already installed ({})",
                     relative_location(&location, repo_root)
-                );
+                ));
             }
             Ok(None) => {
-                eprintln!("x {package} not found");
+                printer.error(&format!("{package} not found"));
                 return 1;
             }
             Err(err) => {
-                eprintln!("x install lookup failed: {err}");
+                printer.error(&format!("install lookup failed: {err}"));
                 return 1;
             }
         }
@@ -193,23 +169,26 @@ fn cmd_install(args: &InstallArgs, repo_root: &Path) -> i32 {
     0
 }
 
-fn cmd_remove(args: &RemoveArgs, repo_root: &Path) -> i32 {
+fn cmd_remove(args: &RemoveArgs, repo_root: &Path, printer: &Printer) -> i32 {
     if args.packages.is_empty() {
-        eprintln!("x No packages specified");
+        printer.error("No packages specified");
         return 1;
     }
 
     if !args.dry_run {
-        eprintln!("x remove is not implemented yet");
+        printer.error("remove is not implemented yet");
         return 1;
     }
 
     for package in &args.packages {
         match find_package(package, repo_root) {
             Ok(Some(location)) => {
-                println!("\n~ Dry Run (no changes will be made)");
-                println!("\n> Removing {package}");
-                println!("  Location: {}", relative_location(&location, repo_root));
+                printer.dry_run_banner();
+                printer.action(&format!("Removing {package}"));
+                printer.detail(&format!(
+                    "Location: {}",
+                    relative_location(&location, repo_root)
+                ));
                 let (file_path, line_num) = location_path_and_line(&location);
                 if let Some(line_num) = line_num {
                     show_snippet(file_path, line_num, 1, SnippetMode::Remove, true);
@@ -217,10 +196,10 @@ fn cmd_remove(args: &RemoveArgs, repo_root: &Path) -> i32 {
                 println!("\n- Would remove {package}");
             }
             Ok(None) => {
-                eprintln!("x {package} not found");
+                printer.error(&format!("{package} not found"));
             }
             Err(err) => {
-                eprintln!("x remove lookup failed: {err}");
+                printer.error(&format!("remove lookup failed: {err}"));
                 return 1;
             }
         }
@@ -462,31 +441,32 @@ fn cmd_installed(args: &InstalledArgs, repo_root: &Path) -> i32 {
     if all_installed { 0 } else { 1 }
 }
 
-fn cmd_update(args: &PassthroughArgs, repo_root: &Path) -> i32 {
-    println!("\n> Updating flake inputs");
+fn cmd_update(args: &PassthroughArgs, repo_root: &Path, printer: &Printer) -> i32 {
+    printer.action("Updating flake inputs");
 
     let mut command_args = vec!["flake".to_string(), "update".to_string()];
     command_args.extend(args.passthrough.iter().cloned());
-    let return_code = match run_indented_command("nix", &command_args, Some(repo_root), "  ") {
-        Ok(code) => code,
-        Err(err) => {
-            eprintln!("x {err}");
-            return 1;
-        }
-    };
+    let return_code =
+        match run_indented_command("nix", &command_args, Some(repo_root), printer, "  ") {
+            Ok(code) => code,
+            Err(err) => {
+                printer.error(&err);
+                return 1;
+            }
+        };
 
     if return_code == 0 {
         println!();
-        println!("+ Flake inputs updated");
-        println!("  Run 'nx rebuild' to rebuild, or 'nx upgrade' for full upgrade");
+        printer.success("Flake inputs updated");
+        printer.detail("Run 'nx rebuild' to rebuild, or 'nx upgrade' for full upgrade");
         return 0;
     }
 
-    eprintln!("x Flake update failed");
+    printer.error("Flake update failed");
     1
 }
 
-fn cmd_test(repo_root: &Path) -> i32 {
+fn cmd_test(repo_root: &Path, printer: &Printer) -> i32 {
     let steps: [(&str, Vec<String>, Option<PathBuf>); 3] = [
         (
             "ruff",
@@ -512,32 +492,33 @@ fn cmd_test(repo_root: &Path) -> i32 {
     ];
 
     for (label, args, cwd) in steps {
-        println!("\n> Running {label}");
+        printer.action(&format!("Running {label}"));
         println!();
         let program = if label == "tests" { "python3" } else { label };
-        let return_code = match run_indented_command(program, &args, cwd.as_deref(), "  ") {
+        let return_code = match run_indented_command(program, &args, cwd.as_deref(), printer, "  ")
+        {
             Ok(code) => code,
             Err(err) => {
-                eprintln!("x {label} failed");
-                eprintln!("x {err}");
+                printer.error(&format!("{label} failed"));
+                printer.error(&err);
                 return 1;
             }
         };
 
         if return_code != 0 {
-            eprintln!("x {label} failed");
+            printer.error(&format!("{label} failed"));
             return 1;
         }
 
         println!();
-        println!("+ {label} passed");
+        printer.success(&format!("{label} passed"));
     }
 
     0
 }
 
-fn cmd_rebuild(args: &PassthroughArgs, repo_root: &Path) -> i32 {
-    println!("\n> Checking tracked nix files");
+fn cmd_rebuild(args: &PassthroughArgs, repo_root: &Path, printer: &Printer) -> i32 {
+    printer.action("Checking tracked nix files");
     let preflight_args = vec![
         "-C".to_string(),
         repo_root.display().to_string(),
@@ -553,20 +534,20 @@ fn cmd_rebuild(args: &PassthroughArgs, repo_root: &Path) -> i32 {
     let output = match run_captured_command("git", &preflight_args, None) {
         Ok(output) => output,
         Err(_) => {
-            eprintln!("x Git preflight failed");
+            printer.error("Git preflight failed");
             return 1;
         }
     };
 
     if output.code != 0 {
-        eprintln!("x Git preflight failed");
+        printer.error("Git preflight failed");
         let stderr = output.stderr.trim().to_string();
         if !stderr.is_empty() {
-            println!("  {stderr}");
+            printer.detail(&stderr);
         } else {
             let stdout = output.stdout.trim().to_string();
             if !stdout.is_empty() {
-                println!("  {stdout}");
+                printer.detail(&stdout);
             }
         }
         return 1;
@@ -582,9 +563,9 @@ fn cmd_rebuild(args: &PassthroughArgs, repo_root: &Path) -> i32 {
     untracked.sort();
 
     if untracked.is_empty() {
-        println!("+ Git preflight passed");
+        printer.success("Git preflight passed");
     } else {
-        eprintln!("x Untracked .nix files would be ignored by flake evaluation");
+        printer.error("Untracked .nix files would be ignored by flake evaluation");
         println!("\n  Track these files before rebuild:");
         for rel_path in &untracked {
             println!("  - {rel_path}");
@@ -593,7 +574,7 @@ fn cmd_rebuild(args: &PassthroughArgs, repo_root: &Path) -> i32 {
         return 1;
     }
 
-    println!("\n> Checking flake");
+    printer.action("Checking flake");
     let flake_args = vec![
         "flake".to_string(),
         "check".to_string(),
@@ -602,13 +583,13 @@ fn cmd_rebuild(args: &PassthroughArgs, repo_root: &Path) -> i32 {
     let flake_output = match run_captured_command("nix", &flake_args, None) {
         Ok(output) => output,
         Err(err) => {
-            eprintln!("x Flake check failed");
+            printer.error("Flake check failed");
             println!("{err}");
             return 1;
         }
     };
     if flake_output.code != 0 {
-        eprintln!("x Flake check failed");
+        printer.error("Flake check failed");
         let err_text = if flake_output.stderr.trim().is_empty() {
             flake_output.stdout.trim()
         } else {
@@ -619,9 +600,9 @@ fn cmd_rebuild(args: &PassthroughArgs, repo_root: &Path) -> i32 {
         }
         return 1;
     }
-    println!("+ Flake check passed");
+    printer.success("Flake check passed");
 
-    println!("\n> Rebuilding system");
+    printer.action("Rebuilding system");
     println!();
     let mut rebuild_args = vec![
         DARWIN_REBUILD.to_string(),
@@ -631,21 +612,21 @@ fn cmd_rebuild(args: &PassthroughArgs, repo_root: &Path) -> i32 {
     ];
     rebuild_args.extend(args.passthrough.iter().cloned());
 
-    let return_code = match run_indented_command("sudo", &rebuild_args, None, "  ") {
+    let return_code = match run_indented_command("sudo", &rebuild_args, None, printer, "  ") {
         Ok(code) => code,
         Err(err) => {
-            eprintln!("x Rebuild failed");
-            eprintln!("x {err}");
+            printer.error("Rebuild failed");
+            printer.error(&err);
             return 1;
         }
     };
     if return_code == 0 {
         println!();
-        println!("+ System rebuilt");
+        printer.success("System rebuilt");
         return 0;
     }
 
-    eprintln!("x Rebuild failed");
+    printer.error("Rebuild failed");
     1
 }
 

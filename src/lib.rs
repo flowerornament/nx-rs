@@ -6,6 +6,7 @@ use clap::Parser;
 mod app;
 mod cli;
 mod nix_scan;
+mod output;
 
 pub fn run() -> ExitCode {
     run_from(std::env::args_os())

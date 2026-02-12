@@ -10,6 +10,7 @@ use crate::cli::{
     Cli, CommandKind, InfoArgs, InstallArgs, InstalledArgs, ListArgs, PassthroughArgs, RemoveArgs,
     WhereArgs,
 };
+use crate::infra::shell::{run_captured_command, run_indented_command};
 use crate::nix_scan::{PackageBuckets, find_package, find_package_fuzzy, scan_packages};
 use crate::output::printer::Printer;
 use crate::output::style::OutputStyle;
@@ -81,57 +82,6 @@ fn dirs_home() -> PathBuf {
     env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/"))
-}
-
-struct CapturedCommand {
-    code: i32,
-    stdout: String,
-    stderr: String,
-}
-
-fn run_captured_command(
-    program: &str,
-    args: &[String],
-    cwd: Option<&Path>,
-) -> Result<CapturedCommand, String> {
-    let mut command = Command::new(program);
-    command.args(args);
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-
-    let output = command
-        .output()
-        .map_err(|err| format!("command execution failed ({program}): {err}"))?;
-
-    Ok(CapturedCommand {
-        code: output.status.code().unwrap_or(1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    })
-}
-
-fn run_indented_command(
-    program: &str,
-    args: &[String],
-    cwd: Option<&Path>,
-    printer: &Printer,
-    indent: &str,
-) -> Result<i32, String> {
-    let output = run_captured_command(program, args, cwd)?;
-    let mut merged = output.stdout;
-    merged.push_str(&output.stderr);
-
-    for raw_line in merged.replace("\r\n", "\n").lines() {
-        let trimmed = raw_line.trim_end();
-        if trimmed.is_empty() {
-            println!();
-            continue;
-        }
-        printer.stream_line(trimmed, indent, 80);
-    }
-
-    Ok(output.code)
 }
 
 fn cmd_install(args: &InstallArgs, repo_root: &Path, printer: &Printer) -> i32 {

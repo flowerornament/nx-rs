@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""
+nx - Unified Nix Tool
+
+Multi-source package installer and system manager for nix-darwin.
+"""
+
+from pathlib import Path
+import sys
+
+# Add script directory to path for module imports
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from cli import run_cli
+
+if __name__ == "__main__":
+    run_cli()

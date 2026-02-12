@@ -1,0 +1,16 @@
+[package]
+name = "nx-rs"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+explicit_iter_loop = "warn"
+inefficient_to_string = "warn"
+semicolon_if_nothing_returned = "warn"

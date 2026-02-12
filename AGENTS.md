@@ -4,6 +4,8 @@
 
 Migrate `nx` from Python to Rust with clean, idiomatic, easy-to-read code while preserving current behavior and safety contracts.
 
+`nx` is a hand-rolled tool for managing the Nix configuration on this--and eventually other--machines. The config is at `~/.nix-config`.
+
 Primary priorities:
 
 - clarity
@@ -21,6 +23,15 @@ Primary priorities:
 6. Preserve semantic parity with Python unless a change is explicitly approved.
 7. Keep the feedback loop tight: run strict checks frequently via `just`.
 8. Actively tend to and enrich the feedback loop. Intelligently make tests and checks happen automatically at the right times.
+
+## Key Documents
+
+- Behavior contract: `docs/SPEC.md`
+- Authoritative migration plan: `docs/MIGRATION_PLAN.md`
+- Python reference implementation: `reference/nx-python/README.md`
+- Python source baseline: `reference/nx-python/`
+- Parent nix-config context: `../../AGENTS.md`
+- Parent architecture guide: `../../.agents/ARCHITECTURE.md`
 
 ## Toolchain And Workflow
 
@@ -70,11 +81,6 @@ bd close <id>         # complete work
 bd sync               # sync state (run at session end)
 ```
 
-## Key Documents
+## Git
 
-- Behavior contract: `docs/SPEC.md`
-- Authoritative migration plan: `docs/MIGRATION_PLAN.md`
-- Python reference implementation: `reference/nx-python/README.md`
-- Python source baseline: `reference/nx-python/`
-- Parent nix-config context: `../../AGENTS.md`
-- Parent architecture guide: `../../.agents/ARCHITECTURE.md`
+- Commit changes after significant blocks of work

@@ -1,0 +1,43 @@
+[
+  {
+    "id": "where_found",
+    "args": ["where", "ripgrep"]
+  },
+  {
+    "id": "where_not_found",
+    "args": ["where", "not-a-real-package"]
+  },
+  {
+    "id": "list_plain",
+    "args": ["list", "--plain"]
+  },
+  {
+    "id": "list_json",
+    "args": ["list", "--json"]
+  },
+  {
+    "id": "list_invalid_source",
+    "args": ["list", "nope"]
+  },
+  {
+    "id": "installed_json_success",
+    "args": ["installed", "ripgrep", "--json"]
+  },
+  {
+    "id": "installed_json_failure",
+    "args": ["installed", "not-a-real-package", "--json"]
+  },
+  {
+    "id": "install_dry_run_installed",
+    "args": ["install", "--dry-run", "ripgrep"]
+  },
+  {
+    "id": "remove_dry_run",
+    "args": ["remove", "--dry-run", "ripgrep"]
+  },
+  {
+    "id": "rebuild_preflight_untracked_nix",
+    "args": ["rebuild"],
+    "setup": "untracked_nix"
+  }
+]

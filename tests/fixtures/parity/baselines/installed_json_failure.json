@@ -1,0 +1,10 @@
+{
+  "exit_code": 1,
+  "stdout": "{\"not-a-real-package\": {\"match\": null, \"location\": null}}",
+  "stderr": "",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

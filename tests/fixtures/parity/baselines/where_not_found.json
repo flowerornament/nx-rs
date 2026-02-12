@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "stdout": "\n  Try: nx info not-a-real-package",
+  "stderr": "x not-a-real-package not found",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

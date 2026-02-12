@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "stdout": "\n~ Dry Run (no changes will be made)\n\n> Installing ripgrep\n\n+ ripgrep already installed (packages/nix/cli.nix:5)",
+  "stderr": "",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

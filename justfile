@@ -22,6 +22,8 @@ help:
     @echo "Daily Loop (strict)"
     @echo "  just compile         # Agent compile hook: fmt + clippy + test + check"
     @echo "  just guard           # Run strict gates without compile wrapper"
+    @echo "  just parity-check    # Run parity harness against captured baselines"
+    @echo "  just parity-capture  # Refresh parity baselines from Python reference"
     @echo
     @echo "Raw Commands"
     @echo "  just fmt             # Format source"
@@ -89,6 +91,14 @@ lint:
 # Run full tests.
 test:
     @cargo test {{STRICT_FLAGS}}
+
+# Validate parity fixtures against captured Python baselines.
+parity-check:
+    @cargo test --test parity_harness -- --nocapture
+
+# Refresh parity baselines from Python reference behavior.
+parity-capture:
+    @NX_PARITY_CAPTURE=1 cargo test --test parity_harness -- --nocapture
 
 # Run cargo check across workspace.
 check:

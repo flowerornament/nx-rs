@@ -1,0 +1,346 @@
+use std::collections::BTreeMap;
+use std::env;
+use std::error::Error;
+use std::ffi::OsStr;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::OnceLock;
+
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use tempfile::TempDir;
+
+const PARITY_CAPTURE_ENV: &str = "NX_PARITY_CAPTURE";
+
+#[derive(Debug, Deserialize)]
+struct CaseSpec {
+    id: String,
+    args: Vec<String>,
+    #[serde(default)]
+    setup: CaseSetup,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CaseSetup {
+    #[default]
+    None,
+    UntrackedNix,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct ParityOutcome {
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+    file_diff: FileDiff,
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct FileDiff {
+    added: BTreeMap<String, String>,
+    removed: Vec<String>,
+    modified: BTreeMap<String, String>,
+}
+
+#[test]
+fn parity_harness_against_python_reference() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fixtures_root = workspace_root.join("tests/fixtures/parity");
+    let cases_path = fixtures_root.join("cases.json");
+    let baselines_dir = fixtures_root.join("baselines");
+    let repo_base_dir = fixtures_root.join("repo_base");
+    let reference_cli = workspace_root.join("reference/nx-python/nx");
+    let capture_mode = env::var_os(PARITY_CAPTURE_ENV).is_some();
+
+    let cases = read_cases(&cases_path)?;
+    if cases.is_empty() {
+        return Err(io::Error::other("parity cases.json is empty").into());
+    }
+
+    let mut updated = 0usize;
+    for case in cases {
+        let temp_repo = materialize_repo(&repo_base_dir, case.setup)?;
+        let outcome =
+            run_python_reference_case(&reference_cli, &workspace_root, temp_repo.path(), &case)?;
+        let baseline_path = baselines_dir.join(format!("{}.json", case.id));
+
+        if capture_mode {
+            write_baseline(&baseline_path, &outcome)?;
+            updated += 1;
+            continue;
+        }
+
+        if !baseline_path.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "missing baseline for case '{}': {}. Run `just parity-capture`.",
+                    case.id,
+                    baseline_path.display()
+                ),
+            )
+            .into());
+        }
+
+        let expected = read_baseline(&baseline_path)?;
+        assert_eq!(outcome, expected, "parity mismatch for case {}", case.id);
+    }
+
+    if capture_mode {
+        eprintln!("updated {updated} parity baseline files");
+    }
+
+    Ok(())
+}
+
+fn read_cases(path: &Path) -> Result<Vec<CaseSpec>, Box<dyn Error>> {
+    let raw = fs::read_to_string(path)?;
+    Ok(serde_json::from_str(&raw)?)
+}
+
+fn read_baseline(path: &Path) -> Result<ParityOutcome, Box<dyn Error>> {
+    let raw = fs::read_to_string(path)?;
+    Ok(serde_json::from_str(&raw)?)
+}
+
+fn write_baseline(path: &Path, outcome: &ParityOutcome) -> Result<(), Box<dyn Error>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(outcome)?;
+    fs::write(path, format!("{json}\n"))?;
+    Ok(())
+}
+
+fn materialize_repo(repo_base_dir: &Path, setup: CaseSetup) -> Result<TempDir, Box<dyn Error>> {
+    let temp = TempDir::new()?;
+    copy_tree(repo_base_dir, temp.path())?;
+    init_git_repo(temp.path())?;
+    apply_setup(temp.path(), setup)?;
+    Ok(temp)
+}
+
+fn copy_tree(src: &Path, dst: &Path) -> Result<(), Box<dyn Error>> {
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            fs::create_dir_all(&dst_path)?;
+            copy_tree(&src_path, &dst_path)?;
+            continue;
+        }
+
+        if file_type.is_file() {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn init_git_repo(repo_root: &Path) -> Result<(), Box<dyn Error>> {
+    run_checked(repo_root, ["git", "init", "-q"])?;
+    run_checked(repo_root, ["git", "config", "user.name", "nx-rs parity"])?;
+    run_checked(
+        repo_root,
+        ["git", "config", "user.email", "parity@example.invalid"],
+    )?;
+    run_checked(repo_root, ["git", "add", "."])?;
+    run_checked(repo_root, ["git", "commit", "-q", "-m", "baseline fixture"])?;
+    Ok(())
+}
+
+fn run_checked<I, S>(cwd: &Path, args: I) -> Result<(), Box<dyn Error>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut iter = args.into_iter();
+    let program = iter
+        .next()
+        .ok_or_else(|| io::Error::other("empty command"))?;
+    let mut cmd = Command::new(program.as_ref());
+    cmd.current_dir(cwd).args(iter);
+    let output = cmd.output()?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Err(io::Error::other(format!(
+        "command failed in {}: status={} stdout='{}' stderr='{}'",
+        cwd.display(),
+        output.status,
+        stdout.trim(),
+        stderr.trim(),
+    ))
+    .into())
+}
+
+fn apply_setup(repo_root: &Path, setup: CaseSetup) -> Result<(), Box<dyn Error>> {
+    match setup {
+        CaseSetup::None => Ok(()),
+        CaseSetup::UntrackedNix => {
+            let path = repo_root.join("home/untracked-parity.nix");
+            fs::write(path, "# nx: untracked parity fixture\n{ ... }:\n{\n}\n")?;
+            Ok(())
+        }
+    }
+}
+
+fn run_python_reference_case(
+    reference_cli: &Path,
+    workspace_root: &Path,
+    repo_root: &Path,
+    case: &CaseSpec,
+) -> Result<ParityOutcome, Box<dyn Error>> {
+    let before = snapshot_repo_files(repo_root)?;
+
+    let home_dir = repo_root.join(".parity-home");
+    fs::create_dir_all(&home_dir)?;
+
+    let mut command = Command::new(reference_cli);
+    command
+        .args(["--plain", "--minimal"])
+        .args(&case.args)
+        .current_dir(repo_root)
+        .env("B2NIX_REPO_ROOT", repo_root)
+        .env("HOME", &home_dir)
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb");
+
+    let output = command.output()?;
+    let after = snapshot_repo_files(repo_root)?;
+
+    Ok(ParityOutcome {
+        exit_code: output.status.code().unwrap_or(-1),
+        stdout: normalize_text(
+            &String::from_utf8_lossy(&output.stdout),
+            repo_root,
+            workspace_root,
+        ),
+        stderr: normalize_text(
+            &String::from_utf8_lossy(&output.stderr),
+            repo_root,
+            workspace_root,
+        ),
+        file_diff: diff_snapshots(&before, &after),
+    })
+}
+
+fn snapshot_repo_files(repo_root: &Path) -> Result<BTreeMap<String, String>, Box<dyn Error>> {
+    let mut files = BTreeMap::new();
+    snapshot_dir(repo_root, repo_root, &mut files)?;
+    Ok(files)
+}
+
+fn snapshot_dir(
+    repo_root: &Path,
+    dir: &Path,
+    out: &mut BTreeMap<String, String>,
+) -> Result<(), Box<dyn Error>> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            if entry.file_name() == ".git" {
+                continue;
+            }
+            snapshot_dir(repo_root, &path, out)?;
+            continue;
+        }
+
+        if file_type.is_file() {
+            let rel = path
+                .strip_prefix(repo_root)
+                .map_err(|err| io::Error::other(format!("strip_prefix failed: {err}")))?;
+            let rel_key = rel.to_string_lossy().replace('\\', "/");
+            let bytes = fs::read(&path)?;
+            let text = String::from_utf8_lossy(&bytes);
+            out.insert(rel_key, normalize_file_content(&text));
+        }
+    }
+
+    Ok(())
+}
+
+fn normalize_file_content(input: &str) -> String {
+    input
+        .replace("\r\n", "\n")
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end()
+        .to_string()
+}
+
+fn diff_snapshots(before: &BTreeMap<String, String>, after: &BTreeMap<String, String>) -> FileDiff {
+    let mut added = BTreeMap::new();
+    let mut modified = BTreeMap::new();
+    let mut removed = Vec::new();
+
+    for (path, before_content) in before {
+        match after.get(path) {
+            Some(after_content) => {
+                if after_content != before_content {
+                    modified.insert(path.clone(), after_content.clone());
+                }
+            }
+            None => removed.push(path.clone()),
+        }
+    }
+
+    for (path, after_content) in after {
+        if !before.contains_key(path) {
+            added.insert(path.clone(), after_content.clone());
+        }
+    }
+
+    FileDiff {
+        added,
+        removed,
+        modified,
+    }
+}
+
+fn normalize_text(input: &str, repo_root: &Path, workspace_root: &Path) -> String {
+    let stripped = ansi_regex().replace_all(input, "");
+    let mut normalized = stripped.replace("\r\n", "\n");
+    normalized = replace_path_tokens(normalized, repo_root, "<REPO_ROOT>");
+    normalized = replace_path_tokens(normalized, workspace_root, "<WORKSPACE_ROOT>");
+    normalized
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end()
+        .to_string()
+}
+
+fn replace_path_tokens(input: String, path: &Path, token: &str) -> String {
+    let mut output = input;
+    let raw = path.to_string_lossy();
+    output = output.replace(raw.as_ref(), token);
+
+    if let Ok(canonical) = fs::canonicalize(path) {
+        let canonical = canonical.to_string_lossy();
+        output = output.replace(canonical.as_ref(), token);
+    }
+
+    output
+}
+
+fn ansi_regex() -> &'static Regex {
+    static ANSI_REGEX: OnceLock<Regex> = OnceLock::new();
+    ANSI_REGEX.get_or_init(|| Regex::new(r"\x1B\[[0-?]*[ -/]*[@-~]").expect("invalid ANSI regex"))
+}

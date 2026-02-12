@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "stdout": "{\n  \"nxs\": [\n    \"ripgrep\",\n    \"fd\",\n    \"lua5_4\",\n    \"python3\"\n  ],\n  \"brews\": [\n    \"htop\"\n  ],\n  \"casks\": [\n    \"raycast\"\n  ],\n  \"mas\": [\n    \"Xcode\"\n  ],\n  \"services\": [\n    \"test-agent\"\n  ]\n}",
+  "stderr": "",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "exit_code": 1,
+  "stdout": "\n> Checking tracked nix files\n\n  Track these files before rebuild:\n  - home/untracked-parity.nix\n\n  Run: git -C \"/private<REPO_ROOT>\" add <files>",
+  "stderr": "x Untracked .nix files would be ignored by flake evaluation",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

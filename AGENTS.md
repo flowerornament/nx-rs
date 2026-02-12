@@ -29,6 +29,7 @@ Primary priorities:
 - Behavior contract: `docs/SPEC.md`
 - Authoritative migration plan: `docs/MIGRATION_PLAN.md`
 - Verified operational learnings: `docs/LEARNINGS.md`
+- Cutover runbook and rollback criteria: `docs/CUTOVER_PLAYBOOK.md`
 - Python reference implementation: `reference/nx-python/README.md`
 - Python source baseline: `reference/nx-python/`
 - Legacy context repo: `~/.nix-config`

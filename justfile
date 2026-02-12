@@ -26,6 +26,7 @@ help:
     @echo "  just parity-check-rust # Run Rust parity subset against Python baselines"
     @echo "  just parity-check-python # Explicit Python parity check"
     @echo "  just test-system     # Run system command integration matrix with stubs"
+    @echo "  just cutover-validate # Run manual shadow/canary validation against ~/.nix-config"
     @echo "  just parity-capture  # Refresh parity baselines from Python reference"
     @echo
     @echo "Raw Commands"
@@ -99,6 +100,10 @@ test:
 test-system:
     @cargo build --quiet --bin nx-rs
     @cargo test --test system_command_matrix -- --nocapture
+
+# Run cutover shadow/canary validation against ~/.nix-config.
+cutover-validate:
+    @scripts/cutover/validate_shadow_canary.sh
 
 # Validate parity fixtures against captured Python baselines.
 parity-check:

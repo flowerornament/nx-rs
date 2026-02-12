@@ -38,3 +38,8 @@ Update rules for future agents:
 6. Output normalization in parity harness is path-stable.
 - Harness normalizes ANSI and absolute paths to stable tokens (for example `<REPO_ROOT>`).
 - This is required for reproducible snapshots across temp directories.
+
+7. Cutover validation is scripted and currently blocks full PATH replacement.
+- Run manual shadow/canary validation with `just cutover-validate` (script: `scripts/cutover/validate_shadow_canary.sh`).
+- Verified on 2026-02-12 against `~/.nix-config`: `where/installed/info/dry-run` matched, but `list --plain` and `status` diverged due missing `sops-nix` service detection in Rust output.
+- Current cutover decision from `docs/CUTOVER_PLAYBOOK.md`: no-go for full production PATH replacement until that parity gap is closed.

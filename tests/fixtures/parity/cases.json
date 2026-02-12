@@ -41,6 +41,31 @@
     "rust_parity": true
   },
   {
+    "id": "installed_single_found",
+    "args": ["installed", "ripgrep"],
+    "rust_parity": true
+  },
+  {
+    "id": "installed_single_not_found",
+    "args": ["installed", "not-a-real-package"],
+    "rust_parity": true
+  },
+  {
+    "id": "installed_show_location",
+    "args": ["installed", "ripgrep", "--show-location"],
+    "rust_parity": true
+  },
+  {
+    "id": "installed_multi_all_found",
+    "args": ["installed", "ripgrep", "fd"],
+    "rust_parity": true
+  },
+  {
+    "id": "installed_multi_mixed",
+    "args": ["installed", "ripgrep", "not-a-real-package"],
+    "rust_parity": true
+  },
+  {
     "id": "status_plain",
     "args": ["status"],
     "rust_parity": true

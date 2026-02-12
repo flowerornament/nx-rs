@@ -7,7 +7,8 @@ use crate::commands::shared::{
     SnippetMode, location_path_and_line, relative_location, show_snippet,
 };
 use crate::infra::config_scan::{PackageBuckets, scan_packages};
-use crate::infra::finder::{find_package, find_package_fuzzy};
+use crate::infra::finder::{PackageMatch, find_package, find_package_fuzzy};
+use crate::output::json::to_string_compact;
 
 const VALID_SOURCES_TEXT: &str =
     "  Valid sources: brew, brews, cask, casks, homebrew, mas, nix, nxs, service,\n  services";
@@ -217,31 +218,13 @@ pub fn cmd_installed(args: &InstalledArgs, ctx: &AppContext) -> i32 {
         return 1;
     }
 
-    let mut all_installed = true;
-    let mut results = Map::new();
+    let mut results = Vec::new();
     for query in &args.packages {
         match find_package_fuzzy(query, &ctx.repo_root) {
-            Ok(Some(found)) => {
-                results.insert(
-                    query.clone(),
-                    serde_json::to_value(InstalledEntry {
-                        match_name: Some(found.name),
-                        location: Some(found.location),
-                    })
-                    .unwrap_or_default(),
-                );
-            }
-            Ok(None) => {
-                all_installed = false;
-                results.insert(
-                    query.clone(),
-                    serde_json::to_value(InstalledEntry {
-                        match_name: None,
-                        location: None,
-                    })
-                    .unwrap_or_default(),
-                );
-            }
+            Ok(matched) => results.push(InstalledResult {
+                query: query.clone(),
+                matched,
+            }),
             Err(err) => {
                 eprintln!("x installed lookup failed: {err}");
                 return 1;
@@ -250,16 +233,94 @@ pub fn cmd_installed(args: &InstalledArgs, ctx: &AppContext) -> i32 {
     }
 
     if args.json {
-        match serde_json::to_string(&results) {
-            Ok(text) => println!("{text}"),
-            Err(err) => {
-                eprintln!("x installed json rendering failed: {err}");
-                return 1;
-            }
-        }
-        return if all_installed { 0 } else { 1 };
+        return render_installed_json(&results);
     }
 
+    if results.len() == 1 {
+        render_single_installed(&results[0], ctx, args.show_location)
+    } else {
+        render_multi_installed(&results, ctx)
+    }
+}
+
+struct InstalledResult {
+    query: String,
+    matched: Option<PackageMatch>,
+}
+
+fn render_installed_json(results: &[InstalledResult]) -> i32 {
+    let mut map = Map::new();
+    let mut all_installed = true;
+    for result in results {
+        let entry = match &result.matched {
+            Some(found) => InstalledEntry {
+                match_name: Some(found.name.clone()),
+                location: Some(found.location.clone()),
+            },
+            None => {
+                all_installed = false;
+                InstalledEntry {
+                    match_name: None,
+                    location: None,
+                }
+            }
+        };
+        map.insert(
+            result.query.clone(),
+            serde_json::to_value(entry).unwrap_or_default(),
+        );
+    }
+    match to_string_compact(&map) {
+        Ok(text) => println!("{text}"),
+        Err(err) => {
+            eprintln!("x installed json rendering failed: {err}");
+            return 1;
+        }
+    }
+    if all_installed { 0 } else { 1 }
+}
+
+fn render_single_installed(result: &InstalledResult, ctx: &AppContext, show_location: bool) -> i32 {
+    let Some(found) = &result.matched else {
+        return 1;
+    };
+    if show_location {
+        let rel = relative_location(&found.location, &ctx.repo_root);
+        if found.name != result.query {
+            ctx.printer
+                .success(&format!("{} → {} ({rel})", result.query, found.name));
+        } else {
+            ctx.printer.success(&format!("{} ({rel})", found.name));
+        }
+    }
+    0
+}
+
+fn render_multi_installed(results: &[InstalledResult], ctx: &AppContext) -> i32 {
+    let installed_count = results.iter().filter(|r| r.matched.is_some()).count();
+    println!();
+    ctx.printer.detail(&format!(
+        "Package Check ({installed_count}/{} installed)",
+        results.len()
+    ));
+
+    let mut all_installed = true;
+    for result in results {
+        if let Some(found) = &result.matched {
+            let rel = relative_location(&found.location, &ctx.repo_root);
+            if found.name != result.query {
+                ctx.printer
+                    .success(&format!("{} → {}", result.query, found.name));
+            } else {
+                ctx.printer.success(&result.query);
+            }
+            ctx.printer.detail(&format!("  {rel}"));
+        } else {
+            ctx.printer
+                .warn(&format!("{} is not installed", result.query));
+            all_installed = false;
+        }
+    }
     if all_installed { 0 } else { 1 }
 }
 

@@ -5,6 +5,7 @@ use crate::output::style::{IconSet, OutputStyle};
 struct GlyphSet {
     action: &'static str,
     success: &'static str,
+    warning: &'static str,
     error: &'static str,
     dry_run: &'static str,
 }
@@ -24,6 +25,10 @@ impl Printer {
 
     pub fn success(&self, text: &str) {
         println!("{} {text}", self.glyphs().success);
+    }
+
+    pub fn warn(&self, text: &str) {
+        println!("{} {text}", self.glyphs().warning);
     }
 
     pub fn error(&self, text: &str) {
@@ -63,12 +68,14 @@ impl Printer {
             IconSet::Unicode => GlyphSet {
                 action: "➜",
                 success: "✔",
+                warning: "!",
                 error: "✘",
                 dry_run: "~",
             },
             IconSet::Minimal => GlyphSet {
                 action: ">",
                 success: "+",
+                warning: "!",
                 error: "x",
                 dry_run: "~",
             },
@@ -157,6 +164,17 @@ mod tests {
         assert_eq!(glyphs.action, ">");
         assert_eq!(glyphs.success, "+");
         assert_eq!(glyphs.error, "x");
+    }
+
+    #[test]
+    fn warning_glyph_is_bang_for_both_icon_sets() {
+        for icon_set in [IconSet::Unicode, IconSet::Minimal] {
+            let printer = Printer::new(OutputStyle {
+                plain: false,
+                icon_set,
+            });
+            assert_eq!(printer.glyphs().warning, "!");
+        }
     }
 
     #[test]

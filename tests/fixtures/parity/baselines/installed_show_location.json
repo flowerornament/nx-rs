@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "stdout": "+ ripgrep (packages/nix/cli.nix:5)",
+  "stderr": "",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

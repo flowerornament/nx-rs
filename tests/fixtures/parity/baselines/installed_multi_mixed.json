@@ -1,0 +1,10 @@
+{
+  "exit_code": 1,
+  "stdout": "\n  Package Check (1/2 installed)\n+ ripgrep\n    packages/nix/cli.nix:5\n! not-a-real-package is not installed",
+  "stderr": "",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

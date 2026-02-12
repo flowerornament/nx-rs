@@ -36,7 +36,10 @@ enum CaseSetup {
     StubSystemSuccess,
     StubUpdateFail,
     StubTestFail,
+    StubTestMypyFail,
+    StubTestUnittestFail,
     StubRebuildFlakeCheckFail,
+    StubRebuildGitPreflightFail,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -294,14 +297,21 @@ fn apply_setup(repo_root: &Path, setup: CaseSetup) -> Result<(), Box<dyn Error>>
         }
         CaseSetup::StubSystemSuccess => {
             install_system_stubs(repo_root)?;
-            materialize_test_layout(repo_root, true)?;
+            materialize_test_layout(repo_root, TestLayout::Passing)?;
+            Ok(())
+        }
+        CaseSetup::StubTestUnittestFail => {
+            install_system_stubs(repo_root)?;
+            materialize_test_layout(repo_root, TestLayout::Failing)?;
             Ok(())
         }
         CaseSetup::StubUpdateFail
         | CaseSetup::StubTestFail
-        | CaseSetup::StubRebuildFlakeCheckFail => {
+        | CaseSetup::StubTestMypyFail
+        | CaseSetup::StubRebuildFlakeCheckFail
+        | CaseSetup::StubRebuildGitPreflightFail => {
             install_system_stubs(repo_root)?;
-            materialize_test_layout(repo_root, false)?;
+            materialize_test_layout(repo_root, TestLayout::None)?;
             Ok(())
         }
     }
@@ -314,12 +324,18 @@ fn install_system_stubs(repo_root: &Path) -> Result<(), Box<dyn Error>> {
     write_executable(
         &stub_bin.join("git"),
         r#"#!/bin/sh
+mode="${NX_PARITY_MODE:-stub_system_success}"
+
 if [ "$1" = "-C" ]; then
   shift
   shift
 fi
 
 if [ "$1" = "ls-files" ]; then
+  if [ "$mode" = "stub_rebuild_git_preflight_fail" ]; then
+    echo "stub git ls-files failed" >&2
+    exit 1
+  fi
   exit 0
 fi
 
@@ -383,6 +399,10 @@ exit 0
     write_executable(
         &stub_bin.join("mypy"),
         r#"#!/bin/sh
+if [ "${NX_PARITY_MODE:-}" = "stub_test_mypy_fail" ]; then
+  echo "stub mypy failed" >&2
+  exit 1
+fi
 echo "stub mypy ok"
 exit 0
 "#,
@@ -399,17 +419,23 @@ fn write_executable(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn materialize_test_layout(
-    repo_root: &Path,
-    include_passing_test: bool,
-) -> Result<(), Box<dyn Error>> {
+#[derive(Clone, Copy)]
+enum TestLayout {
+    None,
+    Passing,
+    Failing,
+}
+
+fn materialize_test_layout(repo_root: &Path, layout: TestLayout) -> Result<(), Box<dyn Error>> {
     let tests_dir = repo_root.join("scripts/nx/tests");
     fs::create_dir_all(&tests_dir)?;
-    if include_passing_test {
-        let test_file = tests_dir.join("test_stub.py");
-        fs::write(
-            test_file,
-            r#"import unittest
+    let test_file = tests_dir.join("test_stub.py");
+    match layout {
+        TestLayout::None => {}
+        TestLayout::Passing => {
+            fs::write(
+                test_file,
+                r#"import unittest
 
 
 class StubTest(unittest.TestCase):
@@ -420,7 +446,24 @@ class StubTest(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 "#,
-        )?;
+            )?;
+        }
+        TestLayout::Failing => {
+            fs::write(
+                test_file,
+                r#"import unittest
+
+
+class StubTest(unittest.TestCase):
+    def test_fails(self):
+        self.assertTrue(False)
+
+
+if __name__ == "__main__":
+    unittest.main()
+"#,
+            )?;
+        }
     }
     Ok(())
 }
@@ -488,7 +531,10 @@ fn uses_system_stubs(setup: CaseSetup) -> bool {
         CaseSetup::StubSystemSuccess
             | CaseSetup::StubUpdateFail
             | CaseSetup::StubTestFail
+            | CaseSetup::StubTestMypyFail
+            | CaseSetup::StubTestUnittestFail
             | CaseSetup::StubRebuildFlakeCheckFail
+            | CaseSetup::StubRebuildGitPreflightFail
     )
 }
 
@@ -497,7 +543,10 @@ fn setup_mode(setup: CaseSetup) -> Option<&'static str> {
         CaseSetup::StubSystemSuccess => Some("stub_system_success"),
         CaseSetup::StubUpdateFail => Some("stub_update_fail"),
         CaseSetup::StubTestFail => Some("stub_test_fail"),
+        CaseSetup::StubTestMypyFail => Some("stub_test_mypy_fail"),
+        CaseSetup::StubTestUnittestFail => Some("stub_test_unittest_fail"),
         CaseSetup::StubRebuildFlakeCheckFail => Some("stub_rebuild_flake_check_fail"),
+        CaseSetup::StubRebuildGitPreflightFail => Some("stub_rebuild_git_preflight_fail"),
         CaseSetup::None | CaseSetup::UntrackedNix => None,
     }
 }

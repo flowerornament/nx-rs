@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "stdout": "\n~ Dry Run (no changes will be made)\n\n> Removing ripgrep\n  Location: packages/nix/cli.nix:5\n\n  ┌── cli.nix (preview) ───\n  │      4 │   home.packages = with pkgs; [\n  │ -    5 │     ripgrep\n  │      6 │     fd\n  └────────────────────────────────────────\n\n- Would remove ripgrep",
+  "stderr": "",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

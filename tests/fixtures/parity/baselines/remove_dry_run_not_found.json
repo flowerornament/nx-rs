@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "stdout": "\n~ Dry Run (no changes will be made)\n\n  Check installed: nx list | grep -i not-a-real-package",
+  "stderr": "x not-a-real-package not found",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

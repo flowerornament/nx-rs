@@ -1,0 +1,10 @@
+{
+  "exit_code": 1,
+  "stdout": "\n> Checking tracked nix files\n  stub git ls-files failed",
+  "stderr": "x Git preflight failed",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

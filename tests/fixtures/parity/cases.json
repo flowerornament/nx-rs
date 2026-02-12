@@ -46,12 +46,26 @@
   },
   {
     "id": "install_dry_run_installed",
-    "args": ["install", "--dry-run", "ripgrep"]
+    "args": ["install", "--dry-run", "ripgrep"],
+    "rust_parity": true
   },
   {
     "id": "remove_dry_run",
     "args": ["remove", "--dry-run", "ripgrep"],
     "rust_parity": true
+  },
+  {
+    "id": "remove_dry_run_alias",
+    "args": ["rm", "--dry-run", "ripgrep"],
+    "rust_parity": true
+  },
+  {
+    "id": "remove_dry_run_not_found",
+    "args": ["remove", "--dry-run", "not-a-real-package"]
+  },
+  {
+    "id": "remove_yes_mutates",
+    "args": ["remove", "--yes", "ripgrep"]
   },
   {
     "id": "rebuild_preflight_untracked_nix",
@@ -72,6 +86,12 @@
     "rust_parity": true
   },
   {
+    "id": "update_success_passthrough",
+    "args": ["update", "--", "foo"],
+    "setup": "stub_system_success",
+    "rust_parity": true
+  },
+  {
     "id": "test_success",
     "args": ["test"],
     "setup": "stub_system_success",
@@ -84,8 +104,25 @@
     "rust_parity": true
   },
   {
+    "id": "test_mypy_failure",
+    "args": ["test"],
+    "setup": "stub_test_mypy_fail",
+    "rust_parity": true
+  },
+  {
+    "id": "test_unittest_failure",
+    "args": ["test"],
+    "setup": "stub_test_unittest_fail"
+  },
+  {
     "id": "rebuild_success",
     "args": ["rebuild"],
+    "setup": "stub_system_success",
+    "rust_parity": true
+  },
+  {
+    "id": "rebuild_success_passthrough",
+    "args": ["rebuild", "--", "foo"],
     "setup": "stub_system_success",
     "rust_parity": true
   },
@@ -93,6 +130,12 @@
     "id": "rebuild_flake_check_failure",
     "args": ["rebuild"],
     "setup": "stub_rebuild_flake_check_fail",
+    "rust_parity": true
+  },
+  {
+    "id": "rebuild_git_preflight_failure",
+    "args": ["rebuild"],
+    "setup": "stub_rebuild_git_preflight_fail",
     "rust_parity": true
   }
 ]

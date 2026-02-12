@@ -4,3 +4,7 @@ target/
 .beads/issues.jsonl
 .beads/interactions.jsonl
 .beads/metadata.json
+
+# Python reference cache artifacts (generated when parity invokes nx-python).
+reference/nx-python/**/__pycache__/
+reference/nx-python/**/*.pyc

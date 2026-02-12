@@ -43,3 +43,8 @@ Update rules for future agents:
 - Run manual shadow/canary validation with `just cutover-validate` (script: `scripts/cutover/validate_shadow_canary.sh`).
 - Verified on 2026-02-12 against `~/.nix-config`: shadow matrix, canary matrix, and mutation safety all passed.
 - The `sops-nix` parity gap was fixed by including `default.nix` files in Rust nix scan collection (matching Python finder behavior).
+
+8. Legacy in-tree `nx-rs` decommission audit is clean outside legacy directory.
+- Repo audit command: `rg -n --hidden --glob '!.git' '~/.nix-config/scripts/nx-rs|\.nix-config/scripts/nx-rs|scripts/nx-rs'`.
+- `~/.nix-config` audit command: `rg -n --hidden --glob '!.git' --glob '!scripts/nx-rs/**' 'scripts/nx-rs|\.nix-config/scripts/nx-rs'`.
+- Verified on 2026-02-12: no matches outside `~/.nix-config/scripts/nx-rs`.

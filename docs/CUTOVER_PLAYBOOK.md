@@ -134,3 +134,135 @@ hash -r
 git -C ~/.nix-config status --short
 git -C ~/.nix-config diff
 ```
+
+## Decommission Task: In-Tree `nx-rs` Copy
+
+Target to decommission after standalone repo cutover is canonical:
+`~/.nix-config/scripts/nx-rs`.
+
+### Preconditions
+
+1. Standalone repo (`/Users/morgan/code/nx-rs`) is canonical for development and issue tracking.
+2. `just compile` passes in standalone repo.
+3. `just cutover-validate` passes (shadow + canary + mutation safety).
+4. Current `~/.nix-config` git status is known before decommission starts.
+
+### Reference Audit (hooks/path/tooling)
+
+Run before moving legacy directory:
+
+```bash
+# from /Users/morgan/code/nx-rs
+rg -n --hidden --glob '!.git' '~/.nix-config/scripts/nx-rs|\.nix-config/scripts/nx-rs|scripts/nx-rs'
+
+# from ~/.nix-config
+cd ~/.nix-config
+rg -n --hidden --glob '!.git' --glob '!scripts/nx-rs/**' 'scripts/nx-rs|\.nix-config/scripts/nx-rs'
+```
+
+Expected result: no matches outside `~/.nix-config/scripts/nx-rs`.
+Audit status on **2026-02-12**: passed.
+
+### Decommission Sequence
+
+1. Capture pre-state and backup target path.
+
+```bash
+STAMP="$(date +%Y%m%d-%H%M%S)"
+LEGACY_DIR="$HOME/.nix-config/scripts/nx-rs"
+LEGACY_ARCHIVE="$HOME/.nix-config/scripts/nx-rs.decommission-$STAMP"
+git -C ~/.nix-config status --porcelain=v1 --untracked-files=all > /tmp/nxrs-decom-git-before.txt
+command -v nx
+```
+
+Verification:
+
+```bash
+test -d "$LEGACY_DIR"
+test ! -e "$LEGACY_ARCHIVE"
+```
+
+Rollback:
+
+```bash
+# No filesystem changes yet. Stop if any precondition check fails.
+```
+
+2. Quarantine legacy in-tree copy (non-destructive move).
+
+```bash
+mv "$LEGACY_DIR" "$LEGACY_ARCHIVE"
+```
+
+Verification:
+
+```bash
+test ! -e "$LEGACY_DIR"
+test -d "$LEGACY_ARCHIVE"
+```
+
+Rollback:
+
+```bash
+mv "$LEGACY_ARCHIVE" "$LEGACY_DIR"
+```
+
+3. Verify path/hook resolution after legacy-copy removal.
+
+```bash
+hash -r
+command -v nx
+type -a nx
+rg -n 'scripts/nx-rs|\.nix-config/scripts/nx-rs' \
+  ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile ~/.config/fish/config.fish 2>/dev/null || true
+```
+
+Verification:
+- `command -v nx` resolves to intended canonical command (typically `~/.nix-config/scripts/nx/nx` until full replacement).
+- Shell config search shows no required `scripts/nx-rs` entries.
+
+Rollback:
+
+```bash
+mv "$LEGACY_ARCHIVE" "$LEGACY_DIR"
+hash -r
+```
+
+4. Re-run cutover gates after legacy-copy removal.
+
+```bash
+cd /Users/morgan/code/nx-rs
+just cutover-validate
+git -C ~/.nix-config status --porcelain=v1 --untracked-files=all > /tmp/nxrs-decom-git-after.txt
+diff -u /tmp/nxrs-decom-git-before.txt /tmp/nxrs-decom-git-after.txt
+```
+
+Verification:
+- `just cutover-validate` exits 0.
+- git status diff is empty.
+
+Rollback:
+
+```bash
+mv "$LEGACY_ARCHIVE" "$LEGACY_DIR"
+hash -r
+```
+
+5. Finalize only after soak window.
+
+```bash
+# Optional: keep archive for rollback until confidence window passes.
+rm -rf "$LEGACY_ARCHIVE"
+```
+
+Verification:
+
+```bash
+test ! -e "$LEGACY_ARCHIVE"
+```
+
+Rollback:
+
+```bash
+# After permanent deletion, restore from external backup or git history.
+```

@@ -84,10 +84,6 @@ bd close <id>         # complete work
 bd sync               # sync state (run at session end)
 ```
 
-## Git
-
-- Commit changes after significant blocks of work
-
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
@@ -109,6 +105,7 @@ bd sync               # sync state (run at session end)
 7. **Hand off** - Provide context for next session
 
 **CRITICAL RULES:**
+
 - Work is NOT complete until `git push` succeeds
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push

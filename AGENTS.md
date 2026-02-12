@@ -66,7 +66,9 @@ Tracking model:
 
 - `bd` is the only source of truth for executable tasks, dependencies, and status.
 - Do not track task checklists or status in markdown docs.
-- Migration execution lives under epic `morgan-pnv`.
+- Use the top-level tracker at `~/.nix-config/.beads` (inherited from repo root).
+- Do not run `bd init` inside `scripts/nx-rs`.
+- Migration execution lives under epic `morgan-pnv` (`nx-rs migration`).
 - Do not track any state in markdown docs
 - Avoid duplicating information between AGENTS.md and other markdown docs
 - Do not create additional documents unless new categories of information need to be recorded
@@ -84,3 +86,29 @@ bd sync               # sync state (run at session end)
 ## Git
 
 - Commit changes after significant blocks of work
+
+## Landing the Plane (Session Completion)
+
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **PUSH TO REMOTE** - This is MANDATORY:
+   ```bash
+   git pull --rebase
+   bd sync
+   git push
+   git status  # MUST show "up to date with origin"
+   ```
+5. **Clean up** - Clear stashes, prune remote branches
+6. **Verify** - All changes committed AND pushed
+7. **Hand off** - Provide context for next session
+
+**CRITICAL RULES:**
+- Work is NOT complete until `git push` succeeds
+- NEVER stop before pushing - that leaves work stranded locally
+- NEVER say "ready to push when you are" - YOU must push
+- If push fails, resolve and retry until it succeeds

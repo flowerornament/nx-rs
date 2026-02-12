@@ -39,7 +39,7 @@ Update rules for future agents:
 - Harness normalizes ANSI and absolute paths to stable tokens (for example `<REPO_ROOT>`).
 - This is required for reproducible snapshots across temp directories.
 
-7. Cutover validation is scripted and currently blocks full PATH replacement.
+7. Cutover validation is scripted and now passes full shadow/canary gates.
 - Run manual shadow/canary validation with `just cutover-validate` (script: `scripts/cutover/validate_shadow_canary.sh`).
-- Verified on 2026-02-12 against `~/.nix-config`: `where/installed/info/dry-run` matched, but `list --plain` and `status` diverged due missing `sops-nix` service detection in Rust output.
-- Current cutover decision from `docs/CUTOVER_PLAYBOOK.md`: no-go for full production PATH replacement until that parity gap is closed.
+- Verified on 2026-02-12 against `~/.nix-config`: shadow matrix, canary matrix, and mutation safety all passed.
+- The `sops-nix` parity gap was fixed by including `default.nix` files in Rust nix scan collection (matching Python finder behavior).

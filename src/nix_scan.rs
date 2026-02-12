@@ -208,13 +208,6 @@ fn collect_nix_files(repo_root: &Path) -> Vec<PathBuf> {
             if path.extension().and_then(|ext| ext.to_str()) != Some("nix") {
                 continue;
             }
-            let file_name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or_default();
-            if file_name == "default.nix" || file_name == "common.nix" {
-                continue;
-            }
             out.push(path.to_path_buf());
         }
     }
@@ -382,4 +375,30 @@ fn nix_keywords() -> &'static HashSet<&'static str> {
             "with", "pkgs", "lib", "config", "in", "let", "inherit", "rec",
         ])
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn scan_packages_includes_launchd_service_from_default_nix() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let home_darwin = temp.path().join("home/darwin");
+        fs::create_dir_all(&home_darwin).expect("home/darwin should exist");
+        fs::write(
+            home_darwin.join("default.nix"),
+            r#"{ lib, ... }:
+{
+  launchd.agents.sops-nix.config.EnvironmentVariables.PATH =
+    lib.mkForce "/usr/bin:/bin:/usr/sbin:/sbin";
+}
+"#,
+        )
+        .expect("default.nix should be written");
+
+        let buckets = scan_packages(temp.path()).expect("scan should succeed");
+        assert!(buckets.services.contains(&"sops-nix".to_string()));
+    }
 }

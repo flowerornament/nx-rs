@@ -33,6 +33,7 @@ enum CaseSetup {
     #[default]
     None,
     UntrackedNix,
+    DefaultLaunchdService,
     StubSystemSuccess,
     StubUpdateFail,
     StubTestFail,
@@ -295,6 +296,20 @@ fn apply_setup(repo_root: &Path, setup: CaseSetup) -> Result<(), Box<dyn Error>>
             fs::write(path, "# nx: untracked parity fixture\n{ ... }:\n{\n}\n")?;
             Ok(())
         }
+        CaseSetup::DefaultLaunchdService => {
+            let darwin_dir = repo_root.join("home/darwin");
+            fs::create_dir_all(&darwin_dir)?;
+            fs::write(
+                darwin_dir.join("default.nix"),
+                r#"{ lib, ... }:
+{
+  launchd.agents.sops-nix.config.EnvironmentVariables.PATH =
+    lib.mkForce "/usr/bin:/bin:/usr/sbin:/sbin";
+}
+"#,
+            )?;
+            Ok(())
+        }
         CaseSetup::StubSystemSuccess => {
             install_system_stubs(repo_root)?;
             materialize_test_layout(repo_root, TestLayout::Passing)?;
@@ -547,7 +562,7 @@ fn setup_mode(setup: CaseSetup) -> Option<&'static str> {
         CaseSetup::StubTestUnittestFail => Some("stub_test_unittest_fail"),
         CaseSetup::StubRebuildFlakeCheckFail => Some("stub_rebuild_flake_check_fail"),
         CaseSetup::StubRebuildGitPreflightFail => Some("stub_rebuild_git_preflight_fail"),
-        CaseSetup::None | CaseSetup::UntrackedNix => None,
+        CaseSetup::None | CaseSetup::UntrackedNix | CaseSetup::DefaultLaunchdService => None,
     }
 }
 

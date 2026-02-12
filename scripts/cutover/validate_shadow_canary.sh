@@ -155,11 +155,23 @@ record_canary_case() {
   CANARY_ROWS+=("| $id | nx --plain --minimal $(cmd_display "$@") | $ec | $pass |")
 }
 
-PACKAGE_SAMPLE="$(
+PACKAGE_LIST="$(
   env B2NIX_REPO_ROOT="$NIX_CONFIG_ROOT" NO_COLOR=1 TERM=dumb \
     "$PY_NX" --plain --minimal list --plain \
-    | awk 'NF {gsub(/^ +/, "", $0); print; exit}'
+    | awk 'NF {gsub(/^ +/, "", $0); print}'
 )"
+
+PACKAGE_SAMPLE=""
+for preferred in ripgrep fd ast-grep; do
+  if printf '%s\n' "$PACKAGE_LIST" | grep -Fxq "$preferred"; then
+    PACKAGE_SAMPLE="$preferred"
+    break
+  fi
+done
+
+if [[ -z "$PACKAGE_SAMPLE" ]]; then
+  PACKAGE_SAMPLE="$(printf '%s\n' "$PACKAGE_LIST" | awk 'NF {print; exit}')"
+fi
 if [[ -z "$PACKAGE_SAMPLE" ]]; then
   PACKAGE_SAMPLE="ripgrep"
 fi

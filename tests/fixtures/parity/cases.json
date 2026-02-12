@@ -15,6 +15,12 @@
     "rust_parity": true
   },
   {
+    "id": "list_plain_default_launchd_service",
+    "args": ["list", "--plain"],
+    "setup": "default_launchd_service",
+    "rust_parity": true
+  },
+  {
     "id": "list_json",
     "args": ["list", "--json"],
     "rust_parity": true
@@ -37,6 +43,12 @@
   {
     "id": "status_plain",
     "args": ["status"],
+    "rust_parity": true
+  },
+  {
+    "id": "status_plain_default_launchd_service",
+    "args": ["status"],
+    "setup": "default_launchd_service",
     "rust_parity": true
   },
   {

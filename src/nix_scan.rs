@@ -208,6 +208,13 @@ fn collect_nix_files(repo_root: &Path) -> Vec<PathBuf> {
             if path.extension().and_then(|ext| ext.to_str()) != Some("nix") {
                 continue;
             }
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            if file_name == "common.nix" {
+                continue;
+            }
             out.push(path.to_path_buf());
         }
     }
@@ -400,5 +407,24 @@ mod tests {
 
         let buckets = scan_packages(temp.path()).expect("scan should succeed");
         assert!(buckets.services.contains(&"sops-nix".to_string()));
+    }
+
+    #[test]
+    fn scan_packages_excludes_launchd_service_from_common_nix() {
+        let temp = TempDir::new().expect("temp dir should be created");
+        let home_dir = temp.path().join("home");
+        fs::create_dir_all(&home_dir).expect("home should exist");
+        fs::write(
+            home_dir.join("common.nix"),
+            r#"{ ... }:
+{
+  launchd.agents.ignored-common.config.EnvironmentVariables.PATH = "/usr/bin";
+}
+"#,
+        )
+        .expect("common.nix should be written");
+
+        let buckets = scan_packages(temp.path()).expect("scan should succeed");
+        assert!(!buckets.services.contains(&"ignored-common".to_string()));
     }
 }

@@ -58,5 +58,41 @@
     "args": ["rebuild"],
     "setup": "untracked_nix",
     "rust_parity": true
+  },
+  {
+    "id": "update_success",
+    "args": ["update"],
+    "setup": "stub_system_success",
+    "rust_parity": true
+  },
+  {
+    "id": "update_failure",
+    "args": ["update"],
+    "setup": "stub_update_fail",
+    "rust_parity": true
+  },
+  {
+    "id": "test_success",
+    "args": ["test"],
+    "setup": "stub_system_success",
+    "rust_parity": true
+  },
+  {
+    "id": "test_failure",
+    "args": ["test"],
+    "setup": "stub_test_fail",
+    "rust_parity": true
+  },
+  {
+    "id": "rebuild_success",
+    "args": ["rebuild"],
+    "setup": "stub_system_success",
+    "rust_parity": true
+  },
+  {
+    "id": "rebuild_flake_check_failure",
+    "args": ["rebuild"],
+    "setup": "stub_rebuild_flake_check_fail",
+    "rust_parity": true
   }
 ]

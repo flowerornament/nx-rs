@@ -14,6 +14,7 @@ use crate::nix_scan::{PackageBuckets, find_package, find_package_fuzzy, scan_pac
 
 const VALID_SOURCES_TEXT: &str =
     "  Valid sources: brew, brews, cask, casks, homebrew, mas, nix, nxs, service,\n  services";
+const DARWIN_REBUILD: &str = "/run/current-system/sw/bin/darwin-rebuild";
 
 pub fn execute(cli: Cli) -> i32 {
     let repo_root = match find_repo_root() {
@@ -33,8 +34,8 @@ pub fn execute(cli: Cli) -> i32 {
         CommandKind::Status => cmd_status(&repo_root),
         CommandKind::Installed(args) => cmd_installed(&args, &repo_root),
         CommandKind::Undo => 0,
-        CommandKind::Update(args) => cmd_update(&args),
-        CommandKind::Test => 0,
+        CommandKind::Update(args) => cmd_update(&args, &repo_root),
+        CommandKind::Test => cmd_test(&repo_root),
         CommandKind::Rebuild(args) => cmd_rebuild(&args, &repo_root),
         CommandKind::Upgrade(_args) => 0,
     }
@@ -75,6 +76,87 @@ fn dirs_home() -> PathBuf {
     env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/"))
+}
+
+struct CapturedCommand {
+    code: i32,
+    stdout: String,
+    stderr: String,
+}
+
+fn run_captured_command(
+    program: &str,
+    args: &[String],
+    cwd: Option<&Path>,
+) -> Result<CapturedCommand, String> {
+    let mut command = Command::new(program);
+    command.args(args);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+
+    let output = command
+        .output()
+        .map_err(|err| format!("command execution failed ({program}): {err}"))?;
+
+    Ok(CapturedCommand {
+        code: output.status.code().unwrap_or(1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+fn run_indented_command(
+    program: &str,
+    args: &[String],
+    cwd: Option<&Path>,
+    indent: &str,
+) -> Result<i32, String> {
+    let output = run_captured_command(program, args, cwd)?;
+    let mut merged = output.stdout;
+    merged.push_str(&output.stderr);
+
+    for raw_line in merged.replace("\r\n", "\n").lines() {
+        let trimmed = raw_line.trim_end();
+        if trimmed.is_empty() {
+            println!();
+            continue;
+        }
+        print_wrapped_plain_line(trimmed, indent, 80);
+    }
+
+    Ok(output.code)
+}
+
+fn print_wrapped_plain_line(line: &str, indent: &str, width: usize) {
+    let max_content = width.saturating_sub(indent.len()).max(20);
+    let mut remaining = line;
+
+    while remaining.chars().count() > max_content {
+        let candidate = nth_char_boundary(remaining, max_content);
+        let split = remaining[..candidate]
+            .rfind(' ')
+            .unwrap_or(candidate)
+            .max(1);
+        println!("{indent}{}", &remaining[..split]);
+        remaining = remaining[split..].trim_start();
+        if remaining.is_empty() {
+            return;
+        }
+    }
+
+    println!("{indent}{remaining}");
+}
+
+fn nth_char_boundary(input: &str, n: usize) -> usize {
+    if input.chars().count() <= n {
+        return input.len();
+    }
+    input
+        .char_indices()
+        .nth(n)
+        .map(|(idx, _)| idx)
+        .unwrap_or(input.len())
 }
 
 fn cmd_install(args: &InstallArgs, repo_root: &Path) -> i32 {
@@ -380,42 +462,118 @@ fn cmd_installed(args: &InstalledArgs, repo_root: &Path) -> i32 {
     if all_installed { 0 } else { 1 }
 }
 
-fn cmd_update(_args: &PassthroughArgs) -> i32 {
+fn cmd_update(args: &PassthroughArgs, repo_root: &Path) -> i32 {
+    println!("\n> Updating flake inputs");
+
+    let mut command_args = vec!["flake".to_string(), "update".to_string()];
+    command_args.extend(args.passthrough.iter().cloned());
+    let return_code = match run_indented_command("nix", &command_args, Some(repo_root), "  ") {
+        Ok(code) => code,
+        Err(err) => {
+            eprintln!("x {err}");
+            return 1;
+        }
+    };
+
+    if return_code == 0 {
+        println!();
+        println!("+ Flake inputs updated");
+        println!("  Run 'nx rebuild' to rebuild, or 'nx upgrade' for full upgrade");
+        return 0;
+    }
+
+    eprintln!("x Flake update failed");
+    1
+}
+
+fn cmd_test(repo_root: &Path) -> i32 {
+    let steps: [(&str, Vec<String>, Option<PathBuf>); 3] = [
+        (
+            "ruff",
+            vec!["check".to_string(), ".".to_string()],
+            Some(repo_root.join("scripts/nx")),
+        ),
+        (
+            "mypy",
+            vec![".".to_string()],
+            Some(repo_root.join("scripts/nx")),
+        ),
+        (
+            "tests",
+            vec![
+                "-m".to_string(),
+                "unittest".to_string(),
+                "discover".to_string(),
+                "-s".to_string(),
+                "scripts/nx/tests".to_string(),
+            ],
+            Some(repo_root.to_path_buf()),
+        ),
+    ];
+
+    for (label, args, cwd) in steps {
+        println!("\n> Running {label}");
+        println!();
+        let program = if label == "tests" { "python3" } else { label };
+        let return_code = match run_indented_command(program, &args, cwd.as_deref(), "  ") {
+            Ok(code) => code,
+            Err(err) => {
+                eprintln!("x {label} failed");
+                eprintln!("x {err}");
+                return 1;
+            }
+        };
+
+        if return_code != 0 {
+            eprintln!("x {label} failed");
+            return 1;
+        }
+
+        println!();
+        println!("+ {label} passed");
+    }
+
     0
 }
 
-fn cmd_rebuild(_args: &PassthroughArgs, repo_root: &Path) -> i32 {
+fn cmd_rebuild(args: &PassthroughArgs, repo_root: &Path) -> i32 {
     println!("\n> Checking tracked nix files");
-    let output = Command::new("git")
-        .args([
-            "-C",
-            &repo_root.display().to_string(),
-            "ls-files",
-            "--others",
-            "--exclude-standard",
-            "--",
-            "home",
-            "packages",
-            "system",
-            "hosts",
-        ])
-        .output();
-
-    let Ok(output) = output else {
-        eprintln!("x Git preflight failed");
-        return 1;
+    let preflight_args = vec![
+        "-C".to_string(),
+        repo_root.display().to_string(),
+        "ls-files".to_string(),
+        "--others".to_string(),
+        "--exclude-standard".to_string(),
+        "--".to_string(),
+        "home".to_string(),
+        "packages".to_string(),
+        "system".to_string(),
+        "hosts".to_string(),
+    ];
+    let output = match run_captured_command("git", &preflight_args, None) {
+        Ok(output) => output,
+        Err(_) => {
+            eprintln!("x Git preflight failed");
+            return 1;
+        }
     };
 
-    if !output.status.success() {
+    if output.code != 0 {
         eprintln!("x Git preflight failed");
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stderr = output.stderr.trim().to_string();
         if !stderr.is_empty() {
             println!("  {stderr}");
+        } else {
+            let stdout = output.stdout.trim().to_string();
+            if !stdout.is_empty() {
+                println!("  {stdout}");
+            }
         }
         return 1;
     }
 
-    let mut untracked: Vec<String> = String::from_utf8_lossy(&output.stdout)
+    let mut untracked: Vec<String> = output
+        .stdout
         .lines()
         .map(str::trim)
         .filter(|line| line.ends_with(".nix"))
@@ -424,16 +582,70 @@ fn cmd_rebuild(_args: &PassthroughArgs, repo_root: &Path) -> i32 {
     untracked.sort();
 
     if untracked.is_empty() {
-        println!("\n+ Git preflight passed");
+        println!("+ Git preflight passed");
+    } else {
+        eprintln!("x Untracked .nix files would be ignored by flake evaluation");
+        println!("\n  Track these files before rebuild:");
+        for rel_path in &untracked {
+            println!("  - {rel_path}");
+        }
+        println!("\n  Run: git -C \"{}\" add <files>", repo_root.display());
+        return 1;
+    }
+
+    println!("\n> Checking flake");
+    let flake_args = vec![
+        "flake".to_string(),
+        "check".to_string(),
+        repo_root.display().to_string(),
+    ];
+    let flake_output = match run_captured_command("nix", &flake_args, None) {
+        Ok(output) => output,
+        Err(err) => {
+            eprintln!("x Flake check failed");
+            println!("{err}");
+            return 1;
+        }
+    };
+    if flake_output.code != 0 {
+        eprintln!("x Flake check failed");
+        let err_text = if flake_output.stderr.trim().is_empty() {
+            flake_output.stdout.trim()
+        } else {
+            flake_output.stderr.trim()
+        };
+        if !err_text.is_empty() {
+            println!("{err_text}");
+        }
+        return 1;
+    }
+    println!("+ Flake check passed");
+
+    println!("\n> Rebuilding system");
+    println!();
+    let mut rebuild_args = vec![
+        DARWIN_REBUILD.to_string(),
+        "switch".to_string(),
+        "--flake".to_string(),
+        repo_root.display().to_string(),
+    ];
+    rebuild_args.extend(args.passthrough.iter().cloned());
+
+    let return_code = match run_indented_command("sudo", &rebuild_args, None, "  ") {
+        Ok(code) => code,
+        Err(err) => {
+            eprintln!("x Rebuild failed");
+            eprintln!("x {err}");
+            return 1;
+        }
+    };
+    if return_code == 0 {
+        println!();
+        println!("+ System rebuilt");
         return 0;
     }
 
-    eprintln!("x Untracked .nix files would be ignored by flake evaluation");
-    println!("\n  Track these files before rebuild:");
-    for rel_path in &untracked {
-        println!("  - {rel_path}");
-    }
-    println!("\n  Run: git -C \"{}\" add <files>", repo_root.display());
+    eprintln!("x Rebuild failed");
     1
 }
 

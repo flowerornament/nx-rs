@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "stdout": "\n> Checking tracked nix files\n+ Git preflight passed\n\n> Checking flake\n+ Flake check passed\n\n> Rebuilding system\n\n  stub sudo /run/current-system/sw/bin/darwin-rebuild switch --flake\n  /private<REPO_ROOT>\n\n+ System rebuilt",
+  "stderr": "",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

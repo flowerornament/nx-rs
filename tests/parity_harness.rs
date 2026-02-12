@@ -4,6 +4,7 @@ use std::error::Error;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -32,6 +33,10 @@ enum CaseSetup {
     #[default]
     None,
     UntrackedNix,
+    StubSystemSuccess,
+    StubUpdateFail,
+    StubTestFail,
+    StubRebuildFlakeCheckFail,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -287,7 +292,137 @@ fn apply_setup(repo_root: &Path, setup: CaseSetup) -> Result<(), Box<dyn Error>>
             fs::write(path, "# nx: untracked parity fixture\n{ ... }:\n{\n}\n")?;
             Ok(())
         }
+        CaseSetup::StubSystemSuccess => {
+            install_system_stubs(repo_root)?;
+            materialize_test_layout(repo_root, true)?;
+            Ok(())
+        }
+        CaseSetup::StubUpdateFail
+        | CaseSetup::StubTestFail
+        | CaseSetup::StubRebuildFlakeCheckFail => {
+            install_system_stubs(repo_root)?;
+            materialize_test_layout(repo_root, false)?;
+            Ok(())
+        }
     }
+}
+
+fn install_system_stubs(repo_root: &Path) -> Result<(), Box<dyn Error>> {
+    let stub_bin = repo_root.join(".parity-bin");
+    fs::create_dir_all(&stub_bin)?;
+
+    write_executable(
+        &stub_bin.join("git"),
+        r#"#!/bin/sh
+if [ "$1" = "-C" ]; then
+  shift
+  shift
+fi
+
+if [ "$1" = "ls-files" ]; then
+  exit 0
+fi
+
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  pwd
+  exit 0
+fi
+
+exit 0
+"#,
+    )?;
+
+    write_executable(
+        &stub_bin.join("nix"),
+        r#"#!/bin/sh
+mode="${NX_PARITY_MODE:-stub_system_success}"
+
+if [ "$1" = "flake" ] && [ "$2" = "update" ]; then
+  if [ "$mode" = "stub_update_fail" ]; then
+    echo "stub nix flake update failed"
+    exit 1
+  fi
+  echo "stub nix flake update ok"
+  exit 0
+fi
+
+if [ "$1" = "flake" ] && [ "$2" = "check" ]; then
+  if [ "$mode" = "stub_rebuild_flake_check_fail" ]; then
+    echo "stub nix flake check failed" >&2
+    exit 1
+  fi
+  echo "stub nix flake check ok"
+  exit 0
+fi
+
+echo "stub nix unsupported: $*" >&2
+exit 0
+"#,
+    )?;
+
+    write_executable(
+        &stub_bin.join("sudo"),
+        r#"#!/bin/sh
+echo "stub sudo $*"
+exit 0
+"#,
+    )?;
+
+    write_executable(
+        &stub_bin.join("ruff"),
+        r#"#!/bin/sh
+if [ "${NX_PARITY_MODE:-}" = "stub_test_fail" ]; then
+  echo "stub ruff failed" >&2
+  exit 1
+fi
+echo "stub ruff ok"
+exit 0
+"#,
+    )?;
+
+    write_executable(
+        &stub_bin.join("mypy"),
+        r#"#!/bin/sh
+echo "stub mypy ok"
+exit 0
+"#,
+    )?;
+
+    Ok(())
+}
+
+fn write_executable(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
+    fs::write(path, content)?;
+    let mut perms = fs::metadata(path)?.permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms)?;
+    Ok(())
+}
+
+fn materialize_test_layout(
+    repo_root: &Path,
+    include_passing_test: bool,
+) -> Result<(), Box<dyn Error>> {
+    let tests_dir = repo_root.join("scripts/nx/tests");
+    fs::create_dir_all(&tests_dir)?;
+    if include_passing_test {
+        let test_file = tests_dir.join("test_stub.py");
+        fs::write(
+            test_file,
+            r#"import unittest
+
+
+class StubTest(unittest.TestCase):
+    def test_passes(self):
+        self.assertTrue(True)
+
+
+if __name__ == "__main__":
+    unittest.main()
+"#,
+        )?;
+    }
+    Ok(())
 }
 
 fn run_target_case(
@@ -309,8 +444,24 @@ fn run_target_case(
         .current_dir(repo_root)
         .env("B2NIX_REPO_ROOT", repo_root)
         .env("HOME", home_dir.path())
+        .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("NO_COLOR", "1")
         .env("TERM", "dumb");
+
+    if uses_system_stubs(case.setup) {
+        let stub_bin = repo_root.join(".parity-bin");
+        let mut path_value = stub_bin.to_string_lossy().to_string();
+        if let Some(path) = env::var_os("PATH")
+            && !path.is_empty()
+        {
+            path_value.push(':');
+            path_value.push_str(&path.to_string_lossy());
+        }
+        command.env("PATH", path_value);
+    }
+    if let Some(mode) = setup_mode(case.setup) {
+        command.env("NX_PARITY_MODE", mode);
+    }
 
     let output = command.output()?;
     let after = snapshot_repo_files(repo_root)?;
@@ -329,6 +480,26 @@ fn run_target_case(
         ),
         file_diff: diff_snapshots(&before, &after),
     })
+}
+
+fn uses_system_stubs(setup: CaseSetup) -> bool {
+    matches!(
+        setup,
+        CaseSetup::StubSystemSuccess
+            | CaseSetup::StubUpdateFail
+            | CaseSetup::StubTestFail
+            | CaseSetup::StubRebuildFlakeCheckFail
+    )
+}
+
+fn setup_mode(setup: CaseSetup) -> Option<&'static str> {
+    match setup {
+        CaseSetup::StubSystemSuccess => Some("stub_system_success"),
+        CaseSetup::StubUpdateFail => Some("stub_update_fail"),
+        CaseSetup::StubTestFail => Some("stub_test_fail"),
+        CaseSetup::StubRebuildFlakeCheckFail => Some("stub_rebuild_flake_check_fail"),
+        CaseSetup::None | CaseSetup::UntrackedNix => None,
+    }
 }
 
 fn snapshot_repo_files(repo_root: &Path) -> Result<BTreeMap<String, String>, Box<dyn Error>> {

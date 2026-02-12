@@ -1,0 +1,10 @@
+{
+  "exit_code": 1,
+  "stdout": "\n> Updating flake inputs\n  stub nix flake update failed",
+  "stderr": "x Flake update failed",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

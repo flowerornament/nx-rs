@@ -52,28 +52,28 @@ scripts/cutover/validate_shadow_canary.sh
 
 ## Latest Execution Result
 
-Executed: **2026-02-12 02:31:21 PST**
+Executed: **2026-02-12 03:10:48 PST**
 
 Shadow matrix:
 
 | Case | Command Args | Python Exit | Rust Exit | Stdout Match | Stderr Match | Pass |
 | --- | --- | --- | --- | --- | --- | --- |
-| where_found | `where ast-grep` | 0 | 0 | yes | yes | yes |
+| where_found | `where ripgrep` | 0 | 0 | yes | yes | yes |
 | where_not_found | `where not-a-real-package-nxrs-cutover` | 0 | 0 | yes | yes | yes |
 | list_plain | `list --plain` | 0 | 0 | yes | yes | yes |
 | status | `status` | 0 | 0 | yes | yes | yes |
-| installed_json | `installed ast-grep --json` | 0 | 0 | yes | yes | yes |
+| installed_json | `installed ripgrep --json` | 0 | 0 | yes | yes | yes |
 | info_json_not_found | `info not-a-real-package-nxrs-cutover --json` | 0 | 0 | yes | yes | yes |
-| install_dry_run | `install --dry-run ast-grep` | 0 | 0 | yes | yes | yes |
-| remove_dry_run | `remove --dry-run ast-grep` | 0 | 0 | yes | yes | yes |
+| install_dry_run | `install --dry-run ripgrep` | 0 | 0 | yes | yes | yes |
+| remove_dry_run | `remove --dry-run ripgrep` | 0 | 0 | yes | yes | yes |
 
 Canary matrix:
 
 | Case | Command | Exit | Pass |
 | --- | --- | --- | --- |
 | status | `nx --plain --minimal status` | 0 | yes |
-| where_found | `nx --plain --minimal where ast-grep` | 0 | yes |
-| installed_json | `nx --plain --minimal installed ast-grep --json` | 0 | yes |
+| where_found | `nx --plain --minimal where ripgrep` | 0 | yes |
+| installed_json | `nx --plain --minimal installed ripgrep --json` | 0 | yes |
 
 Mutation safety:
 

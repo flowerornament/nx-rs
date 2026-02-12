@@ -48,3 +48,7 @@ Update rules for future agents:
 - Repo audit command: `rg -n --hidden --glob '!.git' '~/.nix-config/scripts/nx-rs|\.nix-config/scripts/nx-rs|scripts/nx-rs'`.
 - `~/.nix-config` audit command: `rg -n --hidden --glob '!.git' --glob '!scripts/nx-rs/**' 'scripts/nx-rs|\.nix-config/scripts/nx-rs'`.
 - Verified on 2026-02-12: no matches outside `~/.nix-config/scripts/nx-rs`.
+
+9. Cutover validation still passes after quarantining legacy in-tree copy.
+- Legacy directory was moved to `/tmp/nx-rs-legacy-20260212-032055`.
+- Re-verified on 2026-02-12 with `just cutover-validate`: shadow matrix, canary matrix, and mutation safety all passed.

@@ -52,7 +52,7 @@ scripts/cutover/validate_shadow_canary.sh
 
 ## Latest Execution Result
 
-Executed: **2026-02-12 03:10:48 PST**
+Executed: **2026-02-12 03:26:11 PST**
 
 Shadow matrix:
 
@@ -78,6 +78,9 @@ Canary matrix:
 Mutation safety:
 
 - Git status unchanged: **yes**
+
+Post-run note:
+- Verified after moving legacy in-tree copy from `~/.nix-config/scripts/nx-rs` to `/tmp/nx-rs-legacy-20260212-032055`.
 
 ## Go/No-Go Criteria
 

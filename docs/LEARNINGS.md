@@ -12,14 +12,14 @@ Update rules for future agents:
 
 ## Confirmed Learnings
 
-1. `bd` usage in this project is top-level, not local to `scripts/nx-rs`.
-- Canonical tracker is `~/.nix-config/.beads`.
-- Do not run `bd init` inside `scripts/nx-rs` (it creates a shadow tracker and splits issue state).
-- Migration epic is `morgan-pnv` in the top-level tracker.
+1. This standalone repo uses local `bd` state.
+- Canonical tracker is `./.beads` in this repo.
+- Active migration continuation epic is `nx-rs-0a1`.
+- Historical migration in `~/.nix-config/scripts/nx-rs` was tracked under `morgan-pnv`.
 
 2. `bd doctor` behavior depends on current directory.
-- Running `bd doctor` inside `scripts/nx-rs` reports missing local `.beads` unless one exists.
-- For authoritative project health, run from repo root: `cd ~/.nix-config && bd doctor`.
+- Running `bd doctor` must be done from this repo root for authoritative status.
+- `bd doctor` in unrelated parent directories checks different rigs and gives unrelated warnings.
 
 3. Parity baselines are Python-reference snapshots.
 - Baselines live in `tests/fixtures/parity/baselines/`.

@@ -31,8 +31,7 @@ Primary priorities:
 - Verified operational learnings: `docs/LEARNINGS.md`
 - Python reference implementation: `reference/nx-python/README.md`
 - Python source baseline: `reference/nx-python/`
-- Parent nix-config context: `../../AGENTS.md`
-- Parent architecture guide: `../../.agents/ARCHITECTURE.md`
+- Legacy context repo: `~/.nix-config`
 
 ## Toolchain And Workflow
 
@@ -67,9 +66,9 @@ Tracking model:
 
 - `bd` is the only source of truth for executable tasks, dependencies, and status.
 - Do not track task checklists or status in markdown docs.
-- Use the top-level tracker at `~/.nix-config/.beads` (inherited from repo root).
-- Do not run `bd init` inside `scripts/nx-rs`.
-- Migration execution lives under epic `morgan-pnv` (`nx-rs migration`).
+- Use this repo's tracker at `./.beads`.
+- Current active migration continuation epic is `nx-rs-0a1`.
+- Historical migration execution in `~/.nix-config` was tracked under `morgan-pnv`.
 - Do not track any state in markdown docs
 - Avoid duplicating information between AGENTS.md and other markdown docs
 - Do not create additional documents unless new categories of information need to be recorded

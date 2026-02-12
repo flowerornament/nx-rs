@@ -122,7 +122,7 @@ nx-rs/
 ## Execution Phases (Tracked In bd)
 
 Phase structure is strategic only here; all deliverables, acceptance criteria,
-and status are tracked in `bd` under epic `morgan-pnv` (tracking conventions live in `AGENTS.md`).
+and status are tracked in `bd` under epic `nx-rs-0a1` (tracking conventions live in `AGENTS.md`).
 
 1. `phase:-1`: toolchain and guardrails (`just`, hooks, strict checks).
 2. `phase:0`: contract freeze and parity fixture foundation.

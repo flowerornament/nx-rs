@@ -1,33 +1,32 @@
 use std::fs;
 use std::path::Path;
 
+use anyhow::Context;
+
 use crate::cli::RemoveArgs;
+use crate::commands::context::AppContext;
 use crate::commands::shared::{
     SnippetMode, location_path_and_line, relative_location, show_snippet,
 };
-use crate::nix_scan::find_package;
-use crate::output::printer::Printer;
+use crate::infra::finder::find_package;
 
-pub fn cmd_remove(args: &RemoveArgs, repo_root: &Path, printer: &Printer) -> i32 {
+pub fn cmd_remove(args: &RemoveArgs, ctx: &AppContext) -> i32 {
     if args.packages.is_empty() {
-        printer.error("No packages specified");
+        ctx.printer.error("No packages specified");
         return 1;
     }
 
     if args.dry_run {
-        printer.dry_run_banner();
-    } else if !args.yes {
-        printer.error("Removal requires --yes (or use --dry-run)");
-        return 1;
+        ctx.printer.dry_run_banner();
     }
 
     for package in &args.packages {
-        match find_package(package, repo_root) {
+        match find_package(package, &ctx.repo_root) {
             Ok(Some(location)) => {
-                printer.action(&format!("Removing {package}"));
-                printer.detail(&format!(
+                ctx.printer.action(&format!("Removing {package}"));
+                ctx.printer.detail(&format!(
                     "Location: {}",
-                    relative_location(&location, repo_root)
+                    relative_location(&location, &ctx.repo_root)
                 ));
                 let (file_path, line_num) = location_path_and_line(&location);
                 if let Some(line_num) = line_num {
@@ -37,8 +36,17 @@ pub fn cmd_remove(args: &RemoveArgs, repo_root: &Path, printer: &Printer) -> i32
                         continue;
                     }
 
+                    if !args.yes {
+                        println!();
+                        if !ctx.printer.confirm(&format!("Remove {package}?"), false) {
+                            ctx.printer.detail("Cancelled.");
+                            continue;
+                        }
+                    }
+
                     if let Err(err) = remove_line_directly(file_path, line_num) {
-                        printer.error(&format!("Failed to remove {package}: {err}"));
+                        ctx.printer
+                            .error(&format!("Failed to remove {package}: {err}"));
                         return 1;
                     }
 
@@ -48,16 +56,18 @@ pub fn cmd_remove(args: &RemoveArgs, repo_root: &Path, printer: &Printer) -> i32
                         .unwrap_or(file_path);
                     println!("* {file_name}");
                     println!();
-                    printer.success(&format!("{package} removed from {file_name}"));
+                    ctx.printer
+                        .success(&format!("{package} removed from {file_name}"));
                 }
             }
             Ok(None) => {
-                printer.error(&format!("{package} not found"));
+                ctx.printer.error(&format!("{package} not found"));
                 println!();
-                printer.detail(&format!("Check installed: nx list | grep -i {package}"));
+                ctx.printer
+                    .detail(&format!("Check installed: nx list | grep -i {package}"));
             }
             Err(err) => {
-                printer.error(&format!("remove lookup failed: {err}"));
+                ctx.printer.error(&format!("remove lookup failed: {err}"));
                 return 1;
             }
         }
@@ -66,20 +76,16 @@ pub fn cmd_remove(args: &RemoveArgs, repo_root: &Path, printer: &Printer) -> i32
     0
 }
 
-fn remove_line_directly(file_path: &str, line_num: usize) -> Result<(), String> {
-    if line_num == 0 {
-        return Err("invalid line number".to_string());
-    }
+fn remove_line_directly(file_path: &str, line_num: usize) -> anyhow::Result<()> {
+    anyhow::ensure!(line_num > 0, "invalid line number");
 
-    let content = fs::read_to_string(file_path).map_err(|err| err.to_string())?;
+    let content = fs::read_to_string(file_path).with_context(|| format!("reading {file_path}"))?;
     let mut lines: Vec<&str> = content.lines().collect();
-    if line_num > lines.len() {
-        return Err(format!(
-            "line {} out of range for {} lines",
-            line_num,
-            lines.len()
-        ));
-    }
+    anyhow::ensure!(
+        line_num <= lines.len(),
+        "line {line_num} out of range for {} lines",
+        lines.len()
+    );
 
     lines.remove(line_num - 1);
     let mut updated = lines.join("\n");
@@ -87,5 +93,5 @@ fn remove_line_directly(file_path: &str, line_num: usize) -> Result<(), String> 
         updated.push('\n');
     }
 
-    fs::write(file_path, updated).map_err(|err| err.to_string())
+    fs::write(file_path, updated).with_context(|| format!("writing {file_path}"))
 }

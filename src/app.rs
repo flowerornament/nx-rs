@@ -2,6 +2,8 @@ use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
+use anyhow::{Context, bail};
+
 use crate::cli::{Cli, CommandKind};
 use crate::commands::context::AppContext;
 use crate::commands::install::cmd_install;
@@ -17,8 +19,8 @@ pub fn execute(cli: Cli) -> i32 {
 
     let repo_root = match find_repo_root() {
         Ok(path) => path,
-        Err(message) => {
-            printer.error(&message);
+        Err(err) => {
+            printer.error(&format!("{err:#}"));
             return 1;
         }
     };
@@ -26,22 +28,22 @@ pub fn execute(cli: Cli) -> i32 {
     let ctx = AppContext::new(repo_root, printer);
 
     match cli.command {
-        CommandKind::Install(args) => cmd_install(&args, &ctx.repo_root, &ctx.printer),
-        CommandKind::Remove(args) => cmd_remove(&args, &ctx.repo_root, &ctx.printer),
-        CommandKind::Where(args) => cmd_where(&args, &ctx.repo_root),
-        CommandKind::List(args) => cmd_list(&args, &ctx.repo_root),
-        CommandKind::Info(args) => cmd_info(&args, &ctx.repo_root),
-        CommandKind::Status => cmd_status(&ctx.repo_root),
-        CommandKind::Installed(args) => cmd_installed(&args, &ctx.repo_root),
+        CommandKind::Install(args) => cmd_install(&args, &ctx),
+        CommandKind::Remove(args) => cmd_remove(&args, &ctx),
+        CommandKind::Where(args) => cmd_where(&args, &ctx),
+        CommandKind::List(args) => cmd_list(&args, &ctx),
+        CommandKind::Info(args) => cmd_info(&args, &ctx),
+        CommandKind::Status => cmd_status(&ctx),
+        CommandKind::Installed(args) => cmd_installed(&args, &ctx),
         CommandKind::Undo => 0,
-        CommandKind::Update(args) => cmd_update(&args, &ctx.repo_root, &ctx.printer),
-        CommandKind::Test => cmd_test(&ctx.repo_root, &ctx.printer),
-        CommandKind::Rebuild(args) => cmd_rebuild(&args, &ctx.repo_root, &ctx.printer),
+        CommandKind::Update(args) => cmd_update(&args, &ctx),
+        CommandKind::Test => cmd_test(&ctx),
+        CommandKind::Rebuild(args) => cmd_rebuild(&args, &ctx),
         CommandKind::Upgrade(_args) => 0,
     }
 }
 
-fn find_repo_root() -> Result<PathBuf, String> {
+fn find_repo_root() -> anyhow::Result<PathBuf> {
     if let Some(env_root) = env::var_os("B2NIX_REPO_ROOT") {
         let env_path = PathBuf::from(env_root);
         return Ok(std::fs::canonicalize(&env_path).unwrap_or(env_path));
@@ -50,7 +52,7 @@ fn find_repo_root() -> Result<PathBuf, String> {
     let git_output = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .output()
-        .map_err(|err| format!("git root detection failed: {err}"))?;
+        .context("git root detection failed")?;
 
     if git_output.status.success() {
         let root = String::from_utf8_lossy(&git_output.stdout)
@@ -69,7 +71,7 @@ fn find_repo_root() -> Result<PathBuf, String> {
         return Ok(fallback);
     }
 
-    Err("Could not find nix-config repository".to_string())
+    bail!("Could not find nix-config repository")
 }
 
 fn dirs_home() -> PathBuf {

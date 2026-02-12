@@ -1,3 +1,5 @@
+use std::io::{self, BufRead, Write};
+
 use crate::output::style::{IconSet, OutputStyle};
 
 struct GlyphSet {
@@ -45,6 +47,17 @@ impl Printer {
         }
     }
 
+    pub fn confirm(&self, prompt: &str, default_yes: bool) -> bool {
+        let suffix = if default_yes { " [Y/n]: " } else { " [y/N]: " };
+        print!("  {prompt}{suffix}");
+        let _ = io::stdout().flush();
+        let mut line = String::new();
+        match io::stdin().lock().read_line(&mut line) {
+            Ok(0) | Err(_) => default_yes,
+            Ok(_) => parse_confirm_response(&line, default_yes),
+        }
+    }
+
     fn glyphs(&self) -> GlyphSet {
         match self.style.icon_set {
             IconSet::Unicode => GlyphSet {
@@ -61,6 +74,14 @@ impl Printer {
             },
         }
     }
+}
+
+fn parse_confirm_response(response: &str, default_yes: bool) -> bool {
+    let trimmed = response.trim().to_ascii_lowercase();
+    if trimmed.is_empty() {
+        return default_yes;
+    }
+    trimmed == "y" || trimmed == "yes"
 }
 
 fn wrapped_segments(line: &str, max_content: usize) -> Vec<&str> {
@@ -103,7 +124,7 @@ fn nth_char_boundary(input: &str, n: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{Printer, wrapped_segments};
+    use super::{Printer, parse_confirm_response, wrapped_segments};
     use crate::output::style::{IconSet, OutputStyle};
 
     #[test]
@@ -136,5 +157,28 @@ mod tests {
         assert_eq!(glyphs.action, ">");
         assert_eq!(glyphs.success, "+");
         assert_eq!(glyphs.error, "x");
+    }
+
+    #[test]
+    fn confirm_response_accepts_y_and_yes() {
+        assert!(parse_confirm_response("y\n", false));
+        assert!(parse_confirm_response("Y\n", false));
+        assert!(parse_confirm_response("yes\n", false));
+        assert!(parse_confirm_response("YES\n", false));
+    }
+
+    #[test]
+    fn confirm_response_rejects_n_and_no() {
+        assert!(!parse_confirm_response("n\n", true));
+        assert!(!parse_confirm_response("N\n", true));
+        assert!(!parse_confirm_response("no\n", true));
+    }
+
+    #[test]
+    fn confirm_response_empty_uses_default() {
+        assert!(parse_confirm_response("\n", true));
+        assert!(!parse_confirm_response("\n", false));
+        assert!(parse_confirm_response("  \n", true));
+        assert!(!parse_confirm_response("  \n", false));
     }
 }

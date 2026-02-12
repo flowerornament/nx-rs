@@ -1,5 +1,10 @@
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+
+use anyhow::Context;
 
 use crate::output::printer::Printer;
 
@@ -13,7 +18,7 @@ pub fn run_captured_command(
     program: &str,
     args: &[String],
     cwd: Option<&Path>,
-) -> Result<CapturedCommand, String> {
+) -> anyhow::Result<CapturedCommand> {
     let mut command = Command::new(program);
     command.args(args);
     if let Some(cwd) = cwd {
@@ -22,7 +27,7 @@ pub fn run_captured_command(
 
     let output = command
         .output()
-        .map_err(|err| format!("command execution failed ({program}): {err}"))?;
+        .with_context(|| format!("command execution failed ({program})"))?;
 
     Ok(CapturedCommand {
         code: output.status.code().unwrap_or(1),
@@ -37,19 +42,56 @@ pub fn run_indented_command(
     cwd: Option<&Path>,
     printer: &Printer,
     indent: &str,
-) -> Result<i32, String> {
-    let output = run_captured_command(program, args, cwd)?;
-    let mut merged = output.stdout;
-    merged.push_str(&output.stderr);
-
-    for raw_line in merged.replace("\r\n", "\n").lines() {
-        let trimmed = raw_line.trim_end();
-        if trimmed.is_empty() {
-            println!();
-            continue;
-        }
-        printer.stream_line(trimmed, indent, 80);
+) -> anyhow::Result<i32> {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
     }
 
-    Ok(output.code)
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("failed to spawn {program}"))?;
+
+    let (tx, rx) = mpsc::channel::<String>();
+
+    let stdout_handle = spawn_line_reader(child.stdout.take(), tx.clone());
+    let stderr_handle = spawn_line_reader(child.stderr.take(), tx);
+
+    for line in rx {
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            println!();
+        } else {
+            printer.stream_line(trimmed, indent, 80);
+        }
+    }
+
+    if let Some(h) = stdout_handle {
+        let _ = h.join();
+    }
+    if let Some(h) = stderr_handle {
+        let _ = h.join();
+    }
+
+    let status = child.wait().context("waiting for child process")?;
+    Ok(status.code().unwrap_or(1))
+}
+
+fn spawn_line_reader(
+    stream: Option<impl Read + Send + 'static>,
+    tx: mpsc::Sender<String>,
+) -> Option<thread::JoinHandle<()>> {
+    stream.map(|s| {
+        thread::spawn(move || {
+            for line in BufReader::new(s).lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        })
+    })
 }

@@ -7,7 +7,6 @@ mod app;
 mod cli;
 mod commands;
 mod infra;
-mod nix_scan;
 mod output;
 
 pub fn run() -> ExitCode {

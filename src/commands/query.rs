@@ -1,26 +1,29 @@
-use std::path::Path;
-
 use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::cli::{InfoArgs, InstalledArgs, ListArgs, WhereArgs};
+use crate::commands::context::AppContext;
 use crate::commands::shared::{
     SnippetMode, location_path_and_line, relative_location, show_snippet,
 };
-use crate::nix_scan::{PackageBuckets, find_package, find_package_fuzzy, scan_packages};
+use crate::infra::config_scan::{PackageBuckets, scan_packages};
+use crate::infra::finder::{find_package, find_package_fuzzy};
 
 const VALID_SOURCES_TEXT: &str =
     "  Valid sources: brew, brews, cask, casks, homebrew, mas, nix, nxs, service,\n  services";
 
-pub fn cmd_where(args: &WhereArgs, repo_root: &Path) -> i32 {
+pub fn cmd_where(args: &WhereArgs, ctx: &AppContext) -> i32 {
     let Some(package) = &args.package else {
         eprintln!("x No package specified");
         return 1;
     };
 
-    match find_package(package, repo_root) {
+    match find_package(package, &ctx.repo_root) {
         Ok(Some(location)) => {
-            println!("+ {package} at {}", relative_location(&location, repo_root));
+            println!(
+                "+ {package} at {}",
+                relative_location(&location, &ctx.repo_root)
+            );
             let (file_path, line_num) = location_path_and_line(&location);
             if let Some(line_num) = line_num {
                 show_snippet(file_path, line_num, 2, SnippetMode::Add, false);
@@ -39,8 +42,8 @@ pub fn cmd_where(args: &WhereArgs, repo_root: &Path) -> i32 {
     0
 }
 
-pub fn cmd_list(args: &ListArgs, repo_root: &Path) -> i32 {
-    let buckets = match scan_packages(repo_root) {
+pub fn cmd_list(args: &ListArgs, ctx: &AppContext) -> i32 {
+    let buckets = match scan_packages(&ctx.repo_root) {
         Ok(buckets) => buckets,
         Err(err) => {
             eprintln!("x package scan failed: {err}");
@@ -110,14 +113,14 @@ pub fn cmd_list(args: &ListArgs, repo_root: &Path) -> i32 {
     0
 }
 
-pub fn cmd_info(args: &InfoArgs, repo_root: &Path) -> i32 {
+pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
     let Some(package) = &args.package else {
         eprintln!("x No package specified");
         println!("  Usage: nx info <package>");
         return 1;
     };
 
-    let location = match find_package(package, repo_root) {
+    let location = match find_package(package, &ctx.repo_root) {
         Ok(location) => location,
         Err(err) => {
             eprintln!("x info lookup failed: {err}");
@@ -154,7 +157,10 @@ pub fn cmd_info(args: &InfoArgs, repo_root: &Path) -> i32 {
     };
     println!("\n  {package} ({status})");
     if let Some(location) = location {
-        println!("  Location: {}", relative_location(&location, repo_root));
+        println!(
+            "  Location: {}",
+            relative_location(&location, &ctx.repo_root)
+        );
         let (file_path, line_num) = location_path_and_line(&location);
         if let Some(line_num) = line_num {
             show_snippet(file_path, line_num, 1, SnippetMode::Add, false);
@@ -166,8 +172,8 @@ pub fn cmd_info(args: &InfoArgs, repo_root: &Path) -> i32 {
     0
 }
 
-pub fn cmd_status(repo_root: &Path) -> i32 {
-    let buckets = match scan_packages(repo_root) {
+pub fn cmd_status(ctx: &AppContext) -> i32 {
+    let buckets = match scan_packages(&ctx.repo_root) {
         Ok(buckets) => buckets,
         Err(err) => {
             eprintln!("x package scan failed: {err}");
@@ -205,30 +211,36 @@ pub fn cmd_status(repo_root: &Path) -> i32 {
     0
 }
 
-pub fn cmd_installed(args: &InstalledArgs, repo_root: &Path) -> i32 {
+pub fn cmd_installed(args: &InstalledArgs, ctx: &AppContext) -> i32 {
     if args.packages.is_empty() {
         eprintln!("x No package specified");
         return 1;
     }
 
     let mut all_installed = true;
-    let mut rendered = Vec::new();
+    let mut results = Map::new();
     for query in &args.packages {
-        match find_package_fuzzy(query, repo_root) {
+        match find_package_fuzzy(query, &ctx.repo_root) {
             Ok(Some(found)) => {
-                rendered.push(format!(
-                    "{}: {{\"match\": {}, \"location\": {}}}",
-                    json_string(query),
-                    json_string(&found.name),
-                    json_string(&found.location),
-                ));
+                results.insert(
+                    query.clone(),
+                    serde_json::to_value(InstalledEntry {
+                        match_name: Some(found.name),
+                        location: Some(found.location),
+                    })
+                    .unwrap_or_default(),
+                );
             }
             Ok(None) => {
                 all_installed = false;
-                rendered.push(format!(
-                    "{}: {{\"match\": null, \"location\": null}}",
-                    json_string(query)
-                ));
+                results.insert(
+                    query.clone(),
+                    serde_json::to_value(InstalledEntry {
+                        match_name: None,
+                        location: None,
+                    })
+                    .unwrap_or_default(),
+                );
             }
             Err(err) => {
                 eprintln!("x installed lookup failed: {err}");
@@ -238,7 +250,13 @@ pub fn cmd_installed(args: &InstalledArgs, repo_root: &Path) -> i32 {
     }
 
     if args.json {
-        println!("{{{}}}", rendered.join(", "));
+        match serde_json::to_string(&results) {
+            Ok(text) => println!("{text}"),
+            Err(err) => {
+                eprintln!("x installed json rendering failed: {err}");
+                return 1;
+            }
+        }
         return if all_installed { 0 } else { 1 };
     }
 
@@ -297,8 +315,11 @@ fn print_plain_list(buckets: &PackageBuckets) {
     }
 }
 
-fn json_string(input: &str) -> String {
-    serde_json::to_string(input).unwrap_or_else(|_| "\"\"".to_string())
+#[derive(Serialize)]
+struct InstalledEntry {
+    #[serde(rename = "match")]
+    match_name: Option<String>,
+    location: Option<String>,
 }
 
 #[derive(Serialize)]

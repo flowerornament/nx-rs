@@ -73,11 +73,13 @@
   },
   {
     "id": "remove_dry_run_not_found",
-    "args": ["remove", "--dry-run", "not-a-real-package"]
+    "args": ["remove", "--dry-run", "not-a-real-package"],
+    "rust_parity": true
   },
   {
     "id": "remove_yes_mutates",
-    "args": ["remove", "--yes", "ripgrep"]
+    "args": ["remove", "--yes", "ripgrep"],
+    "rust_parity": true
   },
   {
     "id": "rebuild_preflight_untracked_nix",
@@ -124,7 +126,8 @@
   {
     "id": "test_unittest_failure",
     "args": ["test"],
-    "setup": "stub_test_unittest_fail"
+    "setup": "stub_test_unittest_fail",
+    "rust_parity": true
   },
   {
     "id": "rebuild_success",

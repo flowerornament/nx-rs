@@ -52,3 +52,7 @@ Update rules for future agents:
 9. Cutover validation still passes after quarantining legacy in-tree copy.
 - Legacy directory was moved to `/tmp/nx-rs-legacy-20260212-032055`.
 - Re-verified on 2026-02-12 with `just cutover-validate`: shadow matrix, canary matrix, and mutation safety all passed.
+
+10. Rust parity harness now covers all current fixture cases.
+- `tests/fixtures/parity/cases.json` currently has 28 cases and all are marked `rust_parity: true`.
+- Verified on 2026-02-12 with both `just parity-check-rust` and `just parity-check-python`.

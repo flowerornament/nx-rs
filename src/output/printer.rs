@@ -72,10 +72,13 @@ fn wrapped_segments(line: &str, max_content: usize) -> Vec<&str> {
     let mut remaining = line;
     while remaining.chars().count() > max_content {
         let candidate = nth_char_boundary(remaining, max_content);
-        let split = remaining[..candidate]
-            .rfind(' ')
-            .unwrap_or(candidate)
-            .max(1);
+        let split = match remaining[..candidate].rfind(' ') {
+            // Avoid producing tiny leading fragments like "File" when the first
+            // meaningful split point is near the hard width boundary.
+            Some(idx) if idx >= (candidate / 2) => idx,
+            _ => candidate,
+        }
+        .max(1);
         out.push(&remaining[..split]);
         remaining = remaining[split..].trim_start();
         if remaining.is_empty() {

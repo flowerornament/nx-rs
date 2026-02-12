@@ -35,6 +35,16 @@
     "rust_parity": true
   },
   {
+    "id": "status_plain",
+    "args": ["status"],
+    "rust_parity": true
+  },
+  {
+    "id": "info_json_not_found",
+    "args": ["info", "not-a-real-package", "--json"],
+    "rust_parity": true
+  },
+  {
     "id": "install_dry_run_installed",
     "args": ["install", "--dry-run", "ripgrep"]
   },

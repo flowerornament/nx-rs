@@ -298,8 +298,9 @@ fn run_target_case(
 ) -> Result<ParityOutcome, Box<dyn Error>> {
     let before = snapshot_repo_files(repo_root)?;
 
-    let home_dir = repo_root.join(".parity-home");
-    fs::create_dir_all(&home_dir)?;
+    // Keep HOME outside the snapshotted repo tree to avoid cache artifacts
+    // polluting file-diff baselines.
+    let home_dir = TempDir::new()?;
 
     let mut command = Command::new(cli_bin);
     command
@@ -307,7 +308,7 @@ fn run_target_case(
         .args(&case.args)
         .current_dir(repo_root)
         .env("B2NIX_REPO_ROOT", repo_root)
-        .env("HOME", &home_dir)
+        .env("HOME", home_dir.path())
         .env("NO_COLOR", "1")
         .env("TERM", "dumb");
 
@@ -347,7 +348,10 @@ fn snapshot_dir(
         let file_type = entry.file_type()?;
 
         if file_type.is_dir() {
-            if entry.file_name() == ".git" {
+            if entry.file_name() == ".git"
+                || entry.file_name() == ".parity-home"
+                || entry.file_name() == ".tmp-home"
+            {
                 continue;
             }
             snapshot_dir(repo_root, &path, out)?;

@@ -29,8 +29,8 @@ pub fn execute(cli: Cli) -> i32 {
         CommandKind::Remove(args) => cmd_remove(&args, &repo_root),
         CommandKind::Where(args) => cmd_where(&args, &repo_root),
         CommandKind::List(args) => cmd_list(&args, &repo_root),
-        CommandKind::Info(args) => cmd_info(&args),
-        CommandKind::Status => 0,
+        CommandKind::Info(args) => cmd_info(&args, &repo_root),
+        CommandKind::Status => cmd_status(&repo_root),
         CommandKind::Installed(args) => cmd_installed(&args, &repo_root),
         CommandKind::Undo => 0,
         CommandKind::Update(args) => cmd_update(&args),
@@ -245,11 +245,98 @@ fn cmd_list(args: &ListArgs, repo_root: &Path) -> i32 {
     0
 }
 
-fn cmd_info(args: &InfoArgs) -> i32 {
-    if args.package.is_none() {
+fn cmd_info(args: &InfoArgs, repo_root: &Path) -> i32 {
+    let Some(package) = &args.package else {
         eprintln!("x No package specified");
+        println!("  Usage: nx info <package>");
         return 1;
+    };
+
+    let location = match find_package(package, repo_root) {
+        Ok(location) => location,
+        Err(err) => {
+            eprintln!("x info lookup failed: {err}");
+            return 1;
+        }
+    };
+
+    if args.json {
+        let output = InfoJsonOutput {
+            name: package.clone(),
+            installed: location.is_some(),
+            location,
+            sources: Vec::new(),
+            hm_module: None,
+            darwin_service: None,
+            flakehub: Vec::new(),
+        };
+        match serde_json::to_string_pretty(&output) {
+            Ok(text) => {
+                println!("{text}");
+                return 0;
+            }
+            Err(err) => {
+                eprintln!("x info json rendering failed: {err}");
+                return 1;
+            }
+        }
     }
+
+    let status = if location.is_some() {
+        "installed"
+    } else {
+        "not installed"
+    };
+    println!("\n  {package} ({status})");
+    if let Some(location) = location {
+        println!("  Location: {}", relative_location(&location, repo_root));
+        let (file_path, line_num) = location_path_and_line(&location);
+        if let Some(line_num) = line_num {
+            show_snippet(file_path, line_num, 1, SnippetMode::Add, false);
+        }
+    } else {
+        eprintln!("x {package} not found");
+        println!("\n  Try: nx {package}");
+    }
+    0
+}
+
+fn cmd_status(repo_root: &Path) -> i32 {
+    let buckets = match scan_packages(repo_root) {
+        Ok(buckets) => buckets,
+        Err(err) => {
+            eprintln!("x package scan failed: {err}");
+            return 1;
+        }
+    };
+
+    let total = [
+        buckets.nxs.len(),
+        buckets.brews.len(),
+        buckets.casks.len(),
+        buckets.mas.len(),
+        buckets.services.len(),
+    ]
+    .into_iter()
+    .sum::<usize>();
+
+    println!("\n  Package Status ({total} packages installed)");
+    println!("\n  Source       Count  Examples");
+
+    for (label, packages) in [
+        ("nxs", &buckets.nxs),
+        ("homebrew", &buckets.brews),
+        ("casks", &buckets.casks),
+        ("Mac App Store", &buckets.mas),
+        ("services", &buckets.services),
+    ] {
+        if packages.is_empty() {
+            continue;
+        }
+        let examples = render_examples(packages);
+        println!("  {label:<12} {:>5}  {examples}", packages.len());
+    }
+
     0
 }
 
@@ -464,6 +551,20 @@ fn source_values<'a>(source: &str, buckets: &'a PackageBuckets) -> &'a [String] 
     }
 }
 
+fn render_examples(packages: &[String]) -> String {
+    let mut sorted = packages.to_vec();
+    sorted.sort();
+
+    let mut examples = sorted.into_iter().take(4).collect::<Vec<_>>().join(", ");
+    if packages.len() > 4 {
+        if !examples.is_empty() {
+            examples.push_str(", ");
+        }
+        examples.push_str("...");
+    }
+    examples
+}
+
 fn print_plain_list(buckets: &PackageBuckets) {
     for source in [
         &buckets.nxs,
@@ -491,6 +592,17 @@ struct ListJsonOutput<'a> {
     casks: &'a [String],
     mas: &'a [String],
     services: &'a [String],
+}
+
+#[derive(Serialize)]
+struct InfoJsonOutput {
+    name: String,
+    installed: bool,
+    location: Option<String>,
+    sources: Vec<Value>,
+    hm_module: Option<Value>,
+    darwin_service: Option<Value>,
+    flakehub: Vec<Value>,
 }
 
 impl<'a> From<&'a PackageBuckets> for ListJsonOutput<'a> {

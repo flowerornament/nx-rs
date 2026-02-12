@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "stdout": "{\n  \"name\": \"not-a-real-package\",\n  \"installed\": false,\n  \"location\": null,\n  \"sources\": [],\n  \"hm_module\": null,\n  \"darwin_service\": null,\n  \"flakehub\": []\n}",
+  "stderr": "",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

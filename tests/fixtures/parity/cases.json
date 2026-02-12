@@ -5,27 +5,33 @@
   },
   {
     "id": "where_not_found",
-    "args": ["where", "not-a-real-package"]
+    "args": ["where", "not-a-real-package"],
+    "rust_parity": true
   },
   {
     "id": "list_plain",
-    "args": ["list", "--plain"]
+    "args": ["list", "--plain"],
+    "rust_parity": true
   },
   {
     "id": "list_json",
-    "args": ["list", "--json"]
+    "args": ["list", "--json"],
+    "rust_parity": true
   },
   {
     "id": "list_invalid_source",
-    "args": ["list", "nope"]
+    "args": ["list", "nope"],
+    "rust_parity": true
   },
   {
     "id": "installed_json_success",
-    "args": ["installed", "ripgrep", "--json"]
+    "args": ["installed", "ripgrep", "--json"],
+    "rust_parity": true
   },
   {
     "id": "installed_json_failure",
-    "args": ["installed", "not-a-real-package", "--json"]
+    "args": ["installed", "not-a-real-package", "--json"],
+    "rust_parity": true
   },
   {
     "id": "install_dry_run_installed",
@@ -38,6 +44,7 @@
   {
     "id": "rebuild_preflight_untracked_nix",
     "args": ["rebuild"],
-    "setup": "untracked_nix"
+    "setup": "untracked_nix",
+    "rust_parity": true
   }
 ]

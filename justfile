@@ -22,7 +22,9 @@ help:
     @echo "Daily Loop (strict)"
     @echo "  just compile         # Agent compile hook: fmt + clippy + test + check"
     @echo "  just guard           # Run strict gates without compile wrapper"
-    @echo "  just parity-check    # Run parity harness against captured baselines"
+    @echo "  just parity-check    # Run Python parity harness against captured baselines"
+    @echo "  just parity-check-rust # Run Rust parity subset against Python baselines"
+    @echo "  just parity-check-python # Explicit Python parity check"
     @echo "  just parity-capture  # Refresh parity baselines from Python reference"
     @echo
     @echo "Raw Commands"
@@ -94,7 +96,16 @@ test:
 
 # Validate parity fixtures against captured Python baselines.
 parity-check:
+    @just parity-check-python
+
+# Validate Python reference behavior against captured baselines.
+parity-check-python:
     @cargo test --test parity_harness -- --nocapture
+
+# Validate Rust candidate behavior against captured Python baselines (subset).
+parity-check-rust:
+    @cargo build --quiet --bin nx-rs
+    @NX_PARITY_TARGET=rust NX_RUST_PARITY_BIN="$(pwd)/target/debug/nx-rs" cargo test --test parity_harness -- --nocapture
 
 # Refresh parity baselines from Python reference behavior.
 parity-capture:

@@ -28,6 +28,7 @@ Primary priorities:
 
 - Behavior contract: `docs/SPEC.md`
 - Authoritative migration plan: `docs/MIGRATION_PLAN.md`
+- Verified operational learnings: `docs/LEARNINGS.md`
 - Python reference implementation: `reference/nx-python/README.md`
 - Python source baseline: `reference/nx-python/`
 - Parent nix-config context: `../../AGENTS.md`

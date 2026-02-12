@@ -128,6 +128,10 @@ fn cmd_remove(args: &RemoveArgs, repo_root: &Path) -> i32 {
                 println!("\n~ Dry Run (no changes will be made)");
                 println!("\n> Removing {package}");
                 println!("  Location: {}", relative_location(&location, repo_root));
+                let (file_path, line_num) = location_path_and_line(&location);
+                if let Some(line_num) = line_num {
+                    show_snippet(file_path, line_num, 1, SnippetMode::Remove, true);
+                }
                 println!("\n- Would remove {package}");
             }
             Ok(None) => {
@@ -152,6 +156,10 @@ fn cmd_where(args: &WhereArgs, repo_root: &Path) -> i32 {
     match find_package(package, repo_root) {
         Ok(Some(location)) => {
             println!("+ {package} at {}", relative_location(&location, repo_root));
+            let (file_path, line_num) = location_path_and_line(&location);
+            if let Some(line_num) = line_num {
+                show_snippet(file_path, line_num, 2, SnippetMode::Add, false);
+            }
         }
         Ok(None) => {
             eprintln!("x {package} not found");
@@ -360,6 +368,15 @@ fn relative_location(location: &str, repo_root: &Path) -> String {
     format!("{rel}{suffix}")
 }
 
+fn location_path_and_line(location: &str) -> (&str, Option<usize>) {
+    match location.rsplit_once(':') {
+        Some((path, line)) if line.chars().all(|ch| ch.is_ascii_digit()) => {
+            (path, line.parse::<usize>().ok())
+        }
+        _ => (location, None),
+    }
+}
+
 fn split_location(location: &str) -> (&str, &str) {
     match location.rsplit_once(':') {
         Some((path, line)) if line.chars().all(|ch| ch.is_ascii_digit()) => {
@@ -367,6 +384,62 @@ fn split_location(location: &str) -> (&str, &str) {
         }
         _ => (location, ""),
     }
+}
+
+#[derive(Clone, Copy)]
+enum SnippetMode {
+    Add,
+    Remove,
+}
+
+fn show_snippet(
+    file_path: &str,
+    line_num: usize,
+    context: usize,
+    mode: SnippetMode,
+    preview: bool,
+) {
+    if line_num == 0 {
+        return;
+    }
+
+    let Ok(content) = fs::read_to_string(file_path) else {
+        return;
+    };
+
+    let lines: Vec<&str> = content.split('\n').collect();
+    let start = line_num.saturating_sub(context + 1);
+    let end = usize::min(lines.len(), line_num + context);
+    if start >= end {
+        return;
+    }
+
+    let path = Path::new(file_path);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(file_path);
+    let header_suffix = if preview { " (preview)" } else { "" };
+
+    println!();
+    println!("  ┌── {file_name}{header_suffix} ───");
+    for (offset, line) in lines[start..end].iter().enumerate() {
+        let number = start + offset + 1;
+        match mode {
+            SnippetMode::Add => {
+                let marker = if number == line_num { '+' } else { ' ' };
+                println!("  │ {marker} {number:4} │ {line}");
+            }
+            SnippetMode::Remove => {
+                if number == line_num {
+                    println!("  │ - {number:4} │ {line}");
+                } else {
+                    println!("  │   {number:4} │ {line}");
+                }
+            }
+        }
+    }
+    println!("  └{}", "─".repeat(40));
 }
 
 fn normalize_source_filter(value: &str) -> Option<&'static str> {

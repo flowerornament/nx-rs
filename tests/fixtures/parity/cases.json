@@ -1,7 +1,8 @@
 [
   {
     "id": "where_found",
-    "args": ["where", "ripgrep"]
+    "args": ["where", "ripgrep"],
+    "rust_parity": true
   },
   {
     "id": "where_not_found",
@@ -39,7 +40,8 @@
   },
   {
     "id": "remove_dry_run",
-    "args": ["remove", "--dry-run", "ripgrep"]
+    "args": ["remove", "--dry-run", "ripgrep"],
+    "rust_parity": true
   },
   {
     "id": "rebuild_preflight_untracked_nix",

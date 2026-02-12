@@ -25,6 +25,7 @@ help:
     @echo "  just parity-check    # Run Python parity harness against captured baselines"
     @echo "  just parity-check-rust # Run Rust parity subset against Python baselines"
     @echo "  just parity-check-python # Explicit Python parity check"
+    @echo "  just test-system     # Run system command integration matrix with stubs"
     @echo "  just parity-capture  # Refresh parity baselines from Python reference"
     @echo
     @echo "Raw Commands"
@@ -93,6 +94,11 @@ lint:
 # Run full tests.
 test:
     @cargo test {{STRICT_FLAGS}}
+
+# Run system command integration matrix with deterministic stubs.
+test-system:
+    @cargo build --quiet --bin nx-rs
+    @cargo test --test system_command_matrix -- --nocapture
 
 # Validate parity fixtures against captured Python baselines.
 parity-check:

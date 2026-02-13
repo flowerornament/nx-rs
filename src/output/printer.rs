@@ -14,6 +14,7 @@ pub struct Printer {
     style: OutputStyle,
 }
 
+#[allow(clippy::unused_self)] // methods that don't yet use self will when style-aware output lands
 impl Printer {
     pub fn new(style: OutputStyle) -> Self {
         Self { style }
@@ -125,8 +126,7 @@ fn nth_char_boundary(input: &str, n: usize) -> usize {
     input
         .char_indices()
         .nth(n)
-        .map(|(idx, _)| idx)
-        .unwrap_or(input.len())
+        .map_or(input.len(), |(idx, _)| idx)
 }
 
 #[cfg(test)]

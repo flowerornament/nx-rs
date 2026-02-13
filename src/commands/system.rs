@@ -99,7 +99,7 @@ pub fn cmd_rebuild(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
     do_rebuild(args, ctx)
 }
 
-/// Returns stderr.trim() if non-empty, otherwise stdout.trim().
+/// Returns `stderr.trim()` if non-empty, otherwise `stdout.trim()`.
 fn first_nonempty_output(output: &CapturedCommand) -> &str {
     let stderr = output.stderr.trim();
     if !stderr.is_empty() {
@@ -140,13 +140,14 @@ fn check_git_preflight(ctx: &AppContext) -> Result<(), i32> {
         return Err(1);
     }
 
+    #[allow(clippy::case_sensitive_file_extension_comparisons)] // .nix is always lowercase
     let mut untracked: Vec<&str> = output
         .stdout
         .lines()
         .map(str::trim)
         .filter(|line| line.ends_with(".nix"))
         .collect();
-    untracked.sort();
+    untracked.sort_unstable();
 
     if untracked.is_empty() {
         ctx.printer.success("Git preflight passed");
@@ -155,14 +156,16 @@ fn check_git_preflight(ctx: &AppContext) -> Result<(), i32> {
 
     ctx.printer
         .error("Untracked .nix files would be ignored by flake evaluation");
-    println!("\n  Track these files before rebuild:");
+    println!();
+    ctx.printer.detail("Track these files before rebuild:");
     for rel_path in &untracked {
-        println!("  - {rel_path}");
+        ctx.printer.detail(&format!("- {rel_path}"));
     }
-    println!(
-        "\n  Run: git -C \"{}\" add <files>",
+    println!();
+    ctx.printer.detail(&format!(
+        "Run: git -C \"{}\" add <files>",
         ctx.repo_root.display()
-    );
+    ));
     Err(1)
 }
 

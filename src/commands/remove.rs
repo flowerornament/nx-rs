@@ -80,6 +80,7 @@ fn remove_single_package(package: &str, args: &RemoveArgs, ctx: &AppContext) -> 
         return Err(1);
     }
 
+    #[allow(clippy::map_unwrap_or)] // map+unwrap_or_else reads better than map_or_else here
     let file_name = location
         .path()
         .file_name()

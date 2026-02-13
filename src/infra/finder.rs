@@ -169,14 +169,14 @@ mod tests {
         write_nix(
             root,
             "packages/nix/cli.nix",
-            r#"{ pkgs }:
+            r"{ pkgs }:
 [
   neovim
   python3
   ripgrep
   pyyaml
 ]
-"#,
+",
         );
 
         for alias in ["nvim", "python", "rg", "py-yaml"] {

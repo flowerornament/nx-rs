@@ -1,3 +1,5 @@
+#![allow(clippy::missing_errors_doc)] // test utilities don't need doc sections
+
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;

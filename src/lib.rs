@@ -10,10 +10,12 @@ mod domain;
 mod infra;
 mod output;
 
+#[must_use]
 pub fn run() -> ExitCode {
     run_from(std::env::args_os())
 }
 
+#[must_use]
 pub fn run_from<I, T>(args: I) -> ExitCode
 where
     I: IntoIterator<Item = T>,
@@ -25,10 +27,12 @@ where
         Err(err) => {
             let code = err.exit_code();
             let _ = err.print();
-            return ExitCode::from((code.min(255)) as u8);
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            return ExitCode::from(code.min(255) as u8);
         }
     };
 
     let code = app::execute(parsed);
-    ExitCode::from((code.clamp(0, 255)) as u8)
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    ExitCode::from(code.clamp(0, 255) as u8)
 }

@@ -36,6 +36,7 @@ pub enum SnippetMode {
     Remove,
 }
 
+#[allow(clippy::similar_names)] // content vs context are descriptive
 pub fn show_snippet(
     file_path: &Path,
     line_num: usize,
@@ -58,6 +59,7 @@ pub fn show_snippet(
         return;
     }
 
+    #[allow(clippy::map_unwrap_or)] // map+unwrap_or_else reads better than map_or_else here
     let file_name = file_path
         .file_name()
         .and_then(|name| name.to_str())

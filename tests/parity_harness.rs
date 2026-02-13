@@ -583,7 +583,7 @@ fn normalize_text(input: &str, repo_root: &Path, workspace_root: &Path) -> Strin
     let mut normalized = stripped.replace("\r\n", "\n");
     normalized = replace_path_tokens(normalized, repo_root, "<REPO_ROOT>");
     normalized = replace_path_tokens(normalized, workspace_root, "<WORKSPACE_ROOT>");
-    normalized = normalize_unittest_timing(normalized);
+    normalized = normalize_unittest_timing(&normalized);
     normalized
         .lines()
         .map(str::trim_end)
@@ -593,9 +593,9 @@ fn normalize_text(input: &str, repo_root: &Path, workspace_root: &Path) -> Strin
         .to_string()
 }
 
-fn normalize_unittest_timing(input: String) -> String {
+fn normalize_unittest_timing(input: &str) -> String {
     unittest_timing_regex()
-        .replace_all(&input, |caps: &regex::Captures<'_>| {
+        .replace_all(input, |caps: &regex::Captures<'_>| {
             format!("{}0.000{}", &caps[1], &caps[2])
         })
         .into_owned()
@@ -632,7 +632,7 @@ fn normalize_unittest_timing_stabilizes_elapsed_seconds() {
     let input = "\
 Ran 1 test in 0.001s
 Ran 12 tests in 1.987s";
-    let output = normalize_unittest_timing(input.to_string());
+    let output = normalize_unittest_timing(input);
     assert_eq!(
         output,
         "\
@@ -644,6 +644,6 @@ Ran 12 tests in 0.000s"
 #[test]
 fn normalize_unittest_timing_leaves_other_lines_unchanged() {
     let input = "running 1 test\npass";
-    let output = normalize_unittest_timing(input.to_string());
+    let output = normalize_unittest_timing(input);
     assert_eq!(output, input);
 }

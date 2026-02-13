@@ -79,7 +79,5 @@ fn git_repo_root() -> Option<PathBuf> {
 }
 
 pub(crate) fn dirs_home() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
+    env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
 }

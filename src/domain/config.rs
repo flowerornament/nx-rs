@@ -1,6 +1,3 @@
-// No consumers yet — downstream commands wire in via .11/.13
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -12,12 +9,14 @@ use walkdir::WalkDir;
 ///
 /// Discovers files by scanning `# nx:` comment tags on the first line,
 /// then provides accessors that resolve by keyword match with deterministic fallbacks.
+#[allow(dead_code)] // field readers arrive via .11/.13
 pub struct ConfigFiles {
     repo_root: PathBuf,
     by_purpose: BTreeMap<String, PathBuf>,
     all_files: Vec<PathBuf>,
 }
 
+#[allow(dead_code)] // accessors used via .11/.13
 impl ConfigFiles {
     /// Scan the repo for `.nix` files and read their `# nx:` purpose tags.
     ///

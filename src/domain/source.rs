@@ -1,11 +1,13 @@
-// No consumers yet — downstream commands wire in via .12/.13
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
 /// Result from searching a package source.
+///
+/// `PartialEq` is derived for test assertions on confidence values.
+/// The `f64` `confidence` field is safe here because values are deserialized
+/// from JSON (exact decimal representations) and compared with `f64::EPSILON`.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)] // search command consumers arrive via .12/.13
 pub struct SourceResult {
     pub name: String,
     pub source: String,
@@ -17,6 +19,7 @@ pub struct SourceResult {
     pub flake_url: Option<String>,
 }
 
+#[allow(dead_code)] // search command consumers arrive via .12/.13
 impl SourceResult {
     pub fn new(name: impl Into<String>, source: impl Into<String>) -> Self {
         Self {

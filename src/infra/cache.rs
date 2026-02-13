@@ -1,6 +1,3 @@
-// No consumers yet — downstream commands wire in via .12/.13
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,11 +7,17 @@ use serde_json::Value;
 
 use crate::domain::source::{SourceResult, normalize_name};
 
+// All items below are dead until the search command lands (.12/.13).
+
+#[allow(dead_code)]
 const CACHE_SCHEMA_VERSION: u64 = 1;
+#[allow(dead_code)]
 const CACHE_FILENAME: &str = "packages_v4.json";
+#[allow(dead_code)]
 const SOURCE_PRIORITY: &[&str] = &["nxs", "nur", "homebrew", "cask"];
 
 /// Maps source names to flake.lock input names for revision lookup.
+#[allow(dead_code)]
 fn source_to_input(source: &str) -> &str {
     match source {
         "nxs" => "nxs",
@@ -29,12 +32,14 @@ fn source_to_input(source: &str) -> &str {
 ///
 /// SPEC §5: schema envelope, revision-aware keys, alias-normalized lookups,
 /// source-priority retrieval, homebrew-only guardrail.
+#[allow(dead_code)]
 pub struct MultiSourceCache {
     cache_path: PathBuf,
     revisions: HashMap<String, String>,
     entries: HashMap<String, Value>,
 }
 
+#[allow(dead_code)]
 impl MultiSourceCache {
     /// Load (or initialize) the cache for a given repo root.
     ///
@@ -63,10 +68,7 @@ impl MultiSourceCache {
     /// Get the flake.lock revision for a source (12-char truncated hash).
     pub fn get_revision(&self, source: &str) -> &str {
         let input = source_to_input(source);
-        self.revisions
-            .get(input)
-            .map(String::as_str)
-            .unwrap_or("unknown")
+        self.revisions.get(input).map_or("unknown", String::as_str)
     }
 
     /// Look up a single cached result by name + source.
@@ -206,7 +208,8 @@ impl MultiSourceCache {
     }
 }
 
-/// Build a JSON value from a SourceResult for cache storage.
+/// Build a JSON value from a `SourceResult` for cache storage.
+#[allow(dead_code)]
 fn entry_to_value(result: &SourceResult) -> Value {
     serde_json::json!({
         "attr": result.attr,
@@ -219,6 +222,7 @@ fn entry_to_value(result: &SourceResult) -> Value {
 }
 
 /// Extract the revision string from a flake.lock node.
+#[allow(dead_code)]
 fn node_rev(node: &Value) -> Option<&str> {
     node.get("locked")
         .and_then(|l| l.get("rev"))
@@ -226,6 +230,7 @@ fn node_rev(node: &Value) -> Option<&str> {
 }
 
 /// Parse flake.lock to extract source revisions (12-char truncated).
+#[allow(dead_code)]
 fn load_revisions(repo_root: &Path) -> HashMap<String, String> {
     let lock_path = repo_root.join("flake.lock");
     let Ok(content) = fs::read_to_string(&lock_path) else {
@@ -261,6 +266,7 @@ fn load_revisions(repo_root: &Path) -> HashMap<String, String> {
 /// Load and validate cache entries from disk.
 ///
 /// Returns empty map on missing file, parse error, or schema mismatch.
+#[allow(dead_code)]
 fn load_entries(cache_path: &Path) -> HashMap<String, Value> {
     let Ok(content) = fs::read_to_string(cache_path) else {
         return HashMap::new();
@@ -287,10 +293,12 @@ fn load_entries(cache_path: &Path) -> HashMap<String, Value> {
 }
 
 /// Truncate a revision hash to 12 characters (git short hash convention).
+#[allow(dead_code)]
 fn truncate_rev(rev: &str) -> String {
     rev[..rev.len().min(12)].to_string()
 }
 
+#[allow(dead_code)]
 fn dirs_cache() -> PathBuf {
     crate::app::dirs_home().join(".cache")
 }

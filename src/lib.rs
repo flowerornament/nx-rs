@@ -6,6 +6,7 @@ use clap::Parser;
 mod app;
 mod cli;
 mod commands;
+mod domain;
 mod infra;
 mod output;
 

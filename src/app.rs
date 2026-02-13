@@ -10,6 +10,7 @@ use crate::commands::install::cmd_install;
 use crate::commands::query::{cmd_info, cmd_installed, cmd_list, cmd_status, cmd_where};
 use crate::commands::remove::cmd_remove;
 use crate::commands::system::{cmd_rebuild, cmd_test, cmd_update};
+use crate::domain::config::ConfigFiles;
 use crate::output::printer::Printer;
 use crate::output::style::OutputStyle;
 
@@ -25,7 +26,8 @@ pub fn execute(cli: Cli) -> i32 {
         }
     };
 
-    let ctx = AppContext::new(repo_root, printer);
+    let config_files = ConfigFiles::discover(&repo_root);
+    let ctx = AppContext::new(repo_root, printer, config_files);
 
     match cli.command {
         CommandKind::Install(args) => cmd_install(&args, &ctx),

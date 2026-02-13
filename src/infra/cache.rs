@@ -163,30 +163,19 @@ impl MultiSourceCache {
     /// Remove cached entries for a package, optionally filtered by source.
     pub fn invalidate(&mut self, name: &str, source: Option<&str>) {
         let normalized = normalize_name(name);
-        let keys_to_delete: Vec<String> = self
-            .entries
-            .keys()
-            .filter(|k| {
-                let mut parts = k.splitn(3, '|');
-                let Some(cached_name) = parts.next() else {
-                    return false;
-                };
-                let Some(cached_source) = parts.next() else {
-                    return false;
-                };
-                cached_name == normalized && source.is_none_or(|s| cached_source == s)
-            })
-            .cloned()
-            .collect();
+        let before = self.entries.len();
 
-        if keys_to_delete.is_empty() {
-            return;
-        }
+        self.entries.retain(|k, _| {
+            let mut parts = k.splitn(3, '|');
+            let (Some(cached_name), Some(cached_source)) = (parts.next(), parts.next()) else {
+                return true;
+            };
+            !(cached_name == normalized && source.is_none_or(|s| cached_source == s))
+        });
 
-        for key in &keys_to_delete {
-            self.entries.remove(key);
+        if self.entries.len() < before {
+            self.save();
         }
-        self.save();
     }
 
     /// Clear entire cache.

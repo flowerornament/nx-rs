@@ -167,8 +167,14 @@ impl MultiSourceCache {
             .entries
             .keys()
             .filter(|k| {
-                let parts: Vec<&str> = k.split('|').collect();
-                parts.len() >= 2 && parts[0] == normalized && source.is_none_or(|s| parts[1] == s)
+                let mut parts = k.splitn(3, '|');
+                let Some(cached_name) = parts.next() else {
+                    return false;
+                };
+                let Some(cached_source) = parts.next() else {
+                    return false;
+                };
+                cached_name == normalized && source.is_none_or(|s| cached_source == s)
             })
             .cloned()
             .collect();
@@ -222,23 +228,15 @@ fn entry_to_value(result: &SourceResult) -> Value {
 /// Parse flake.lock to extract source revisions (12-char truncated).
 fn load_revisions(repo_root: &Path) -> HashMap<String, String> {
     let lock_path = repo_root.join("flake.lock");
-    let content = match fs::read_to_string(&lock_path) {
-        Ok(c) => c,
-        Err(_) => return HashMap::new(),
+    let Ok(content) = fs::read_to_string(&lock_path) else {
+        return HashMap::new();
     };
-
-    let lock: Value = match serde_json::from_str(&content) {
-        Ok(v) => v,
-        Err(_) => {
-            let mut m = HashMap::new();
-            m.insert("nxs".to_string(), "unknown".to_string());
-            return m;
-        }
+    let Ok(lock) = serde_json::from_str::<Value>(&content) else {
+        return HashMap::from([("nxs".to_string(), "unknown".to_string())]);
     };
 
     let mut revisions = HashMap::new();
-    let nodes = lock.get("nodes").and_then(Value::as_object);
-    let Some(nodes) = nodes else {
+    let Some(nodes) = lock.get("nodes").and_then(Value::as_object) else {
         return revisions;
     };
 
@@ -249,7 +247,7 @@ fn load_revisions(repo_root: &Path) -> HashMap<String, String> {
         .and_then(|l| l.get("rev"))
         .and_then(Value::as_str)
     {
-        revisions.insert("nxs".to_string(), rev.chars().take(12).collect());
+        revisions.insert("nxs".to_string(), truncate_rev(rev));
     }
 
     // All other inputs (except root)
@@ -262,7 +260,7 @@ fn load_revisions(repo_root: &Path) -> HashMap<String, String> {
             .and_then(|l| l.get("rev"))
             .and_then(Value::as_str)
         {
-            revisions.insert(name.clone(), rev.chars().take(12).collect());
+            revisions.insert(name.clone(), truncate_rev(rev));
         }
     }
 
@@ -273,35 +271,33 @@ fn load_revisions(repo_root: &Path) -> HashMap<String, String> {
 ///
 /// Returns empty map on missing file, parse error, or schema mismatch.
 fn load_entries(cache_path: &Path) -> HashMap<String, Value> {
-    let content = match fs::read_to_string(cache_path) {
-        Ok(c) => c,
-        Err(_) => return HashMap::new(),
+    let Ok(content) = fs::read_to_string(cache_path) else {
+        return HashMap::new();
+    };
+    let Ok(raw) = serde_json::from_str::<Value>(&content) else {
+        return HashMap::new();
+    };
+    let Some(obj) = raw.as_object() else {
+        return HashMap::new();
     };
 
-    let raw: Value = match serde_json::from_str(&content) {
-        Ok(v) => v,
-        Err(_) => return HashMap::new(),
-    };
-
-    let obj = match raw.as_object() {
-        Some(o) => o,
-        None => return HashMap::new(),
-    };
-
-    // Schema version gate
     if obj.get("schema_version").and_then(Value::as_u64) != Some(CACHE_SCHEMA_VERSION) {
         return HashMap::new();
     }
 
-    let entries = match obj.get("entries").and_then(Value::as_object) {
-        Some(e) => e,
-        None => return HashMap::new(),
+    let Some(entries) = obj.get("entries").and_then(Value::as_object) else {
+        return HashMap::new();
     };
 
     entries
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect()
+}
+
+/// Truncate a revision hash to 12 characters (git short hash convention).
+fn truncate_rev(rev: &str) -> String {
+    rev[..rev.len().min(12)].to_string()
 }
 
 fn dirs_cache() -> PathBuf {

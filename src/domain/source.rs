@@ -64,12 +64,13 @@ static NAME_MAPPINGS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::
 /// Normalize a package name through alias mapping (case-insensitive).
 pub fn normalize_name(name: &str) -> String {
     let lower = name.to_lowercase();
-    NAME_MAPPINGS
+    match NAME_MAPPINGS
         .get(lower.as_str())
-        .copied()
-        .or_else(|| NAME_MAPPINGS.get(name).copied())
-        .unwrap_or(&lower)
-        .to_lowercase()
+        .or_else(|| NAME_MAPPINGS.get(name))
+    {
+        Some(mapped) => mapped.to_lowercase(),
+        None => lower,
+    }
 }
 
 #[cfg(test)]

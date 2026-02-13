@@ -126,7 +126,7 @@ impl MultiSourceCache {
     ///
     /// Skips results with no `attr`.
     pub fn set(&mut self, result: &SourceResult) {
-        if result.attr.is_none() {
+        if result.attr.as_deref().is_none_or(str::is_empty) {
             return;
         }
         let key = self.cache_key(&result.name, &result.source);
@@ -150,7 +150,7 @@ impl MultiSourceCache {
         }
 
         for result in best.values() {
-            if result.attr.is_none() {
+            if result.attr.as_deref().is_none_or(str::is_empty) {
                 continue;
             }
             let key = self.cache_key(&result.name, &result.source);

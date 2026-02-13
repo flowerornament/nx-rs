@@ -5,16 +5,17 @@ use std::path::Path;
 use anyhow::Context;
 use regex::Regex;
 
+use crate::domain::location::PackageLocation;
 use crate::domain::source::normalize_name;
 use crate::infra::config_scan::{collect_nix_files, scan_packages};
 
 #[derive(Debug, Clone)]
 pub struct PackageMatch {
     pub name: String,
-    pub location: String,
+    pub location: PackageLocation,
 }
 
-pub fn find_package(name: &str, repo_root: &Path) -> anyhow::Result<Option<String>> {
+pub fn find_package(name: &str, repo_root: &Path) -> anyhow::Result<Option<PackageLocation>> {
     let mapped = normalize_name(name);
     let mapped_location = find_package_exact(&mapped, repo_root)?;
     if mapped_location.is_some() {
@@ -48,7 +49,7 @@ pub fn find_package_fuzzy(name: &str, repo_root: &Path) -> anyhow::Result<Option
     Ok(None)
 }
 
-fn find_package_exact(name: &str, repo_root: &Path) -> anyhow::Result<Option<String>> {
+fn find_package_exact(name: &str, repo_root: &Path) -> anyhow::Result<Option<PackageLocation>> {
     let escaped = regex::escape(name);
     let patterns = build_patterns(&escaped)?;
 
@@ -64,7 +65,11 @@ fn find_package_exact(name: &str, repo_root: &Path) -> anyhow::Result<Option<Str
             }
             if patterns.iter().any(|pattern| pattern.is_match(line)) {
                 let output_path = fs::canonicalize(&file_path).unwrap_or(file_path.clone());
-                let location = format!("{}:{}", output_path.display(), line_index + 1);
+                let location = PackageLocation::parse(&format!(
+                    "{}:{}",
+                    output_path.display(),
+                    line_index + 1
+                ));
                 return Ok(Some(location));
             }
         }

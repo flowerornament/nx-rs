@@ -3,9 +3,7 @@ use serde_json::{Map, Value};
 
 use crate::cli::{InfoArgs, InstalledArgs, ListArgs, WhereArgs};
 use crate::commands::context::AppContext;
-use crate::commands::shared::{
-    SnippetMode, location_path_and_line, relative_location, show_snippet,
-};
+use crate::commands::shared::{SnippetMode, relative_location, show_snippet};
 use crate::infra::config_scan::{PackageBuckets, scan_packages};
 use crate::infra::finder::{PackageMatch, find_package, find_package_fuzzy};
 use crate::output::json::to_string_compact;
@@ -25,9 +23,8 @@ pub fn cmd_where(args: &WhereArgs, ctx: &AppContext) -> i32 {
                 "+ {package} at {}",
                 relative_location(&location, &ctx.repo_root)
             );
-            let (file_path, line_num) = location_path_and_line(&location);
-            if let Some(line_num) = line_num {
-                show_snippet(file_path, line_num, 2, SnippetMode::Add, false);
+            if let Some(line_num) = location.line() {
+                show_snippet(location.path(), line_num, 2, SnippetMode::Add, false);
             }
         }
         Ok(None) => {
@@ -133,7 +130,7 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
         let output = InfoJsonOutput {
             name: package.clone(),
             installed: location.is_some(),
-            location,
+            location: location.map(|value| value.to_string()),
             sources: Vec::new(),
             hm_module: None,
             darwin_service: None,
@@ -162,9 +159,8 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
             "  Location: {}",
             relative_location(&location, &ctx.repo_root)
         );
-        let (file_path, line_num) = location_path_and_line(&location);
-        if let Some(line_num) = line_num {
-            show_snippet(file_path, line_num, 1, SnippetMode::Add, false);
+        if let Some(line_num) = location.line() {
+            show_snippet(location.path(), line_num, 1, SnippetMode::Add, false);
         }
     } else {
         eprintln!("x {package} not found");
@@ -255,7 +251,7 @@ fn render_installed_json(results: &[InstalledResult]) -> i32 {
         let entry = match &result.matched {
             Some(found) => InstalledEntry {
                 match_name: Some(found.name.clone()),
-                location: Some(found.location.clone()),
+                location: Some(found.location.to_string()),
             },
             None => {
                 all_installed = false;

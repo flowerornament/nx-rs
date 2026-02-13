@@ -1,14 +1,16 @@
 use std::fs;
 use std::path::Path;
 
-pub fn relative_location(location: &str, repo_root: &Path) -> String {
-    let (path_part, suffix) = split_location(location);
+use crate::domain::location::PackageLocation;
+
+pub fn relative_location(location: &PackageLocation, repo_root: &Path) -> String {
+    let path_part = location.path().display().to_string();
     let raw_root = repo_root.display().to_string();
     let canonical_root = fs::canonicalize(repo_root)
         .ok()
         .map(|path| path.display().to_string());
 
-    let mut rel = path_part.to_string();
+    let mut rel = path_part;
     if let Some(root) = canonical_root {
         let prefix = format!("{root}/");
         rel = rel.strip_prefix(&prefix).unwrap_or(&rel).to_string();
@@ -16,24 +18,10 @@ pub fn relative_location(location: &str, repo_root: &Path) -> String {
     let raw_prefix = format!("{raw_root}/");
     rel = rel.strip_prefix(&raw_prefix).unwrap_or(&rel).to_string();
 
-    format!("{rel}{suffix}")
-}
-
-pub fn location_path_and_line(location: &str) -> (&str, Option<usize>) {
-    match location.rsplit_once(':') {
-        Some((path, line)) if line.chars().all(|ch| ch.is_ascii_digit()) => {
-            (path, line.parse::<usize>().ok())
-        }
-        _ => (location, None),
-    }
-}
-
-fn split_location(location: &str) -> (&str, &str) {
-    match location.rsplit_once(':') {
-        Some((path, line)) if line.chars().all(|ch| ch.is_ascii_digit()) => {
-            (path, &location[path.len()..])
-        }
-        _ => (location, ""),
+    if let Some(line) = location.line() {
+        format!("{rel}:{line}")
+    } else {
+        rel
     }
 }
 
@@ -44,7 +32,7 @@ pub enum SnippetMode {
 }
 
 pub fn show_snippet(
-    file_path: &str,
+    file_path: &Path,
     line_num: usize,
     context: usize,
     mode: SnippetMode,
@@ -65,11 +53,11 @@ pub fn show_snippet(
         return;
     }
 
-    let path = Path::new(file_path);
-    let file_name = path
+    let file_name = file_path
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or(file_path);
+        .map(str::to_string)
+        .unwrap_or_else(|| file_path.display().to_string());
     let header_suffix = if preview { " (preview)" } else { "" };
 
     println!();

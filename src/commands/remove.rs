@@ -5,9 +5,7 @@ use anyhow::Context;
 
 use crate::cli::RemoveArgs;
 use crate::commands::context::AppContext;
-use crate::commands::shared::{
-    SnippetMode, location_path_and_line, relative_location, show_snippet,
-};
+use crate::commands::shared::{SnippetMode, relative_location, show_snippet};
 use crate::infra::finder::find_package;
 
 pub fn cmd_remove(args: &RemoveArgs, ctx: &AppContext) -> i32 {
@@ -28,9 +26,14 @@ pub fn cmd_remove(args: &RemoveArgs, ctx: &AppContext) -> i32 {
                     "Location: {}",
                     relative_location(&location, &ctx.repo_root)
                 ));
-                let (file_path, line_num) = location_path_and_line(&location);
-                if let Some(line_num) = line_num {
-                    show_snippet(file_path, line_num, 1, SnippetMode::Remove, args.dry_run);
+                if let Some(line_num) = location.line() {
+                    show_snippet(
+                        location.path(),
+                        line_num,
+                        1,
+                        SnippetMode::Remove,
+                        args.dry_run,
+                    );
                     if args.dry_run {
                         println!("\n- Would remove {package}");
                         continue;
@@ -44,16 +47,18 @@ pub fn cmd_remove(args: &RemoveArgs, ctx: &AppContext) -> i32 {
                         }
                     }
 
-                    if let Err(err) = remove_line_directly(file_path, line_num) {
+                    if let Err(err) = remove_line_directly(location.path(), line_num) {
                         ctx.printer
                             .error(&format!("Failed to remove {package}: {err}"));
                         return 1;
                     }
 
-                    let file_name = Path::new(file_path)
+                    let file_name = location
+                        .path()
                         .file_name()
                         .and_then(|name| name.to_str())
-                        .unwrap_or(file_path);
+                        .map(str::to_string)
+                        .unwrap_or_else(|| location.path().display().to_string());
                     println!("* {file_name}");
                     println!();
                     ctx.printer
@@ -76,10 +81,11 @@ pub fn cmd_remove(args: &RemoveArgs, ctx: &AppContext) -> i32 {
     0
 }
 
-fn remove_line_directly(file_path: &str, line_num: usize) -> anyhow::Result<()> {
+fn remove_line_directly(file_path: &Path, line_num: usize) -> anyhow::Result<()> {
     anyhow::ensure!(line_num > 0, "invalid line number");
 
-    let content = fs::read_to_string(file_path).with_context(|| format!("reading {file_path}"))?;
+    let content = fs::read_to_string(file_path)
+        .with_context(|| format!("reading {}", file_path.display()))?;
     let mut lines: Vec<&str> = content.lines().collect();
     anyhow::ensure!(
         line_num <= lines.len(),
@@ -93,5 +99,5 @@ fn remove_line_directly(file_path: &str, line_num: usize) -> anyhow::Result<()> 
         updated.push('\n');
     }
 
-    fs::write(file_path, updated).with_context(|| format!("writing {file_path}"))
+    fs::write(file_path, updated).with_context(|| format!("writing {}", file_path.display()))
 }

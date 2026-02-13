@@ -100,7 +100,7 @@ fn is_alias_rhs_for(line: &str, name: &str) -> bool {
         return false;
     }
     let mut parts = line.splitn(2, '=');
-    let _lhs = parts.next();
+    let _ = parts.next();
     let rhs = parts.next().unwrap_or_default();
     let quoted = format!("\"{name}\"");
     rhs.contains(&quoted)

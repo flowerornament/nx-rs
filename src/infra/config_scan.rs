@@ -25,8 +25,22 @@ pub fn scan_packages(repo_root: &Path) -> anyhow::Result<PackageBuckets> {
         let content = fs::read_to_string(&nix_file)
             .with_context(|| format!("reading {}", nix_file.display()))?;
         collect_nixpkgs_packages(&content, &mut out, &mut seen);
-        collect_homebrew_brews(&nix_file, &content, &mut out, &mut seen);
-        collect_homebrew_casks(&nix_file, &content, &mut out, &mut seen);
+        collect_homebrew_items(
+            &nix_file,
+            &content,
+            "brews.nix",
+            brews_regex(),
+            &mut out.brews,
+            &mut seen.brews,
+        );
+        collect_homebrew_items(
+            &nix_file,
+            &content,
+            "casks.nix",
+            casks_regex(),
+            &mut out.casks,
+            &mut seen.casks,
+        );
         collect_mas_apps(&content, &mut out, &mut seen);
         collect_launchd_services(&content, &mut out, &mut seen);
     }
@@ -82,13 +96,15 @@ fn collect_nixpkgs_packages(content: &str, out: &mut PackageBuckets, seen: &mut 
     }
 }
 
-fn collect_homebrew_brews(
+fn collect_homebrew_items(
     nix_file: &Path,
     content: &str,
-    out: &mut PackageBuckets,
-    seen: &mut SourceSeen,
+    file_name: &str,
+    regex: &Regex,
+    out: &mut Vec<String>,
+    seen: &mut HashSet<String>,
 ) {
-    if nix_file.file_name().and_then(|name| name.to_str()) == Some("brews.nix")
+    if nix_file.file_name().and_then(|name| name.to_str()) == Some(file_name)
         && nix_file
             .parent()
             .and_then(|parent| parent.file_name())
@@ -96,40 +112,14 @@ fn collect_homebrew_brews(
             == Some("homebrew")
     {
         for item in quoted_item_regex().captures_iter(content) {
-            push_unique(item[1].to_string(), &mut out.brews, &mut seen.brews);
+            push_unique(item[1].to_string(), out, seen);
         }
         return;
     }
 
-    for captures in brews_regex().captures_iter(content) {
+    for captures in regex.captures_iter(content) {
         for item in quoted_item_regex().captures_iter(&captures[1]) {
-            push_unique(item[1].to_string(), &mut out.brews, &mut seen.brews);
-        }
-    }
-}
-
-fn collect_homebrew_casks(
-    nix_file: &Path,
-    content: &str,
-    out: &mut PackageBuckets,
-    seen: &mut SourceSeen,
-) {
-    if nix_file.file_name().and_then(|name| name.to_str()) == Some("casks.nix")
-        && nix_file
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|name| name.to_str())
-            == Some("homebrew")
-    {
-        for item in quoted_item_regex().captures_iter(content) {
-            push_unique(item[1].to_string(), &mut out.casks, &mut seen.casks);
-        }
-        return;
-    }
-
-    for captures in casks_regex().captures_iter(content) {
-        for item in quoted_item_regex().captures_iter(&captures[1]) {
-            push_unique(item[1].to_string(), &mut out.casks, &mut seen.casks);
+            push_unique(item[1].to_string(), out, seen);
         }
     }
 }
@@ -153,21 +143,27 @@ fn collect_launchd_services(content: &str, out: &mut PackageBuckets, seen: &mut 
 }
 
 fn collect_list_items(block: &str, out: &mut Vec<String>, seen: &mut HashSet<String>) {
-    for raw_line in block.lines() {
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') || line == "[" || line == "]" || line == "{" {
-            continue;
-        }
-        if line.starts_with("inputs.") || line.starts_with("++") {
-            continue;
-        }
-        if let Some(captures) = nix_ident_regex().captures(line) {
-            let token = captures[1].to_string();
-            if !nix_keywords().contains(token.as_str()) {
-                push_unique(token, out, seen);
-            }
-        }
+    for token in block.lines().filter_map(extract_package_name) {
+        push_unique(token, out, seen);
     }
+}
+
+fn extract_package_name(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('#')
+        || matches!(trimmed, "[" | "]" | "{")
+        || trimmed.starts_with("inputs.")
+        || trimmed.starts_with("++")
+    {
+        return None;
+    }
+    let captures = nix_ident_regex().captures(trimmed)?;
+    let token = captures[1].to_string();
+    if nix_keywords().contains(token.as_str()) {
+        return None;
+    }
+    Some(token)
 }
 
 fn push_unique(item: String, out: &mut Vec<String>, seen: &mut HashSet<String>) {

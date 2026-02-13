@@ -218,6 +218,13 @@ fn entry_to_value(result: &SourceResult) -> Value {
     })
 }
 
+/// Extract the revision string from a flake.lock node.
+fn node_rev(node: &Value) -> Option<&str> {
+    node.get("locked")
+        .and_then(|l| l.get("rev"))
+        .and_then(Value::as_str)
+}
+
 /// Parse flake.lock to extract source revisions (12-char truncated).
 fn load_revisions(repo_root: &Path) -> HashMap<String, String> {
     let lock_path = repo_root.join("flake.lock");
@@ -234,12 +241,7 @@ fn load_revisions(repo_root: &Path) -> HashMap<String, String> {
     };
 
     // nixpkgs → "nxs"
-    if let Some(rev) = nodes
-        .get("nixpkgs")
-        .and_then(|n| n.get("locked"))
-        .and_then(|l| l.get("rev"))
-        .and_then(Value::as_str)
-    {
+    if let Some(rev) = nodes.get("nixpkgs").and_then(node_rev) {
         revisions.insert("nxs".to_string(), truncate_rev(rev));
     }
 
@@ -248,11 +250,7 @@ fn load_revisions(repo_root: &Path) -> HashMap<String, String> {
         if name == "root" {
             continue;
         }
-        if let Some(rev) = data
-            .get("locked")
-            .and_then(|l| l.get("rev"))
-            .and_then(Value::as_str)
-        {
+        if let Some(rev) = node_rev(data) {
             revisions.insert(name.clone(), truncate_rev(rev));
         }
     }
@@ -294,10 +292,7 @@ fn truncate_rev(rev: &str) -> String {
 }
 
 fn dirs_cache() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
-        .join(".cache")
+    crate::app::dirs_home().join(".cache")
 }
 
 #[cfg(test)]

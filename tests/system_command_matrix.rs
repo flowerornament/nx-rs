@@ -1,10 +1,11 @@
+mod support;
+
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::fs;
 use std::io;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -308,7 +309,7 @@ fn resolve_nx_bin(workspace_root: &Path) -> Result<PathBuf, Box<dyn Error>> {
 
 fn run_case(nx_bin: &Path, repo_base: &Path, case: &MatrixCase) -> Result<(), Box<dyn Error>> {
     let repo_root = TempDir::new()?;
-    copy_tree(repo_base, repo_root.path())?;
+    support::copy_tree(repo_base, repo_root.path())?;
     ensure_test_layout(repo_root.path())?;
 
     let stub_dir = repo_root.path().join(STUB_DIR_NAME);
@@ -462,27 +463,6 @@ fn read_invocations(path: &Path) -> Result<Vec<Invocation>, Box<dyn Error>> {
     Ok(out)
 }
 
-fn copy_tree(src: &Path, dst: &Path) -> Result<(), Box<dyn Error>> {
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-        let file_type = entry.file_type()?;
-
-        if file_type.is_dir() {
-            fs::create_dir_all(&dst_path)?;
-            copy_tree(&src_path, &dst_path)?;
-            continue;
-        }
-
-        if file_type.is_file() {
-            fs::copy(&src_path, &dst_path)?;
-        }
-    }
-
-    Ok(())
-}
-
 fn ensure_test_layout(repo_root: &Path) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(repo_root.join("scripts/nx/tests"))?;
     Ok(())
@@ -498,71 +478,17 @@ fn install_stubs(stub_dir: &Path) -> Result<(), Box<dyn Error>> {
         "python3",
         "darwin-rebuild",
     ] {
-        write_executable(&stub_dir.join(program), STUB_SCRIPT)?;
+        support::write_executable(&stub_dir.join(program), STUB_SCRIPT)?;
     }
-    Ok(())
-}
-
-fn write_executable(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
-    fs::write(path, content)?;
-    let mut permissions = fs::metadata(path)?.permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions)?;
     Ok(())
 }
 
 fn snapshot_repo_files(repo_root: &Path) -> Result<BTreeMap<String, String>, Box<dyn Error>> {
-    let mut files = BTreeMap::new();
-    snapshot_dir(repo_root, repo_root, &mut files)?;
-    Ok(files)
-}
-
-fn snapshot_dir(
-    repo_root: &Path,
-    dir: &Path,
-    out: &mut BTreeMap<String, String>,
-) -> Result<(), Box<dyn Error>> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let rel = path
-            .strip_prefix(repo_root)
-            .map_err(|err| io::Error::other(format!("strip_prefix failed: {err}")))?;
-        let rel_key = rel.to_string_lossy().replace('\\', "/");
-
-        if should_ignore_snapshot_path(&rel_key) {
-            continue;
-        }
-
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            snapshot_dir(repo_root, &path, out)?;
-            continue;
-        }
-
-        if file_type.is_file() {
-            let bytes = fs::read(&path)?;
-            let text = String::from_utf8_lossy(&bytes);
-            out.insert(rel_key, normalize_file_content(&text));
-        }
-    }
-
-    Ok(())
+    support::snapshot_repo_files(repo_root, &|rel| should_ignore_snapshot_path(rel))
 }
 
 fn should_ignore_snapshot_path(rel_path: &str) -> bool {
     rel_path == LOG_FILE_NAME || rel_path == STUB_DIR_NAME || rel_path.starts_with(".system-stubs/")
-}
-
-fn normalize_file_content(input: &str) -> String {
-    input
-        .replace("\r\n", "\n")
-        .lines()
-        .map(str::trim_end)
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim_end()
-        .to_string()
 }
 
 fn normalize_value(input: &str, repo_root: &Path) -> String {

@@ -1,8 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::cli::PassthroughArgs;
 use crate::commands::context::AppContext;
-use crate::infra::shell::{run_captured_command, run_indented_command};
+use crate::infra::shell::{CapturedCommand, run_captured_command, run_indented_command};
 use crate::output::printer::Printer;
 
 const DARWIN_REBUILD: &str = "/run/current-system/sw/bin/darwin-rebuild";
@@ -10,8 +10,8 @@ const DARWIN_REBUILD: &str = "/run/current-system/sw/bin/darwin-rebuild";
 pub fn cmd_update(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
     ctx.printer.action("Updating flake inputs");
 
-    let mut command_args = vec!["flake".to_string(), "update".to_string()];
-    command_args.extend(args.passthrough.iter().cloned());
+    let mut command_args: Vec<&str> = vec!["flake", "update"];
+    command_args.extend(args.passthrough.iter().map(String::as_str));
     let return_code = match run_indented_command(
         "nix",
         &command_args,
@@ -39,35 +39,20 @@ pub fn cmd_update(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
 }
 
 pub fn cmd_test(ctx: &AppContext) -> i32 {
-    let steps: [(&str, &str, Vec<String>, Option<PathBuf>); 3] = [
-        (
-            "ruff",
-            "ruff",
-            vec!["check".to_string(), ".".to_string()],
-            Some(ctx.repo_root.join("scripts/nx")),
-        ),
-        (
-            "mypy",
-            "mypy",
-            vec![".".to_string()],
-            Some(ctx.repo_root.join("scripts/nx")),
-        ),
+    let scripts_nx = ctx.repo_root.join("scripts/nx");
+    let steps: [(&str, &str, &[&str], Option<&Path>); 3] = [
+        ("ruff", "ruff", &["check", "."], Some(&scripts_nx)),
+        ("mypy", "mypy", &["."], Some(&scripts_nx)),
         (
             "tests",
             "python3",
-            vec![
-                "-m".to_string(),
-                "unittest".to_string(),
-                "discover".to_string(),
-                "-s".to_string(),
-                "scripts/nx/tests".to_string(),
-            ],
-            Some(ctx.repo_root.to_path_buf()),
+            &["-m", "unittest", "discover", "-s", "scripts/nx/tests"],
+            Some(&ctx.repo_root),
         ),
     ];
 
     for (label, program, args, cwd) in steps {
-        if run_test_step(label, program, &args, cwd.as_deref(), &ctx.printer).is_err() {
+        if run_test_step(label, program, args, cwd, &ctx.printer).is_err() {
             return 1;
         }
     }
@@ -78,7 +63,7 @@ pub fn cmd_test(ctx: &AppContext) -> i32 {
 fn run_test_step(
     label: &str,
     program: &str,
-    args: &[String],
+    args: &[&str],
     cwd: Option<&Path>,
     printer: &Printer,
 ) -> Result<(), ()> {
@@ -105,102 +90,113 @@ fn run_test_step(
 }
 
 pub fn cmd_rebuild(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
+    if let Err(code) = check_git_preflight(ctx) {
+        return code;
+    }
+    if let Err(code) = check_flake(ctx) {
+        return code;
+    }
+    do_rebuild(args, ctx)
+}
+
+/// Returns stderr.trim() if non-empty, otherwise stdout.trim().
+fn first_nonempty_output(output: &CapturedCommand) -> &str {
+    let stderr = output.stderr.trim();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+    output.stdout.trim()
+}
+
+fn check_git_preflight(ctx: &AppContext) -> Result<(), i32> {
     ctx.printer.action("Checking tracked nix files");
-    let preflight_args = vec![
-        "-C".to_string(),
-        ctx.repo_root.display().to_string(),
-        "ls-files".to_string(),
-        "--others".to_string(),
-        "--exclude-standard".to_string(),
-        "--".to_string(),
-        "home".to_string(),
-        "packages".to_string(),
-        "system".to_string(),
-        "hosts".to_string(),
+    let repo = ctx.repo_root.display().to_string();
+    let args = [
+        "-C",
+        &repo,
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "--",
+        "home",
+        "packages",
+        "system",
+        "hosts",
     ];
-    let output = match run_captured_command("git", &preflight_args, None) {
+    let output = match run_captured_command("git", &args, None) {
         Ok(output) => output,
         Err(err) => {
             ctx.printer.error(&format!("Git preflight failed: {err:#}"));
-            return 1;
+            return Err(1);
         }
     };
 
     if output.code != 0 {
         ctx.printer.error("Git preflight failed");
-        let stderr = output.stderr.trim().to_string();
-        if !stderr.is_empty() {
-            ctx.printer.detail(&stderr);
-        } else {
-            let stdout = output.stdout.trim().to_string();
-            if !stdout.is_empty() {
-                ctx.printer.detail(&stdout);
-            }
+        let detail = first_nonempty_output(&output);
+        if !detail.is_empty() {
+            ctx.printer.detail(detail);
         }
-        return 1;
+        return Err(1);
     }
 
-    let mut untracked: Vec<String> = output
+    let mut untracked: Vec<&str> = output
         .stdout
         .lines()
         .map(str::trim)
         .filter(|line| line.ends_with(".nix"))
-        .map(ToOwned::to_owned)
         .collect();
     untracked.sort();
 
     if untracked.is_empty() {
         ctx.printer.success("Git preflight passed");
-    } else {
-        ctx.printer
-            .error("Untracked .nix files would be ignored by flake evaluation");
-        println!("\n  Track these files before rebuild:");
-        for rel_path in &untracked {
-            println!("  - {rel_path}");
-        }
-        println!(
-            "\n  Run: git -C \"{}\" add <files>",
-            ctx.repo_root.display()
-        );
-        return 1;
+        return Ok(());
     }
 
+    ctx.printer
+        .error("Untracked .nix files would be ignored by flake evaluation");
+    println!("\n  Track these files before rebuild:");
+    for rel_path in &untracked {
+        println!("  - {rel_path}");
+    }
+    println!(
+        "\n  Run: git -C \"{}\" add <files>",
+        ctx.repo_root.display()
+    );
+    Err(1)
+}
+
+fn check_flake(ctx: &AppContext) -> Result<(), i32> {
     ctx.printer.action("Checking flake");
-    let flake_args = vec![
-        "flake".to_string(),
-        "check".to_string(),
-        ctx.repo_root.display().to_string(),
-    ];
-    let flake_output = match run_captured_command("nix", &flake_args, None) {
+    let repo = ctx.repo_root.display().to_string();
+    let args = ["flake", "check", &repo];
+    let output = match run_captured_command("nix", &args, None) {
         Ok(output) => output,
         Err(err) => {
             ctx.printer.error(&format!("Flake check failed: {err:#}"));
-            return 1;
+            return Err(1);
         }
     };
-    if flake_output.code != 0 {
+
+    if output.code != 0 {
         ctx.printer.error("Flake check failed");
-        let err_text = if flake_output.stderr.trim().is_empty() {
-            flake_output.stdout.trim()
-        } else {
-            flake_output.stderr.trim()
-        };
+        let err_text = first_nonempty_output(&output);
         if !err_text.is_empty() {
             println!("{err_text}");
         }
-        return 1;
+        return Err(1);
     }
-    ctx.printer.success("Flake check passed");
 
+    ctx.printer.success("Flake check passed");
+    Ok(())
+}
+
+fn do_rebuild(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
     ctx.printer.action("Rebuilding system");
     println!();
-    let mut rebuild_args = vec![
-        DARWIN_REBUILD.to_string(),
-        "switch".to_string(),
-        "--flake".to_string(),
-        ctx.repo_root.display().to_string(),
-    ];
-    rebuild_args.extend(args.passthrough.iter().cloned());
+    let repo = ctx.repo_root.display().to_string();
+    let mut rebuild_args: Vec<&str> = vec![DARWIN_REBUILD, "switch", "--flake", &repo];
+    rebuild_args.extend(args.passthrough.iter().map(String::as_str));
 
     let return_code = match run_indented_command("sudo", &rebuild_args, None, &ctx.printer, "  ") {
         Ok(code) => code,
@@ -210,6 +206,7 @@ pub fn cmd_rebuild(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
             return 1;
         }
     };
+
     if return_code == 0 {
         println!();
         ctx.printer.success("System rebuilt");

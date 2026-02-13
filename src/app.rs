@@ -2,7 +2,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
-use anyhow::{Context, bail};
+use anyhow::bail;
 
 use crate::cli::{Cli, CommandKind};
 use crate::commands::context::AppContext;
@@ -51,21 +51,8 @@ fn find_repo_root() -> anyhow::Result<PathBuf> {
         return Ok(std::fs::canonicalize(&env_path).unwrap_or(env_path));
     }
 
-    let git_output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .context("git root detection failed")?;
-
-    if git_output.status.success() {
-        let root = String::from_utf8_lossy(&git_output.stdout)
-            .trim()
-            .to_string();
-        if !root.is_empty() {
-            let candidate = PathBuf::from(&root);
-            if candidate.join("flake.nix").exists() {
-                return Ok(candidate);
-            }
-        }
+    if let Some(root) = git_repo_root() {
+        return Ok(root);
     }
 
     let fallback = dirs_home().join(".nix-config");
@@ -76,7 +63,22 @@ fn find_repo_root() -> anyhow::Result<PathBuf> {
     bail!("Could not find nix-config repository")
 }
 
-fn dirs_home() -> PathBuf {
+fn git_repo_root() -> Option<PathBuf> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let candidate = PathBuf::from(&root);
+    candidate.join("flake.nix").exists().then_some(candidate)
+}
+
+pub(crate) fn dirs_home() -> PathBuf {
     env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/"))

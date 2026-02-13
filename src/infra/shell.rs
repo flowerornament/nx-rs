@@ -16,7 +16,7 @@ pub struct CapturedCommand {
 
 pub fn run_captured_command(
     program: &str,
-    args: &[String],
+    args: &[&str],
     cwd: Option<&Path>,
 ) -> anyhow::Result<CapturedCommand> {
     let mut command = Command::new(program);
@@ -38,7 +38,7 @@ pub fn run_captured_command(
 
 pub fn run_indented_command(
     program: &str,
-    args: &[String],
+    args: &[&str],
     cwd: Option<&Path>,
     printer: &Printer,
     indent: &str,
@@ -129,8 +129,8 @@ mod tests {
     #[test]
     fn run_indented_command_surfaces_spawn_failure() {
         let printer = Printer::new(OutputStyle::from_flags(true, false, false));
-        let args: Vec<String> = Vec::new();
-        let err = run_indented_command("__nx_missing_command__", &args, None, &printer, "  ")
+        let args: &[&str] = &[];
+        let err = run_indented_command("__nx_missing_command__", args, None, &printer, "  ")
             .expect_err("missing command should fail to spawn");
 
         assert!(

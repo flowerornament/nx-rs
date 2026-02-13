@@ -1,10 +1,11 @@
+mod support;
+
 use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -221,31 +222,10 @@ fn write_baseline(path: &Path, outcome: &ParityOutcome) -> Result<(), Box<dyn Er
 
 fn materialize_repo(repo_base_dir: &Path, setup: CaseSetup) -> Result<TempDir, Box<dyn Error>> {
     let temp = TempDir::new()?;
-    copy_tree(repo_base_dir, temp.path())?;
+    support::copy_tree(repo_base_dir, temp.path())?;
     init_git_repo(temp.path())?;
     apply_setup(temp.path(), setup)?;
     Ok(temp)
-}
-
-fn copy_tree(src: &Path, dst: &Path) -> Result<(), Box<dyn Error>> {
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-        let file_type = entry.file_type()?;
-
-        if file_type.is_dir() {
-            fs::create_dir_all(&dst_path)?;
-            copy_tree(&src_path, &dst_path)?;
-            continue;
-        }
-
-        if file_type.is_file() {
-            fs::copy(&src_path, &dst_path)?;
-        }
-    }
-
-    Ok(())
 }
 
 fn init_git_repo(repo_root: &Path) -> Result<(), Box<dyn Error>> {
@@ -336,7 +316,7 @@ fn install_system_stubs(repo_root: &Path) -> Result<(), Box<dyn Error>> {
     let stub_bin = repo_root.join(".parity-bin");
     fs::create_dir_all(&stub_bin)?;
 
-    write_executable(
+    support::write_executable(
         &stub_bin.join("git"),
         r#"#!/bin/sh
 mode="${NX_PARITY_MODE:-stub_system_success}"
@@ -363,7 +343,7 @@ exit 0
 "#,
     )?;
 
-    write_executable(
+    support::write_executable(
         &stub_bin.join("nix"),
         r#"#!/bin/sh
 mode="${NX_PARITY_MODE:-stub_system_success}"
@@ -391,7 +371,7 @@ exit 0
 "#,
     )?;
 
-    write_executable(
+    support::write_executable(
         &stub_bin.join("sudo"),
         r#"#!/bin/sh
 echo "stub sudo $*"
@@ -399,7 +379,7 @@ exit 0
 "#,
     )?;
 
-    write_executable(
+    support::write_executable(
         &stub_bin.join("ruff"),
         r#"#!/bin/sh
 if [ "${NX_PARITY_MODE:-}" = "stub_test_fail" ]; then
@@ -411,7 +391,7 @@ exit 0
 "#,
     )?;
 
-    write_executable(
+    support::write_executable(
         &stub_bin.join("mypy"),
         r#"#!/bin/sh
 if [ "${NX_PARITY_MODE:-}" = "stub_test_mypy_fail" ]; then
@@ -423,14 +403,6 @@ exit 0
 "#,
     )?;
 
-    Ok(())
-}
-
-fn write_executable(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
-    fs::write(path, content)?;
-    let mut perms = fs::metadata(path)?.permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(path, perms)?;
     Ok(())
 }
 
@@ -567,55 +539,14 @@ fn setup_mode(setup: CaseSetup) -> Option<&'static str> {
 }
 
 fn snapshot_repo_files(repo_root: &Path) -> Result<BTreeMap<String, String>, Box<dyn Error>> {
-    let mut files = BTreeMap::new();
-    snapshot_dir(repo_root, repo_root, &mut files)?;
-    Ok(files)
-}
-
-fn snapshot_dir(
-    repo_root: &Path,
-    dir: &Path,
-    out: &mut BTreeMap<String, String>,
-) -> Result<(), Box<dyn Error>> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let file_type = entry.file_type()?;
-
-        if file_type.is_dir() {
-            if entry.file_name() == ".git"
-                || entry.file_name() == ".parity-home"
-                || entry.file_name() == ".tmp-home"
-            {
-                continue;
-            }
-            snapshot_dir(repo_root, &path, out)?;
-            continue;
-        }
-
-        if file_type.is_file() {
-            let rel = path
-                .strip_prefix(repo_root)
-                .map_err(|err| io::Error::other(format!("strip_prefix failed: {err}")))?;
-            let rel_key = rel.to_string_lossy().replace('\\', "/");
-            let bytes = fs::read(&path)?;
-            let text = String::from_utf8_lossy(&bytes);
-            out.insert(rel_key, normalize_file_content(&text));
-        }
-    }
-
-    Ok(())
-}
-
-fn normalize_file_content(input: &str) -> String {
-    input
-        .replace("\r\n", "\n")
-        .lines()
-        .map(str::trim_end)
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim_end()
-        .to_string()
+    support::snapshot_repo_files(repo_root, &|rel| {
+        rel == ".git"
+            || rel.starts_with(".git/")
+            || rel == ".parity-home"
+            || rel.starts_with(".parity-home/")
+            || rel == ".tmp-home"
+            || rel.starts_with(".tmp-home/")
+    })
 }
 
 fn diff_snapshots(before: &BTreeMap<String, String>, after: &BTreeMap<String, String>) -> FileDiff {

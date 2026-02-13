@@ -20,9 +20,9 @@ Primary priorities:
 3. Prefer libraries when they simplify code or reduce LOC.
 4. Use a functional-first style: pure transforms and explicit side-effect boundaries.
 5. Design types up front to encode invariants before implementing command flows.
-6. Preserve semantic parity with Python unless a change is explicitly approved.
+6. Parity fidelity at the code-structure, syntactic, and semantic level with the Python project is not required.
 7. Keep the feedback loop tight: run strict checks frequently via `just`.
-8. Actively tend to and enrich the feedback loop. Intelligently make tests and checks happen automatically at the right times.
+8. Actively tend to and enrich the agentic feedback loop. Intelligently make tests and checks happen automatically at the right times in the feedback loop.
 
 ## Key Documents
 
@@ -110,3 +110,12 @@ bd sync               # sync state (run at session end)
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
+
+## Rust Guidelines
+
+- Use /rust-\* skills
+- Avoid deep nesting
+- Modularize
+- Use abstraction
+- Plan before acting
+- Understand the codebase idioms

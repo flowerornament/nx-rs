@@ -652,6 +652,7 @@ fn normalize_text(input: &str, repo_root: &Path, workspace_root: &Path) -> Strin
     let mut normalized = stripped.replace("\r\n", "\n");
     normalized = replace_path_tokens(normalized, repo_root, "<REPO_ROOT>");
     normalized = replace_path_tokens(normalized, workspace_root, "<WORKSPACE_ROOT>");
+    normalized = normalize_unittest_timing(normalized);
     normalized
         .lines()
         .map(str::trim_end)
@@ -659,6 +660,14 @@ fn normalize_text(input: &str, repo_root: &Path, workspace_root: &Path) -> Strin
         .join("\n")
         .trim_end()
         .to_string()
+}
+
+fn normalize_unittest_timing(input: String) -> String {
+    unittest_timing_regex()
+        .replace_all(&input, |caps: &regex::Captures<'_>| {
+            format!("{}0.000{}", &caps[1], &caps[2])
+        })
+        .into_owned()
 }
 
 fn replace_path_tokens(input: String, path: &Path, token: &str) -> String {
@@ -674,7 +683,36 @@ fn replace_path_tokens(input: String, path: &Path, token: &str) -> String {
     output
 }
 
+fn unittest_timing_regex() -> &'static Regex {
+    static UNITTEST_TIMING_REGEX: OnceLock<Regex> = OnceLock::new();
+    UNITTEST_TIMING_REGEX.get_or_init(|| {
+        Regex::new(r"(Ran\s+\d+\s+tests?\s+in\s+)\d+\.\d+(s)")
+            .expect("invalid unittest timing regex")
+    })
+}
+
 fn ansi_regex() -> &'static Regex {
     static ANSI_REGEX: OnceLock<Regex> = OnceLock::new();
     ANSI_REGEX.get_or_init(|| Regex::new(r"\x1B\[[0-?]*[ -/]*[@-~]").expect("invalid ANSI regex"))
+}
+
+#[test]
+fn normalize_unittest_timing_stabilizes_elapsed_seconds() {
+    let input = "\
+Ran 1 test in 0.001s
+Ran 12 tests in 1.987s";
+    let output = normalize_unittest_timing(input.to_string());
+    assert_eq!(
+        output,
+        "\
+Ran 1 test in 0.000s
+Ran 12 tests in 0.000s"
+    );
+}
+
+#[test]
+fn normalize_unittest_timing_leaves_other_lines_unchanged() {
+    let input = "running 1 test\npass";
+    let output = normalize_unittest_timing(input.to_string());
+    assert_eq!(output, input);
 }

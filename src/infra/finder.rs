@@ -1,11 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
-use std::sync::OnceLock;
 
 use anyhow::Context;
 use regex::Regex;
 
+use crate::domain::source::normalize_name;
 use crate::infra::config_scan::{collect_nix_files, scan_packages};
 
 #[derive(Debug, Clone)]
@@ -15,7 +15,7 @@ pub struct PackageMatch {
 }
 
 pub fn find_package(name: &str, repo_root: &Path) -> anyhow::Result<Option<String>> {
-    let mapped = map_name(name);
+    let mapped = normalize_name(name);
     let mapped_location = find_package_exact(&mapped, repo_root)?;
     if mapped_location.is_some() {
         return Ok(mapped_location);
@@ -29,7 +29,7 @@ pub fn find_package(name: &str, repo_root: &Path) -> anyhow::Result<Option<Strin
 pub fn find_package_fuzzy(name: &str, repo_root: &Path) -> anyhow::Result<Option<PackageMatch>> {
     if let Some(location) = find_package(name, repo_root)? {
         return Ok(Some(PackageMatch {
-            name: map_name(name),
+            name: normalize_name(name),
             location,
         }));
     }
@@ -144,17 +144,43 @@ fn all_packages(buckets: &crate::infra::config_scan::PackageBuckets) -> Vec<Stri
     out
 }
 
-fn map_name(name: &str) -> String {
-    static NAME_MAP: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
-    let map = NAME_MAP.get_or_init(|| {
-        HashMap::from([
-            ("nvim", "neovim"),
-            ("vim", "neovim"),
-            ("python", "python3"),
-            ("rg", "ripgrep"),
-        ])
-    });
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
 
-    let lower = name.to_ascii_lowercase();
-    map.get(lower.as_str()).copied().unwrap_or(name).to_string()
+    fn write_nix(root: &Path, rel_path: &str, content: &str) {
+        let full = root.join(rel_path);
+        fs::create_dir_all(full.parent().expect("nix file should have a parent"))
+            .expect("parent dirs should be created");
+        fs::write(full, content).expect("nix content should be written");
+    }
+
+    #[test]
+    fn find_package_uses_shared_alias_normalization() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+
+        write_nix(
+            root,
+            "packages/nix/cli.nix",
+            r#"{ pkgs }:
+[
+  neovim
+  python3
+  ripgrep
+  pyyaml
+]
+"#,
+        );
+
+        for alias in ["nvim", "python", "rg", "py-yaml"] {
+            let found =
+                find_package(alias, root).expect("finder should return a successful search result");
+            assert!(
+                found.is_some(),
+                "expected alias {alias} to resolve to a canonical package"
+            );
+        }
+    }
 }

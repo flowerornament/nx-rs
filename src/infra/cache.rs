@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use serde_json::Value;
 
 use crate::domain::source::{SourceResult, normalize_name};
@@ -37,25 +38,26 @@ pub struct MultiSourceCache {
 impl MultiSourceCache {
     /// Load (or initialize) the cache for a given repo root.
     ///
-    /// Silently degrades to empty state on any I/O or schema error.
-    pub fn load(repo_root: &Path) -> Self {
+    /// Degrades to empty state for malformed cached content, but surfaces setup I/O failures.
+    pub fn load(repo_root: &Path) -> anyhow::Result<Self> {
         let cache_dir = dirs_cache().join("nx");
         Self::load_with_cache_dir(repo_root, &cache_dir)
     }
 
     /// Load with an explicit cache directory (used by tests to avoid touching `$HOME`).
-    pub fn load_with_cache_dir(repo_root: &Path, cache_dir: &Path) -> Self {
-        let _ = fs::create_dir_all(cache_dir);
+    pub fn load_with_cache_dir(repo_root: &Path, cache_dir: &Path) -> anyhow::Result<Self> {
+        fs::create_dir_all(cache_dir)
+            .with_context(|| format!("creating cache dir {}", cache_dir.display()))?;
         let cache_path = cache_dir.join(CACHE_FILENAME);
 
         let revisions = load_revisions(repo_root);
         let entries = load_entries(&cache_path);
 
-        Self {
+        Ok(Self {
             cache_path,
             revisions,
             entries,
-        }
+        })
     }
 
     /// Get the flake.lock revision for a source (12-char truncated hash).
@@ -125,19 +127,19 @@ impl MultiSourceCache {
     /// Cache a single search result (writes to disk immediately).
     ///
     /// Skips results with no `attr`.
-    pub fn set(&mut self, result: &SourceResult) {
+    pub fn set(&mut self, result: &SourceResult) -> anyhow::Result<()> {
         if result.attr.as_deref().is_none_or(str::is_empty) {
-            return;
+            return Ok(());
         }
         let key = self.cache_key(&result.name, &result.source);
         self.entries.insert(key, entry_to_value(result));
-        self.save();
+        self.save()
     }
 
     /// Cache multiple results, keeping only the highest confidence per (name, source).
     ///
     /// Single disk write at the end.
-    pub fn set_many(&mut self, results: &[SourceResult]) {
+    pub fn set_many(&mut self, results: &[SourceResult]) -> anyhow::Result<()> {
         let mut best: HashMap<(&str, &str), &SourceResult> = HashMap::new();
         for result in results {
             let key = (result.name.as_str(), result.source.as_str());
@@ -157,11 +159,11 @@ impl MultiSourceCache {
             self.entries.insert(key, entry_to_value(result));
         }
 
-        self.save();
+        self.save()
     }
 
     /// Remove cached entries for a package, optionally filtered by source.
-    pub fn invalidate(&mut self, name: &str, source: Option<&str>) {
+    pub fn invalidate(&mut self, name: &str, source: Option<&str>) -> anyhow::Result<()> {
         let normalized = normalize_name(name);
         let before = self.entries.len();
 
@@ -174,14 +176,15 @@ impl MultiSourceCache {
         });
 
         if self.entries.len() < before {
-            self.save();
+            self.save()?;
         }
+        Ok(())
     }
 
     /// Clear entire cache.
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self) -> anyhow::Result<()> {
         self.entries.clear();
-        self.save();
+        self.save()
     }
 
     // -- Internal --
@@ -192,13 +195,14 @@ impl MultiSourceCache {
         format!("{normalized}|{source}|{rev}")
     }
 
-    fn save(&self) {
+    fn save(&self) -> anyhow::Result<()> {
         let envelope = serde_json::json!({
             "schema_version": CACHE_SCHEMA_VERSION,
             "entries": self.entries,
         });
-        let json = serde_json::to_string_pretty(&envelope).unwrap_or_default();
-        let _ = fs::write(&self.cache_path, json);
+        let json = serde_json::to_string_pretty(&envelope).context("serializing cache entries")?;
+        fs::write(&self.cache_path, json)
+            .with_context(|| format!("writing cache file {}", self.cache_path.display()))
     }
 }
 
@@ -319,6 +323,7 @@ mod tests {
     fn make_cache(repo: &Path, home: &Path) -> MultiSourceCache {
         let cache_dir = home.join(".cache").join("nx");
         MultiSourceCache::load_with_cache_dir(repo, &cache_dir)
+            .expect("cache should load successfully")
     }
 
     fn result(name: &str, source: &str, attr: &str, confidence: f64) -> SourceResult {
@@ -361,7 +366,9 @@ mod tests {
         fs::create_dir_all(&home).unwrap();
 
         let mut cache = make_cache(&repo, &home);
-        cache.set(&result("ripgrep", "homebrew", "ripgrep", 0.8));
+        cache
+            .set(&result("ripgrep", "homebrew", "ripgrep", 0.8))
+            .unwrap();
 
         // Homebrew-only should return empty (guardrail)
         assert!(cache.get_all("ripgrep").is_empty());
@@ -378,7 +385,9 @@ mod tests {
         fs::create_dir_all(&home).unwrap();
 
         let mut cache = make_cache(&repo, &home);
-        cache.set(&result("ripgrep", "nxs", "ripgrep", 0.9));
+        cache
+            .set(&result("ripgrep", "nxs", "ripgrep", 0.9))
+            .unwrap();
 
         let results = cache.get_all("ripgrep");
         assert_eq!(results.len(), 1);
@@ -432,21 +441,30 @@ mod tests {
         fs::create_dir_all(&home).unwrap();
 
         let mut cache = make_cache(&repo, &home);
-        cache.set(&SourceResult {
-            name: "py-yaml".to_string(),
-            source: "nxs".to_string(),
-            attr: Some("python3Packages.pyyaml".to_string()),
-            version: None,
-            confidence: 0.9,
-            description: "YAML parser".to_string(),
-            requires_flake_mod: false,
-            flake_url: None,
-        });
+        for (alias, canonical, attr) in [
+            ("nvim", "neovim", "neovim"),
+            ("python", "python3", "python3"),
+            ("rg", "ripgrep", "ripgrep"),
+            ("py-yaml", "pyyaml", "python3Packages.pyyaml"),
+        ] {
+            cache
+                .set(&SourceResult {
+                    name: alias.to_string(),
+                    source: "nxs".to_string(),
+                    attr: Some(attr.to_string()),
+                    version: None,
+                    confidence: 0.9,
+                    description: "alias normalization".to_string(),
+                    requires_flake_mod: false,
+                    flake_url: None,
+                })
+                .unwrap();
 
-        // Look up with the canonical name — should find the aliased entry
-        let results = cache.get_all("pyyaml");
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].attr.as_deref(), Some("python3Packages.pyyaml"));
+            // Look up with the canonical name — should find the aliased entry.
+            let results = cache.get_all(canonical);
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].attr.as_deref(), Some(attr));
+        }
     }
 
     #[test]
@@ -464,7 +482,7 @@ mod tests {
             result("ripgrep", "nxs", "ripgrep", 0.5),
             result("ripgrep", "nxs", "ripgrep-all", 0.9),
         ];
-        cache.set_many(&results);
+        cache.set_many(&results).unwrap();
 
         let r = cache.get("ripgrep", "nxs").unwrap();
         assert_eq!(r.attr.as_deref(), Some("ripgrep-all"));
@@ -482,10 +500,14 @@ mod tests {
         fs::create_dir_all(&home).unwrap();
 
         let mut cache = make_cache(&repo, &home);
-        cache.set(&result("ripgrep", "nxs", "ripgrep", 0.9));
-        cache.set(&result("ripgrep", "homebrew", "ripgrep", 0.8));
+        cache
+            .set(&result("ripgrep", "nxs", "ripgrep", 0.9))
+            .unwrap();
+        cache
+            .set(&result("ripgrep", "homebrew", "ripgrep", 0.8))
+            .unwrap();
 
-        cache.invalidate("ripgrep", None);
+        cache.invalidate("ripgrep", None).unwrap();
         assert!(cache.get("ripgrep", "nxs").is_none());
         assert!(cache.get("ripgrep", "homebrew").is_none());
     }
@@ -501,10 +523,14 @@ mod tests {
         fs::create_dir_all(&home).unwrap();
 
         let mut cache = make_cache(&repo, &home);
-        cache.set(&result("ripgrep", "nxs", "ripgrep", 0.9));
-        cache.set(&result("ripgrep", "homebrew", "ripgrep", 0.8));
+        cache
+            .set(&result("ripgrep", "nxs", "ripgrep", 0.9))
+            .unwrap();
+        cache
+            .set(&result("ripgrep", "homebrew", "ripgrep", 0.8))
+            .unwrap();
 
-        cache.invalidate("ripgrep", Some("homebrew"));
+        cache.invalidate("ripgrep", Some("homebrew")).unwrap();
         assert!(cache.get("ripgrep", "nxs").is_some());
         assert!(cache.get("ripgrep", "homebrew").is_none());
     }
@@ -520,8 +546,10 @@ mod tests {
         fs::create_dir_all(&home).unwrap();
 
         let mut cache = make_cache(&repo, &home);
-        cache.set(&result("ripgrep", "nxs", "ripgrep", 0.9));
-        cache.clear();
+        cache
+            .set(&result("ripgrep", "nxs", "ripgrep", 0.9))
+            .unwrap();
+        cache.clear().unwrap();
         assert!(cache.get_all("ripgrep").is_empty());
     }
 
@@ -536,8 +564,26 @@ mod tests {
         fs::create_dir_all(&home).unwrap();
 
         let mut cache = make_cache(&repo, &home);
-        cache.set(&SourceResult::new("ripgrep", "nxs")); // attr is None
+        cache.set(&SourceResult::new("ripgrep", "nxs")).unwrap(); // attr is None
         assert!(cache.get("ripgrep", "nxs").is_none());
+    }
+
+    #[test]
+    fn set_surfaces_write_error() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        write_flake_lock(&repo);
+
+        let cache_dir = tmp.path().join("home").join(".cache").join("nx");
+        fs::create_dir_all(cache_dir.join(CACHE_FILENAME)).unwrap();
+
+        let mut cache = MultiSourceCache::load_with_cache_dir(&repo, &cache_dir).unwrap();
+        let err = cache
+            .set(&result("ripgrep", "nxs", "ripgrep", 0.9))
+            .expect_err("writing into a directory path should fail");
+
+        assert!(err.to_string().contains("writing cache file"));
     }
 
     #[test]
@@ -566,7 +612,9 @@ mod tests {
 
         // Write via one instance
         let mut cache1 = make_cache(&repo, &home);
-        cache1.set(&result("ripgrep", "nxs", "ripgrep", 0.9));
+        cache1
+            .set(&result("ripgrep", "nxs", "ripgrep", 0.9))
+            .unwrap();
 
         // Read via a fresh instance
         let cache2 = make_cache(&repo, &home);

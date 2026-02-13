@@ -79,6 +79,7 @@ mod tests {
         assert_eq!(normalize_name("py-yaml"), "pyyaml");
         assert_eq!(normalize_name("py_yaml"), "pyyaml");
         assert_eq!(normalize_name("nvim"), "neovim");
+        assert_eq!(normalize_name("python"), "python3");
         assert_eq!(normalize_name("rg"), "ripgrep");
         assert_eq!(normalize_name("1password"), "_1password-gui");
     }

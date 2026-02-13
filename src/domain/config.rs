@@ -1,7 +1,7 @@
 // No consumers yet — downstream commands wire in via .11/.13
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -14,7 +14,7 @@ use walkdir::WalkDir;
 /// then provides accessors that resolve by keyword match with deterministic fallbacks.
 pub struct ConfigFiles {
     repo_root: PathBuf,
-    by_purpose: HashMap<String, PathBuf>,
+    by_purpose: BTreeMap<String, PathBuf>,
     all_files: Vec<PathBuf>,
 }
 
@@ -24,7 +24,7 @@ impl ConfigFiles {
     /// Skips `default.nix` and `common.nix` per SPEC 3.2.
     /// Silently skips files that can't be read.
     pub fn discover(repo_root: &Path) -> Self {
-        let mut by_purpose = HashMap::new();
+        let mut by_purpose = BTreeMap::new();
         let mut all_files = Vec::new();
 
         for dir_name in ["home", "system", "hosts", "packages"] {
@@ -33,7 +33,11 @@ impl ConfigFiles {
                 continue;
             }
 
-            for entry in WalkDir::new(&dir_path).into_iter().filter_map(Result::ok) {
+            for entry in WalkDir::new(&dir_path)
+                .sort_by_file_name()
+                .into_iter()
+                .filter_map(Result::ok)
+            {
                 if !entry.file_type().is_file() {
                     continue;
                 }
@@ -74,7 +78,7 @@ impl ConfigFiles {
         &self.all_files
     }
 
-    pub fn by_purpose(&self) -> &HashMap<String, PathBuf> {
+    pub fn by_purpose(&self) -> &BTreeMap<String, PathBuf> {
         &self.by_purpose
     }
 
@@ -220,6 +224,20 @@ mod tests {
 
         assert_eq!(cf.packages(), root.join("packages/nix/cli.nix"));
         assert_eq!(cf.languages(), root.join("packages/nix/languages.nix"));
+    }
+
+    #[test]
+    fn ambiguous_keyword_matches_use_deterministic_winner() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_nix(root, "home/shell-a.nix", "# nx: shell aliases\n{}");
+        write_nix(root, "home/shell-z.nix", "# nx: shell profile\n{}");
+
+        let cf = ConfigFiles::discover(root);
+
+        // BTreeMap ordering yields a stable winner for ambiguous keyword matches.
+        assert_eq!(cf.shell(), root.join("home/shell-a.nix"));
     }
 
     #[test]

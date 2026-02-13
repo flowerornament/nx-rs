@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 
 use crate::output::printer::Printer;
 
@@ -58,8 +58,16 @@ pub fn run_indented_command(
 
     let (tx, rx) = mpsc::channel::<String>();
 
-    let stdout_handle = spawn_line_reader(child.stdout.take(), tx.clone());
-    let stderr_handle = spawn_line_reader(child.stderr.take(), tx);
+    let stdout = child
+        .stdout
+        .take()
+        .context("failed to capture child stdout")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("failed to capture child stderr")?;
+    let stdout_handle = spawn_line_reader("stdout", stdout, tx.clone());
+    let stderr_handle = spawn_line_reader("stderr", stderr, tx);
 
     for line in rx {
         let trimmed = line.trim_end();
@@ -70,28 +78,84 @@ pub fn run_indented_command(
         }
     }
 
-    if let Some(h) = stdout_handle {
-        let _ = h.join();
-    }
-    if let Some(h) = stderr_handle {
-        let _ = h.join();
-    }
+    join_reader("stdout", stdout_handle)?;
+    join_reader("stderr", stderr_handle)?;
 
     let status = child.wait().context("waiting for child process")?;
     Ok(status.code().unwrap_or(1))
 }
 
 fn spawn_line_reader(
-    stream: Option<impl Read + Send + 'static>,
+    stream_name: &'static str,
+    stream: impl Read + Send + 'static,
     tx: mpsc::Sender<String>,
-) -> Option<thread::JoinHandle<()>> {
-    stream.map(|s| {
-        thread::spawn(move || {
-            for line in BufReader::new(s).lines().map_while(Result::ok) {
-                if tx.send(line).is_err() {
-                    break;
-                }
+) -> thread::JoinHandle<anyhow::Result<()>> {
+    thread::spawn(move || {
+        for line in BufReader::new(stream).lines() {
+            let line = line.with_context(|| format!("reading {stream_name} stream"))?;
+            if tx.send(line).is_err() {
+                break;
             }
-        })
+        }
+        Ok(())
     })
+}
+
+fn join_reader(
+    stream_name: &str,
+    handle: thread::JoinHandle<anyhow::Result<()>>,
+) -> anyhow::Result<()> {
+    handle
+        .join()
+        .map_err(|_| anyhow!("{stream_name} reader thread panicked"))??;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    use crate::output::style::OutputStyle;
+
+    struct FailingReader;
+
+    impl Read for FailingReader {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::other("boom"))
+        }
+    }
+
+    #[test]
+    fn run_indented_command_surfaces_spawn_failure() {
+        let printer = Printer::new(OutputStyle::from_flags(true, false, false));
+        let args: Vec<String> = Vec::new();
+        let err = run_indented_command("__nx_missing_command__", &args, None, &printer, "  ")
+            .expect_err("missing command should fail to spawn");
+
+        assert!(
+            err.to_string()
+                .contains("failed to spawn __nx_missing_command__")
+        );
+    }
+
+    #[test]
+    fn join_reader_surfaces_stream_read_error() {
+        let (tx, rx) = mpsc::channel::<String>();
+        drop(rx);
+        let handle = spawn_line_reader("stderr", FailingReader, tx);
+
+        let err = join_reader("stderr", handle).expect_err("read error should be surfaced");
+        assert!(err.to_string().contains("reading stderr stream"));
+    }
+
+    #[test]
+    fn join_reader_surfaces_thread_panic() {
+        let handle = thread::spawn(|| -> anyhow::Result<()> {
+            panic!("reader panic");
+        });
+
+        let err = join_reader("stdout", handle).expect_err("panic should be surfaced");
+        assert!(err.to_string().contains("stdout reader thread panicked"));
+    }
 }

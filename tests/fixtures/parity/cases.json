@@ -187,7 +187,7 @@
     "id": "undo_dirty_cancelled",
     "args": ["undo"],
     "setup": "modified_tracked_file",
-    "rust_parity": false
+    "rust_parity": true
   },
   {
     "id": "upgrade_dry_run_skip_brew",

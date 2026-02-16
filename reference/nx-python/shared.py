@@ -393,7 +393,7 @@ def run_command(
             check=False,
             timeout=timeout,
         )
-        return result.returncode == 0, result.stdout.strip()
+        return result.returncode == 0, result.stdout.rstrip()
     except subprocess.TimeoutExpired:
         return False, f"Timeout after {timeout}s"
     except Exception as e:

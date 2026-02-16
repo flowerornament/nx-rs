@@ -1,6 +1,6 @@
 {
   "exit_code": 0,
-  "stdout": "\n  Nothing to undo.",
+  "stdout": "\n  Undo Changes (1 files)\n  packages/nix/cli.nix\n    1 file changed, 1 insertion(+)\n\n  Revert all changes? [y/N]:   Cancelled.",
   "stderr": "",
   "file_diff": {
     "added": {},

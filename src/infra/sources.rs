@@ -617,9 +617,9 @@ mod tests {
     // --- command_available ---
 
     #[test]
-    fn command_available_finds_which() {
-        // `which` itself should always be available
-        assert!(command_available("which"));
+    fn command_available_finds_cat() {
+        // `cat` (coreutils) is available in all environments including nix sandbox
+        assert!(command_available("cat"));
     }
 
     #[test]

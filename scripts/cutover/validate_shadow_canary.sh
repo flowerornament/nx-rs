@@ -4,7 +4,7 @@ set -euo pipefail
 WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NIX_CONFIG_ROOT="${NIX_CONFIG_ROOT:-$HOME/.nix-config}"
 PY_NX="${PY_NX:-$NIX_CONFIG_ROOT/scripts/nx/nx}"
-RUST_NX="${RUST_NX:-$WORKSPACE_ROOT/target/debug/nx-rs}"
+RUST_NX="${RUST_NX:-$WORKSPACE_ROOT/target/debug/nx}"
 REPORT_PATH="${1:-}"
 
 if [[ ! -x "$PY_NX" ]]; then
@@ -13,11 +13,11 @@ if [[ ! -x "$PY_NX" ]]; then
 fi
 
 if [[ ! -x "$RUST_NX" ]]; then
-  (cd "$WORKSPACE_ROOT" && cargo build --quiet --bin nx-rs)
+  (cd "$WORKSPACE_ROOT" && cargo build --quiet --bin nx)
 fi
 
 if [[ ! -x "$RUST_NX" ]]; then
-  echo "rust nx-rs binary not found after build: $RUST_NX" >&2
+  echo "rust nx binary not found after build: $RUST_NX" >&2
   exit 2
 fi
 

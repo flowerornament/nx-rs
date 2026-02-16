@@ -98,7 +98,7 @@ test:
 
 # Run system command integration matrix with deterministic stubs.
 test-system:
-    @cargo build --quiet --bin nx-rs
+    @cargo build --quiet --bin nx
     @cargo test --test system_command_matrix -- --nocapture
 
 # Run cutover shadow/canary validation against ~/.nix-config.
@@ -115,8 +115,8 @@ parity-check-python:
 
 # Validate Rust candidate behavior against captured Python baselines (subset).
 parity-check-rust:
-    @cargo build --quiet --bin nx-rs
-    @NX_PARITY_TARGET=rust NX_RUST_PARITY_BIN="$(pwd)/target/debug/nx-rs" cargo test --test parity_harness -- --nocapture
+    @cargo build --quiet --bin nx
+    @NX_PARITY_TARGET=rust NX_RUST_PARITY_BIN="$(pwd)/target/debug/nx" cargo test --test parity_harness -- --nocapture
 
 # Refresh parity baselines from Python reference behavior.
 parity-capture:

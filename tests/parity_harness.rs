@@ -171,7 +171,7 @@ fn resolve_rust_cli(workspace_root: &Path) -> Result<PathBuf, Box<dyn Error>> {
         return Ok(PathBuf::from(path));
     }
 
-    let candidate = workspace_root.join("target/debug/nx-rs");
+    let candidate = workspace_root.join("target/debug/nx");
     if candidate.exists() {
         return Ok(candidate);
     }

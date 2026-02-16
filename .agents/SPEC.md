@@ -2,7 +2,7 @@
 
 Status: Final v1.0
 Date: 2026-02-16
-Scope: Defines observable behavior of `reference/nx-python` as migration target for Rust.
+Scope: Defines observable behavior of `~/code/nx-python` as migration target for Rust.
 Reconciled against: 37 verified parity cases, Python source audit, and live cutover validation.
 
 ## 1. Source Of Truth
@@ -10,15 +10,15 @@ Reconciled against: 37 verified parity cases, Python source audit, and live cuto
 This spec is derived from:
 
 - CLI wiring and command implementations in:
-  - `reference/nx-python/cli.py`
-  - `reference/nx-python/commands.py`
-  - `reference/nx-python/search.py`
-  - `reference/nx-python/sources.py`
-  - `reference/nx-python/config.py`
-  - `reference/nx-python/finder.py`
-  - `reference/nx-python/cache.py`
-  - `reference/nx-python/upgrade/*.py`
-- Behavior asserted in `reference/nx-python/tests/`.
+  - `~/code/nx-python/cli.py`
+  - `~/code/nx-python/commands.py`
+  - `~/code/nx-python/search.py`
+  - `~/code/nx-python/sources.py`
+  - `~/code/nx-python/config.py`
+  - `~/code/nx-python/finder.py`
+  - `~/code/nx-python/cache.py`
+  - `~/code/nx-python/upgrade/*.py`
+- Behavior asserted in `~/code/nx-python/tests/`.
 
 When implementation and this document disagree, tests are considered normative.
 

@@ -30,8 +30,7 @@ Primary priorities:
 - Authoritative migration plan: `.agents/MIGRATION_PLAN.md`
 - Verified operational learnings: `.agents/LEARNINGS.md`
 - Cutover runbook and rollback criteria: `.agents/CUTOVER_PLAYBOOK.md`
-- Python reference implementation: `reference/nx-python/README.md`
-- Python source baseline: `reference/nx-python/`
+- Python reference implementation: `~/code/nx-python/`
 - Legacy context repo: `~/.nix-config`
 
 ## Toolchain And Workflow

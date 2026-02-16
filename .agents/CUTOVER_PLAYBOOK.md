@@ -131,7 +131,7 @@ The production cutover uses nix flakes. nx-rs exposes a `flake.nix` that builds 
 ### Step 1: Extract Python nx to standalone repo
 
 ```bash
-# Clean copy (no git history needed — reference/ already has frozen copy)
+# Clean copy (no git history needed — ~/code/nx-python/ has the frozen copy)
 mkdir -p ~/code/nx-python
 cp -R ~/.nix-config/scripts/nx/* ~/code/nx-python/
 cd ~/code/nx-python

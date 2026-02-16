@@ -2,7 +2,7 @@
 
 ## Baseline
 
-- Legacy Python implementation is preserved at `reference/nx-python/`.
+- Legacy Python implementation is preserved at `~/code/nx-python/`.
 - Original source at `../nx` remains untouched.
 - Architecture context reviewed from:
   - `../../AGENTS.md`
@@ -21,7 +21,7 @@ Authoritative migration strategy: **Hybrid contract-first port**.
 
 Execution model:
 
-1. Treat `docs/SPEC.md` as migration contract.
+1. Treat `.agents/SPEC.md` as migration contract.
 2. Implement fresh Rust design against that contract.
 3. Reference Python code only when behavior is ambiguous.
 4. Lock behavior with parity fixtures before broad Rust feature work.
@@ -102,9 +102,9 @@ nx-rs/
 │   ├── finder_parity.rs
 │   ├── install_plan_parity.rs
 │   └── fixtures/
-└── reference/
-    └── nx-python/              # frozen legacy reference
 ```
+
+Python reference: `~/code/nx-python/`
 
 ## Dependency Plan (Keep Minimal)
 

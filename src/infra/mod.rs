@@ -1,3 +1,4 @@
+pub mod ai_engine;
 pub mod cache;
 pub mod config_scan;
 pub mod file_edit;

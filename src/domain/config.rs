@@ -9,14 +9,12 @@ use walkdir::WalkDir;
 ///
 /// Discovers files by scanning `# nx:` comment tags on the first line,
 /// then provides accessors that resolve by keyword match with deterministic fallbacks.
-#[allow(dead_code)] // field readers arrive via .11/.13
 pub struct ConfigFiles {
     repo_root: PathBuf,
     by_purpose: BTreeMap<String, PathBuf>,
     all_files: Vec<PathBuf>,
 }
 
-#[allow(dead_code)] // accessors used via .11/.13
 impl ConfigFiles {
     /// Scan the repo for `.nix` files and read their `# nx:` purpose tags.
     ///
@@ -93,6 +91,7 @@ impl ConfigFiles {
             .unwrap_or_else(|| self.repo_root.join("packages/nix/languages.nix"))
     }
 
+    #[allow(dead_code)] // consumed by service install (.15+)
     pub fn services(&self) -> PathBuf {
         self.find_by_keywords(&["services", "daemons"])
             .unwrap_or_else(|| self.repo_root.join("home/services.nix"))
@@ -113,6 +112,7 @@ impl ConfigFiles {
             .unwrap_or_else(|| self.repo_root.join("packages/homebrew/casks.nix"))
     }
 
+    #[allow(dead_code)] // consumed by tap management (.15+)
     pub fn homebrew_taps(&self) -> PathBuf {
         self.find_by_keywords(&["taps manifest"])
             .unwrap_or_else(|| self.repo_root.join("packages/homebrew/taps.nix"))
@@ -120,21 +120,25 @@ impl ConfigFiles {
 
     // -- Secondary accessors --
 
+    #[allow(dead_code)] // consumed by shell config routing (.15+)
     pub fn shell(&self) -> PathBuf {
         self.find_by_keywords(&["shell"])
             .unwrap_or_else(|| self.repo_root.join("home/shell.nix"))
     }
 
+    #[allow(dead_code)] // consumed by editor config routing (.15+)
     pub fn editors(&self) -> PathBuf {
         self.find_by_keywords(&["editor"])
             .unwrap_or_else(|| self.repo_root.join("home/editors.nix"))
     }
 
+    #[allow(dead_code)] // consumed by git config routing (.15+)
     pub fn git(&self) -> PathBuf {
         self.find_by_keywords(&["git", "version control"])
             .unwrap_or_else(|| self.repo_root.join("home/git.nix"))
     }
 
+    #[allow(dead_code)] // consumed by terminal config routing (.15+)
     pub fn terminal(&self) -> PathBuf {
         self.find_by_keywords(&["terminal", "multiplexer"])
             .unwrap_or_else(|| self.repo_root.join("home/terminal.nix"))

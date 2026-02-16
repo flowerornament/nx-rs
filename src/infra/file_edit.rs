@@ -20,7 +20,6 @@ pub struct EditOutcome {
 ///
 /// Dispatches to the per-mode inserter. Idempotent: returns
 /// `file_changed: false` if the token is already present.
-#[allow(dead_code)] // consumed by install command (.14)
 pub fn apply_edit(plan: &InstallPlan) -> Result<EditOutcome> {
     let path = &plan.target_file;
     let content = read_file(path)?;

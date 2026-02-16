@@ -9,7 +9,6 @@ use super::source::{SourceResult, detect_language_package};
 
 /// How a package should be inserted into a config file.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // consumed by infra::file_edit (.13)
 pub enum InsertionMode {
     /// Bare identifier into `home.packages = with pkgs; [ ... ]`
     NixManifest,
@@ -23,7 +22,6 @@ pub enum InsertionMode {
 
 /// Language-specific routing metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // consumed by infra::file_edit (.13)
 pub struct LanguageInfo {
     pub bare_name: String,
     pub runtime: String,
@@ -32,14 +30,16 @@ pub struct LanguageInfo {
 
 /// A fully-resolved install decision consumed by the editing engine.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // consumed by infra::file_edit (.13)
 pub struct InstallPlan {
     pub source_result: SourceResult,
     pub package_token: String,
     pub target_file: PathBuf,
     pub insertion_mode: InsertionMode,
+    #[allow(dead_code)] // consumed by ai_engine::build_edit_prompt (.15)
     pub is_brew: bool,
+    #[allow(dead_code)] // consumed by ai_engine::build_edit_prompt (.15)
     pub is_cask: bool,
+    #[allow(dead_code)] // consumed by ai_engine::build_edit_prompt (.15)
     pub is_mas: bool,
     pub language_info: Option<LanguageInfo>,
     pub routing_warning: Option<String>,
@@ -47,12 +47,11 @@ pub struct InstallPlan {
 
 // --- Pure Functions
 
-#[allow(dead_code)] // consumed by install command (.14)
 /// Build a deterministic install plan from a source result.
 ///
 /// Routes to the correct target file and insertion mode based on source type,
-/// language detection, and MCP tool patterns. AI routing is deferred to .14;
-/// general nix packages fall back to `cli.nix`.
+/// language detection, and MCP tool patterns. General nix packages fall back
+/// to `cli.nix` with a routing warning; the command layer refines via AI engine.
 pub fn build_install_plan(sr: &SourceResult, config: &ConfigFiles) -> Result<InstallPlan> {
     // Safety: nxs/nur/flake-input with missing attr → hard error
     if matches!(sr.source.as_str(), "nxs" | "nur" | "flake-input") && sr.attr.is_none() {
@@ -101,7 +100,7 @@ pub fn build_install_plan(sr: &SourceResult, config: &ConfigFiles) -> Result<Ins
             None
         } else {
             Some(format!(
-                "routed '{}' to fallback {}; AI routing deferred to .14",
+                "routed '{}' to fallback {}; needs AI refinement",
                 package_token,
                 target.display(),
             ))
@@ -122,8 +121,7 @@ pub fn build_install_plan(sr: &SourceResult, config: &ConfigFiles) -> Result<Ins
     })
 }
 
-#[allow(dead_code)] // consumed by AI routing (.14)
-/// Collect nix manifest files that could host a package (for AI routing in .14).
+/// Collect nix manifest files that could host a package (for AI routing).
 pub fn nix_manifest_candidates(config: &ConfigFiles) -> Vec<PathBuf> {
     config
         .all_files()
@@ -137,14 +135,12 @@ pub fn nix_manifest_candidates(config: &ConfigFiles) -> Vec<PathBuf> {
         .collect()
 }
 
-#[allow(dead_code)] // consumed by install command (.14)
 /// Detect MCP tool packages by naming convention (`*-mcp` or `mcp-*`).
 pub fn is_mcp_tool(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower.ends_with("-mcp") || lower.starts_with("mcp-")
 }
 
-#[allow(dead_code)] // consumed by build_install_plan
 /// Resolve the canonical install token from a source result.
 ///
 /// Prefers `attr` (the resolved nix attribute) over the search `name`.

@@ -6,7 +6,6 @@ use crate::output::printer::Printer;
 pub struct AppContext {
     pub repo_root: PathBuf,
     pub printer: Printer,
-    #[allow(dead_code)] // consumers arrive in .11/.13
     pub config_files: ConfigFiles,
 }
 

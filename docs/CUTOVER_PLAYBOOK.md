@@ -93,13 +93,30 @@ GO for full PATH replacement only if all are true:
 
 NO-GO if any gate fails.
 
+## Final Parity Evidence (2026-02-16)
+
+Full parity harness: **37/37 cases passing** for both Python and Rust targets.
+
+Coverage spans all implemented commands:
+- Query commands: `where`, `list`, `info`, `status`, `installed` (13 cases)
+- Mutation commands: `install --dry-run`, `remove` (dry-run, alias, yes-mutate, not-found) (5 cases)
+- System commands: `update`, `test`, `rebuild` (success, failure, passthrough, preflight) (10 cases)
+- Undo: clean, dirty-cancelled (2 cases)
+- Upgrade: dry-run, stubbed flake (2 cases)
+- Setup variants: `default_launchd_service`, `untracked_nix`, `modified_tracked_file` (5 cases use setup fixtures)
+
+SPEC reconciled against verified behavior on same date (v1.0).
+
 ## Current Decision
 
-As of **2026-02-12**: **GO** for full production PATH replacement according to this checklist.
+As of **2026-02-16**: **GO** for full production PATH replacement.
 
-Notes:
-- The prior `sops-nix` service parity gap was fixed by including `default.nix` in Rust package scanning.
-- Rollout can proceed with staged PATH updates and rollback readiness below.
+Evidence trail:
+- Shadow/canary cutover validation passed (2026-02-12).
+- Full 37-case parity harness verified (2026-02-16).
+- SPEC reconciled to v1.0 against Python source audit (2026-02-16).
+- `just ci` green (fmt + clippy + test + check).
+- Legacy in-tree copy decommissioned and quarantined.
 
 ## Rollback Steps
 

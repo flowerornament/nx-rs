@@ -56,3 +56,9 @@ Update rules for future agents:
 10. Rust parity harness now covers all current fixture cases.
 - `tests/fixtures/parity/cases.json` currently has 37 cases; all 37 are `rust_parity: true`.
 - Verified on 2026-02-16 with both `just parity-check-rust` and `just parity-check-python`.
+
+11. SPEC reconciliation found three drift items fixed in v1.0.
+- `info` exit code: clarified returns 0 on not-found (matching `where` behavior).
+- `installed` JSON format: corrected to show query strings as top-level keys, not nested.
+- Config scan vs finder scan: clarified `default.nix` excluded from purpose routing but included in package discovery via finder's independent glob.
+- Section 15 (pre-Rust toolchain setup) removed as completed planning artifact.

@@ -1,8 +1,9 @@
 # nx Behavior Specification (Python Reference)
 
-Status: Draft v0.1  
-Date: 2026-02-11  
+Status: Final v1.0
+Date: 2026-02-16
 Scope: Defines observable behavior of `reference/nx-python` as migration target for Rust.
+Reconciled against: 37 verified parity cases, Python source audit, and live cutover validation.
 
 ## 1. Source Of Truth
 
@@ -96,7 +97,7 @@ Defined at root callback and persisted in app state:
 - `remove`/`rm`: `1` when no package args; otherwise `0`.
 - `where`: `1` when no package arg; otherwise `0` (including not-found).
 - `list`: `1` for invalid source filter; otherwise `0`.
-- `info`: `1` when no package arg; otherwise `0`.
+- `info`: `1` when no package arg; otherwise `0` (including not-found).
 - `status`: `0`.
 - `installed`: `1` when no package args; otherwise `0` only if all requested packages are installed.
 - `undo`: `0`.
@@ -123,8 +124,10 @@ Resolution order:
   - `system/`
   - `hosts/`
   - `packages/`
-- Skip `default.nix` and `common.nix`
+- Skip `default.nix` and `common.nix` from the purpose-routed set and `all_files`.
 - Read line 1 `# nx:` comment for routing purpose map.
+
+Note: the finder (Section 4) independently collects all `.nix` files in the same directories via glob, including `default.nix`. This means `default.nix` files are excluded from purpose routing but included in package discovery.
 
 `ConfigFiles` must provide purpose-based accessors with stable fallback paths for:
 
@@ -370,8 +373,8 @@ Network behavior:
 ## 9.5 `installed`
 
 - Supports fuzzy package match.
-- JSON output format:
-  - `{ query: { "match": <name-or-null>, "location": <loc-or-null> } }`
+- JSON output format (query strings as top-level keys):
+  - `{ "<query>": { "match": <name-or-null>, "location": <loc-or-null> } }`
 - Exit `0` only if all requested packages resolved to installed locations.
 - Single package non-json mode with `--show-location` includes normalized location.
 
@@ -477,19 +480,4 @@ Dry-run behavior:
   - missing install attr for nix-based sources
   - invalid `list` source filter
 
-## 15. Pre-Rust Toolchain Setup (Planned Before Implementation)
-
-Do this before creating Rust source:
-
-1. Add `rust-toolchain.toml` pin (stable channel + `rustfmt`, `clippy`).
-2. Add base lint config in `Cargo.toml` (`unsafe_code = "forbid"` and selected clippy lints).
-3. Decide test command baseline:
-   - `cargo fmt --check`
-   - `cargo clippy -- -D warnings`
-   - `cargo test`
-4. Choose minimum dependency set for first pass:
-   - `clap`, `anyhow`, `serde`, `serde_json`, `regex`, `which`, `tempfile`, `assert_cmd`.
-5. Keep binary/library split from day one:
-   - `src/main.rs` thin entrypoint
-   - `src/lib.rs` for testable logic.
 

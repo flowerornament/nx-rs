@@ -6,6 +6,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "install",
     "remove",
     "rm",
+    "search",
     "where",
     "list",
     "info",
@@ -45,6 +46,7 @@ pub enum CommandKind {
     Install(InstallArgs),
     #[command(alias = "rm")]
     Remove(RemoveArgs),
+    Search(SearchArgs),
     Where(WhereArgs),
     List(ListArgs),
     Info(InfoArgs),
@@ -85,6 +87,18 @@ pub struct InstallArgs {
     pub engine: Option<String>,
     #[arg(long)]
     pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct SearchArgs {
+    #[arg(value_name = "PACKAGE")]
+    pub package: String,
+    #[arg(long)]
+    pub bleeding_edge: bool,
+    #[arg(long)]
+    pub nur: bool,
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Clone, Parser)]

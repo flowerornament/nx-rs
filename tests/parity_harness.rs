@@ -98,7 +98,8 @@ fn parity_harness() -> Result<(), Box<dyn Error>> {
     let cases_path = fixtures_root.join("cases.json");
     let baselines_dir = fixtures_root.join("baselines");
     let repo_base_dir = fixtures_root.join("repo_base");
-    let reference_cli = workspace_root.join("reference/nx-python/nx");
+    let reference_cli = env::var_os("NX_PYTHON_CLI")
+        .map_or_else(|| home_dir().join("code/nx-python/nx"), PathBuf::from);
     let target = HarnessTarget::from_env()?;
     let capture_mode = env::var_os(PARITY_CAPTURE_ENV).is_some();
 
@@ -634,6 +635,10 @@ fn unittest_timing_regex() -> &'static Regex {
         Regex::new(r"(Ran\s+\d+\s+tests?\s+in\s+)\d+\.\d+(s)")
             .expect("invalid unittest timing regex")
     })
+}
+
+fn home_dir() -> PathBuf {
+    env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
 }
 
 fn ansi_regex() -> &'static Regex {

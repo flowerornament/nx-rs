@@ -4,10 +4,11 @@ use crate::commands::shared::{SnippetMode, relative_location, show_snippet};
 use crate::domain::plan::{
     InsertionMode, InstallPlan, build_install_plan, nix_manifest_candidates,
 };
-use crate::domain::source::SourceResult;
+use crate::domain::source::{SourcePreferences, SourceResult};
 use crate::infra::ai_engine::{AiEngine, build_routing_context, select_engine};
 use crate::infra::file_edit::apply_edit;
 use crate::infra::finder::find_package;
+use crate::infra::sources::search_all_sources;
 
 pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
     if args.packages.is_empty() {
@@ -74,7 +75,9 @@ fn install_one(
         }
     }
 
-    let sr = source_result_from_args(package, args);
+    let Some(sr) = search_for_package(package, args, ctx) else {
+        return false;
+    };
 
     let mut plan = match build_install_plan(&sr, &ctx.config_files) {
         Ok(p) => p,
@@ -209,27 +212,113 @@ fn execute_edit(plan: &InstallPlan, rel_target: &str, ctx: &AppContext) -> bool 
     }
 }
 
-/// Build a `SourceResult` from CLI flags when search orchestration is not yet wired.
-fn source_result_from_args(package: &str, args: &InstallArgs) -> SourceResult {
-    let source = if args.cask {
-        "cask"
-    } else if args.mas {
-        "mas"
-    } else if args.nur {
-        "nur"
-    } else if let Some(ref s) = args.source {
-        s.as_str()
-    } else {
-        "nxs"
-    };
+/// Map CLI flags to source preferences for search.
+fn source_prefs_from_args(args: &InstallArgs) -> SourcePreferences {
+    SourcePreferences {
+        bleeding_edge: args.bleeding_edge,
+        nur: args.nur,
+        force_source: args.source.clone(),
+        is_cask: args.cask,
+        is_mas: args.mas,
+    }
+}
 
-    SourceResult {
-        attr: if source == "cask" || source == "mas" {
-            None
-        } else {
-            Some(package.to_string())
-        },
-        requires_flake_mod: args.bleeding_edge || source == "flake-input",
-        ..SourceResult::new(package, source)
+/// Search all sources for a package. Returns `None` with error printed if not found.
+fn search_for_package(package: &str, args: &InstallArgs, ctx: &AppContext) -> Option<SourceResult> {
+    // Explicit --cask / --mas skip search (instant, no ambiguity)
+    if args.cask || args.mas {
+        let prefs = source_prefs_from_args(args);
+        let results = search_all_sources(package, &prefs, None);
+        return results.into_iter().next();
+    }
+
+    let prefs = source_prefs_from_args(args);
+    let flake_lock = ctx.repo_root.join("flake.lock");
+    let flake_lock_path = flake_lock.exists().then_some(flake_lock.as_path());
+
+    ctx.printer.searching(package);
+    let results = search_all_sources(package, &prefs, flake_lock_path);
+    ctx.printer.searching_done();
+
+    if results.is_empty() {
+        ctx.printer
+            .error(&format!("{package}: not found in any source"));
+        return None;
+    }
+
+    Some(results.into_iter().next().unwrap())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_prefs_defaults_match_no_flags() {
+        let args = InstallArgs {
+            packages: vec![],
+            yes: false,
+            dry_run: false,
+            cask: false,
+            mas: false,
+            service: false,
+            rebuild: false,
+            bleeding_edge: false,
+            nur: false,
+            source: None,
+            explain: false,
+            engine: None,
+            model: None,
+        };
+        let prefs = source_prefs_from_args(&args);
+        assert!(!prefs.bleeding_edge);
+        assert!(!prefs.nur);
+        assert!(!prefs.is_cask);
+        assert!(!prefs.is_mas);
+        assert!(prefs.force_source.is_none());
+    }
+
+    #[test]
+    fn source_prefs_maps_cask_flag() {
+        let args = InstallArgs {
+            packages: vec![],
+            yes: false,
+            dry_run: false,
+            cask: true,
+            mas: false,
+            service: false,
+            rebuild: false,
+            bleeding_edge: false,
+            nur: false,
+            source: None,
+            explain: false,
+            engine: None,
+            model: None,
+        };
+        let prefs = source_prefs_from_args(&args);
+        assert!(prefs.is_cask);
+    }
+
+    #[test]
+    fn source_prefs_maps_source_and_bleeding_edge() {
+        let args = InstallArgs {
+            packages: vec![],
+            yes: false,
+            dry_run: false,
+            cask: false,
+            mas: false,
+            service: false,
+            rebuild: false,
+            bleeding_edge: true,
+            nur: true,
+            source: Some("unstable".to_string()),
+            explain: false,
+            engine: None,
+            model: None,
+        };
+        let prefs = source_prefs_from_args(&args);
+        assert!(prefs.bleeding_edge);
+        assert!(prefs.nur);
+        assert_eq!(prefs.force_source.as_deref(), Some("unstable"));
     }
 }

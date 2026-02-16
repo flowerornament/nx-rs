@@ -43,6 +43,14 @@ impl Printer {
         );
     }
 
+    pub fn searching(&self, name: &str) {
+        eprint!("  Searching for {name}...");
+    }
+
+    pub fn searching_done(&self) {
+        eprintln!(" done");
+    }
+
     pub fn detail(&self, text: &str) {
         println!("  {text}");
     }

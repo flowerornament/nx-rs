@@ -51,13 +51,13 @@ fn find_repo_root() -> anyhow::Result<PathBuf> {
         return Ok(std::fs::canonicalize(&env_path).unwrap_or(env_path));
     }
 
-    if let Some(root) = git_repo_root() {
-        return Ok(root);
+    let home_config = dirs_home().join(".nix-config");
+    if home_config.exists() {
+        return Ok(home_config);
     }
 
-    let fallback = dirs_home().join(".nix-config");
-    if fallback.exists() {
-        return Ok(fallback);
+    if let Some(root) = git_repo_root() {
+        return Ok(root);
     }
 
     bail!("Could not find nix-config repository")

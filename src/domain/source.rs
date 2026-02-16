@@ -58,11 +58,7 @@ impl PackageSource {
 }
 
 /// Result from searching a package source.
-///
-/// `PartialEq` is derived for test assertions on confidence values.
-/// The `f64` `confidence` field is safe here because values are deserialized
-/// from JSON (exact decimal representations) and compared with `f64::EPSILON`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)] // consumed by infra::sources and install command (.13)
 pub struct SourceResult {
     pub name: String,

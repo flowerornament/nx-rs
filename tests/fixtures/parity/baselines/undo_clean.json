@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "stdout": "\n  Nothing to undo.",
+  "stderr": "",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

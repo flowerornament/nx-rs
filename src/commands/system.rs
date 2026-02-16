@@ -19,23 +19,23 @@ pub fn cmd_undo(ctx: &AppContext) -> i32 {
 
     if modified.is_empty() {
         println!();
-        println!("Nothing to undo.");
+        println!("  Nothing to undo.");
         return 0;
     }
 
-    ctx.printer
-        .action(&format!("Undo Changes ({} files)", modified.len()));
+    println!();
+    println!("  Undo Changes ({} files)", modified.len());
 
     for file in &modified {
         println!("  {file}");
         if let Some(summary) = git_diff_stat(file, &ctx.repo_root) {
-            ctx.printer.detail(&summary);
+            println!("    {summary}");
         }
     }
 
     println!();
     if !ctx.printer.confirm("Revert all changes?", false) {
-        println!("Cancelled.");
+        println!("  Cancelled.");
         return 0;
     }
 
@@ -99,8 +99,7 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
     }
 
     if args.dry_run {
-        ctx.printer
-            .detail("Dry run complete \u{2014} no changes made");
+        ctx.printer.detail("Dry run complete - no changes made");
         return 0;
     }
 
@@ -307,7 +306,6 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext) -> bool {
         } else {
             ctx.printer.action("Retrying flake update");
         }
-        println!();
 
         let code = match run_indented_command(
             "nix",

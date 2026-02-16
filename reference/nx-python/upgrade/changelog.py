@@ -342,6 +342,15 @@ def _is_cache_corruption_error(output: str) -> bool:
     return any(indicator in output for indicator in corruption_indicators)
 
 
+def _is_too_many_open_files_error(output: str) -> bool:
+    """Check if error output indicates file descriptor exhaustion."""
+    indicators = [
+        "Too many open files",
+        "too many open files",
+    ]
+    return any(indicator in output for indicator in indicators)
+
+
 def stream_nix_update(
     repo_root: Path,
     printer: Any = None,
@@ -366,6 +375,7 @@ def stream_nix_update(
         cmd.extend(["--option", "access-tokens", f"github.com={token}"])
 
     max_attempts = 2
+    raise_nofile: int | None = None
     for attempt in range(max_attempts):
         if printer:
             if attempt == 0:
@@ -379,6 +389,7 @@ def stream_nix_update(
             printer=printer,
             indent="  ",
             skip_blank_lines=True,
+            raise_nofile=raise_nofile,
         )
 
         if returncode == 0:
@@ -390,6 +401,13 @@ def stream_nix_update(
                 printer.warn("Nix cache corruption detected, clearing cache")
             if _clear_fetcher_cache():
                 continue  # Retry
+
+        # Retry once with higher FD limit when Nix hits descriptor exhaustion.
+        if attempt == 0 and _is_too_many_open_files_error(output):
+            if printer:
+                printer.warn("Nix hit file descriptor limits, retrying with a higher soft limit")
+            raise_nofile = 8192
+            continue
 
         return False, output
 

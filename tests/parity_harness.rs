@@ -5,7 +5,7 @@ use std::env;
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -42,6 +42,7 @@ enum CaseSetup {
     StubTestUnittestFail,
     StubRebuildFlakeCheckFail,
     StubRebuildGitPreflightFail,
+    ModifiedTrackedFile,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -300,6 +301,14 @@ fn apply_setup(repo_root: &Path, setup: CaseSetup) -> Result<(), Box<dyn Error>>
             materialize_test_layout(repo_root, TestLayout::Failing)?;
             Ok(())
         }
+        CaseSetup::ModifiedTrackedFile => {
+            let target = repo_root.join("packages/nix/cli.nix");
+            fs::OpenOptions::new()
+                .append(true)
+                .open(target)?
+                .write_all(b"# parity-modified\n")?;
+            Ok(())
+        }
         CaseSetup::StubUpdateFail
         | CaseSetup::StubTestFail
         | CaseSetup::StubTestMypyFail
@@ -402,6 +411,8 @@ echo "stub mypy ok"
 exit 0
 "#,
     )?;
+
+    support::write_executable(&stub_bin.join("gh"), "#!/bin/sh\nexit 1\n")?;
 
     Ok(())
 }
@@ -534,7 +545,10 @@ fn setup_mode(setup: CaseSetup) -> Option<&'static str> {
         CaseSetup::StubTestUnittestFail => Some("stub_test_unittest_fail"),
         CaseSetup::StubRebuildFlakeCheckFail => Some("stub_rebuild_flake_check_fail"),
         CaseSetup::StubRebuildGitPreflightFail => Some("stub_rebuild_git_preflight_fail"),
-        CaseSetup::None | CaseSetup::UntrackedNix | CaseSetup::DefaultLaunchdService => None,
+        CaseSetup::None
+        | CaseSetup::UntrackedNix
+        | CaseSetup::DefaultLaunchdService
+        | CaseSetup::ModifiedTrackedFile => None,
     }
 }
 

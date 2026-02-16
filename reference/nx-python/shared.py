@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import textwrap
@@ -446,6 +447,7 @@ def run_streaming_command(
     printer: Any = None,
     indent: str = "  ",
     skip_blank_lines: bool = False,
+    raise_nofile: int | None = None,
 ) -> tuple[int, str]:
     """Run a command and stream output with consistent indentation.
 
@@ -455,12 +457,22 @@ def run_streaming_command(
         printer: Optional printer with ``stream_line`` method.
         indent: Left padding applied to streamed output.
         skip_blank_lines: If True, suppress blank output lines.
+        raise_nofile: Optional soft RLIMIT_NOFILE target for the child process.
 
     Returns:
         Tuple of (returncode, collected_output).
     """
+    process_cmd = cmd
+    if raise_nofile:
+        quoted_cmd = " ".join(shlex.quote(part) for part in cmd)
+        process_cmd = [
+            "bash",
+            "-lc",
+            f"ulimit -n {raise_nofile} >/dev/null 2>&1 || true; exec {quoted_cmd}",
+        ]
+
     process = subprocess.Popen(
-        cmd,
+        process_cmd,
         cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

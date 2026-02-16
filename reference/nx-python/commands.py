@@ -793,6 +793,7 @@ def cmd_undo(printer: Printer, repo_root: Path) -> int:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 DARWIN_REBUILD = "/run/current-system/sw/bin/darwin-rebuild"
+RAISE_NOFILE_LIMIT = 8192
 
 
 def _run_indented(
@@ -804,6 +805,15 @@ def _run_indented(
     """Run a command with consistently indented, wrapped streaming output."""
     returncode, _ = run_streaming_command(cmd, cwd=cwd, printer=printer, indent=indent)
     return returncode
+
+
+def _is_too_many_open_files_error(output: str) -> bool:
+    """Detect file descriptor exhaustion in command output."""
+    indicators = [
+        "Too many open files",
+        "too many open files",
+    ]
+    return any(indicator in output for indicator in indicators)
 
 
 def _find_untracked_nix_files(repo_root: Path) -> tuple[bool, list[str], str | None]:
@@ -928,12 +938,27 @@ def cmd_rebuild(args: Any, printer: Printer, repo_root: Path) -> int:
     printer.action("Rebuilding system")
     print()  # Blank line before command output
 
-    # Run with indented output (sudo password prompt still works via /dev/tty)
+    # Run with indented output (sudo password prompt still works via /dev/tty).
     extra_args = list(getattr(args, "passthrough", []) or [])
-    returncode = _run_indented(
-        ["sudo", DARWIN_REBUILD, "switch", "--flake", str(repo_root), *extra_args],
+    rebuild_cmd = ["sudo", DARWIN_REBUILD, "switch", "--flake", str(repo_root), *extra_args]
+    returncode, output = run_streaming_command(
+        rebuild_cmd,
         printer=printer,
+        indent="  ",
     )
+
+    # Retry once with a higher soft file descriptor limit when Nix hits EMFILE.
+    if returncode != 0 and _is_too_many_open_files_error(output):
+        printer.warn("Nix hit file descriptor limits during rebuild, retrying with a higher soft limit")
+        print()
+        printer.action("Retrying rebuild")
+        print()
+        returncode, output = run_streaming_command(
+            rebuild_cmd,
+            printer=printer,
+            indent="  ",
+            raise_nofile=RAISE_NOFILE_LIMIT,
+        )
 
     print()  # Blank line after command output
     if returncode == 0:

@@ -54,5 +54,11 @@ Update rules for future agents:
 - Re-verified on 2026-02-12 with `just cutover-validate`: shadow matrix, canary matrix, and mutation safety all passed.
 
 10. Rust parity harness now covers all current fixture cases.
-- `tests/fixtures/parity/cases.json` currently has 28 cases and all are marked `rust_parity: true`.
-- Verified on 2026-02-12 with both `just parity-check-rust` and `just parity-check-python`.
+- `tests/fixtures/parity/cases.json` currently has 37 cases; 36 are `rust_parity: true`.
+- Verified on 2026-02-16 with both `just parity-check-rust` and `just parity-check-python`.
+
+11. Python `run_command` strips stdout, breaking single-file undo detection.
+- `shared.run_command` returns `result.stdout.strip()`, which removes the leading space from ` M filename` in `git status --porcelain` output.
+- Consequence: `cmd_undo` cannot detect modified files when only one file is modified (the ` M` prefix is stripped to `M`).
+- The `undo_dirty_cancelled` parity case has `rust_parity: false` because the Rust implementation correctly handles this case while the Python baseline reflects the bug.
+- Fix: Python should use `result.stdout.rstrip()` instead of `.strip()` in `run_command`.

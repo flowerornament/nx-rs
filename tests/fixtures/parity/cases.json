@@ -177,5 +177,27 @@
     "args": ["rebuild"],
     "setup": "stub_rebuild_git_preflight_fail",
     "rust_parity": true
+  },
+  {
+    "id": "undo_clean",
+    "args": ["undo"],
+    "rust_parity": true
+  },
+  {
+    "id": "undo_dirty_cancelled",
+    "args": ["undo"],
+    "setup": "modified_tracked_file",
+    "rust_parity": false
+  },
+  {
+    "id": "upgrade_dry_run_skip_brew",
+    "args": ["upgrade", "--dry-run", "--skip-brew"],
+    "rust_parity": true
+  },
+  {
+    "id": "upgrade_flake_stubbed",
+    "args": ["upgrade", "--skip-brew", "--skip-rebuild", "--skip-commit"],
+    "setup": "stub_system_success",
+    "rust_parity": true
   }
 ]

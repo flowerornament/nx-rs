@@ -3,7 +3,9 @@ use std::path::Path;
 use crate::cli::{PassthroughArgs, UpgradeArgs};
 use crate::commands::context::AppContext;
 use crate::domain::upgrade::{diff_locks, load_flake_lock, short_rev};
-use crate::infra::shell::{CapturedCommand, run_captured_command, run_indented_command};
+use crate::infra::shell::{
+    CapturedCommand, run_captured_command, run_indented_command, run_indented_command_collecting,
+};
 use crate::output::printer::Printer;
 
 // ─── undo ────────────────────────────────────────────────────────────────────
@@ -284,37 +286,67 @@ fn parse_brew_outdated_json(json_str: &str) -> Vec<(String, String, String)> {
     results
 }
 
-/// Execute `nix flake update` with GitHub token and cache-corruption retry.
+/// Build the nix flake update command, optionally wrapped with a ulimit raise.
+fn build_nix_update_command(base_args: &[String], raise_nofile: Option<u32>) -> Vec<String> {
+    match raise_nofile {
+        Some(limit) => {
+            let nix_cmd = std::iter::once("nix".to_string())
+                .chain(base_args.iter().cloned())
+                .collect::<Vec<_>>()
+                .join(" ");
+            vec![
+                "-lc".to_string(),
+                format!("ulimit -n {limit} 2>/dev/null; exec {nix_cmd}"),
+            ]
+        }
+        None => base_args.to_vec(),
+    }
+}
+
+/// Detect file descriptor exhaustion in command output.
+fn is_fd_exhaustion(output: &str) -> bool {
+    output.contains("Too many open files") || output.contains("too many open files")
+}
+
+/// Execute `nix flake update` with GitHub token, ulimit raising, and retry.
 fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext) -> bool {
     let token = gh_auth_token();
 
-    let mut cmd_args: Vec<String> = vec!["flake".into(), "update".into()];
-    cmd_args.extend(args.passthrough.clone());
+    let mut base_args: Vec<String> = vec!["flake".into(), "update".into()];
+    base_args.extend(args.passthrough.clone());
     if !token.is_empty() {
-        cmd_args.extend([
+        base_args.extend([
             "--option".into(),
             "access-tokens".into(),
             format!("github.com={token}"),
         ]);
     }
 
-    let arg_refs: Vec<&str> = cmd_args.iter().map(String::as_str).collect();
+    // Proactively raise FD limit to avoid "Too many open files" from libgit2.
+    let mut raise_nofile: Option<u32> = Some(8192);
 
-    for attempt in 0..2 {
+    for attempt in 0..3 {
         if attempt == 0 {
             ctx.printer.action("Updating flake inputs");
         } else {
             ctx.printer.action("Retrying flake update");
         }
 
-        let code = match run_indented_command(
-            "nix",
+        let cmd_args = build_nix_update_command(&base_args, raise_nofile);
+        let (program, arg_refs): (&str, Vec<&str>) = if raise_nofile.is_some() {
+            ("bash", cmd_args.iter().map(String::as_str).collect())
+        } else {
+            ("nix", cmd_args.iter().map(String::as_str).collect())
+        };
+
+        let (code, output) = match run_indented_command_collecting(
+            program,
             &arg_refs,
             Some(&ctx.repo_root),
             &ctx.printer,
             "  ",
         ) {
-            Ok(code) => code,
+            Ok(result) => result,
             Err(err) => {
                 ctx.printer.error(&format!("{err:#}"));
                 return false;
@@ -325,8 +357,22 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext) -> bool {
             return true;
         }
 
-        // First attempt failure: try cache-corruption retry
-        if attempt == 0 && clear_fetcher_cache() {
+        if attempt >= 2 {
+            return false;
+        }
+
+        // FD exhaustion: clear tarball pack cache, bump limit, retry
+        if is_fd_exhaustion(&output) {
+            ctx.printer
+                .warn("Nix hit file descriptor limits, clearing cache and retrying");
+            clear_tarball_pack_cache();
+            clear_fetcher_cache();
+            raise_nofile = Some(65536);
+            continue;
+        }
+
+        // Cache corruption: clear and retry
+        if clear_fetcher_cache() {
             ctx.printer
                 .warn("Nix cache corruption detected, clearing cache");
             continue;
@@ -352,6 +398,14 @@ fn clear_fetcher_cache() -> bool {
         std::fs::remove_file(&cache_path).is_ok()
     } else {
         false
+    }
+}
+
+/// Clear the nix tarball pack cache to fix FD exhaustion from stale packfiles.
+fn clear_tarball_pack_cache() {
+    let pack_dir = dirs_home().join(".cache/nix/tarball-cache-v2/objects/pack");
+    if pack_dir.is_dir() {
+        let _ = std::fs::remove_dir_all(&pack_dir);
     }
 }
 
@@ -796,5 +850,40 @@ mod tests {
         let json = r#"{"formulae": [], "casks": []}"#;
         let result = parse_brew_outdated_json(json);
         assert!(result.is_empty());
+    }
+
+    // --- is_fd_exhaustion ---
+
+    #[test]
+    fn fd_exhaustion_detected() {
+        assert!(is_fd_exhaustion(
+            "error: creating git packfile indexer: Too many open files"
+        ));
+        assert!(is_fd_exhaustion("something too many open files here"));
+    }
+
+    #[test]
+    fn fd_exhaustion_not_detected_for_other_errors() {
+        assert!(!is_fd_exhaustion("error: attribute not found"));
+        assert!(!is_fd_exhaustion(""));
+    }
+
+    // --- build_nix_update_command ---
+
+    #[test]
+    fn build_command_without_ulimit() {
+        let args = vec!["flake".into(), "update".into()];
+        let result = build_nix_update_command(&args, None);
+        assert_eq!(result, vec!["flake", "update"]);
+    }
+
+    #[test]
+    fn build_command_with_ulimit() {
+        let args = vec!["flake".into(), "update".into()];
+        let result = build_nix_update_command(&args, Some(8192));
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], "-lc");
+        assert!(result[1].contains("ulimit -n 8192"));
+        assert!(result[1].contains("exec nix flake update"));
     }
 }

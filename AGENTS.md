@@ -15,8 +15,8 @@ Primary priorities:
 
 ## Guidelines
 
-1. Treat `docs/SPEC.md` as the behavior contract.
-2. Follow `docs/MIGRATION_PLAN.md` as the authoritative implementation plan.
+1. Treat `.agents/SPEC.md` as the behavior contract.
+2. Follow `.agents/MIGRATION_PLAN.md` as the authoritative implementation plan.
 3. Prefer libraries when they simplify code or reduce LOC.
 4. Use a functional-first style: pure transforms and explicit side-effect boundaries.
 5. Design types up front to encode invariants before implementing command flows.
@@ -26,10 +26,10 @@ Primary priorities:
 
 ## Key Documents
 
-- Behavior contract: `docs/SPEC.md`
-- Authoritative migration plan: `docs/MIGRATION_PLAN.md`
-- Verified operational learnings: `docs/LEARNINGS.md`
-- Cutover runbook and rollback criteria: `docs/CUTOVER_PLAYBOOK.md`
+- Behavior contract: `.agents/SPEC.md`
+- Authoritative migration plan: `.agents/MIGRATION_PLAN.md`
+- Verified operational learnings: `.agents/LEARNINGS.md`
+- Cutover runbook and rollback criteria: `.agents/CUTOVER_PLAYBOOK.md`
 - Python reference implementation: `reference/nx-python/README.md`
 - Python source baseline: `reference/nx-python/`
 - Legacy context repo: `~/.nix-config`

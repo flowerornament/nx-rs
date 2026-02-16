@@ -85,6 +85,61 @@ pub fn run_indented_command(
     Ok(status.code().unwrap_or(1))
 }
 
+/// Like `run_indented_command` but also returns collected output for error detection.
+pub fn run_indented_command_collecting(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    printer: &Printer,
+    indent: &str,
+) -> anyhow::Result<(i32, String)> {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("failed to spawn {program}"))?;
+
+    let (tx, rx) = mpsc::channel::<String>();
+
+    let stdout = child
+        .stdout
+        .take()
+        .context("failed to capture child stdout")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("failed to capture child stderr")?;
+    let stdout_handle = spawn_line_reader("stdout", stdout, tx.clone());
+    let stderr_handle = spawn_line_reader("stderr", stderr, tx);
+
+    let mut collected = String::new();
+    for line in rx {
+        let trimmed = line.trim_end();
+        if !collected.is_empty() {
+            collected.push('\n');
+        }
+        collected.push_str(trimmed);
+        if trimmed.is_empty() {
+            println!();
+        } else {
+            printer.stream_line(trimmed, indent, 80);
+        }
+    }
+
+    join_reader("stdout", stdout_handle)?;
+    join_reader("stderr", stderr_handle)?;
+
+    let status = child.wait().context("waiting for child process")?;
+    Ok((status.code().unwrap_or(1), collected))
+}
+
 fn spawn_line_reader(
     stream_name: &'static str,
     stream: impl Read + Send + 'static,

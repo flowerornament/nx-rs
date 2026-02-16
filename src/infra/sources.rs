@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -8,14 +8,12 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::domain::source::{
-    NixSearchEntry, SourcePreferences, SourceResult, check_platforms, clean_attr_path,
-    deduplicate_results, detect_language_package, get_current_system, mapped_name,
+    NixSearchEntry, OVERLAY_PACKAGES, SourcePreferences, SourceResult, check_platforms,
+    clean_attr_path, deduplicate_results, detect_language_package, get_current_system, mapped_name,
     parse_nix_search_results, score_match, search_name_variants, sort_results,
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Shell Helpers
-// ═══════════════════════════════════════════════════════════════════════════════
+// --- Shell Helpers
 
 /// Check if a program is available on PATH.
 fn command_available(name: &str) -> bool {
@@ -28,21 +26,14 @@ fn command_available(name: &str) -> bool {
 }
 
 /// Spawn a command and parse its stdout as JSON. Returns `None` on failure or timeout.
-fn run_json_command(program: &str, args: &[&str], timeout_secs: u64) -> Option<Value> {
-    let child = Command::new(program)
+fn run_json_command(program: &str, args: &[&str], _timeout_secs: u64) -> Option<Value> {
+    // Per-command timeout not yet implemented; backstopped by 45s scope timeout.
+    let output = Command::new(program)
         .args(args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .spawn()
+        .output()
         .ok()?;
-
-    let output = child.wait_with_output().ok()?;
-
-    // Check timeout via a simple wall-clock guard isn't possible after
-    // wait_with_output; instead we rely on the nix/brew commands' own
-    // timeout behavior. For truly hung processes the 45s parallel scope
-    // timeout acts as backstop.
-    let _ = timeout_secs; // retained for API parity; backstopped by scope timeout
 
     if !output.status.success() {
         return None;
@@ -86,9 +77,7 @@ fn get_homebrew_info_entry(name: &str, is_cask: bool) -> Option<Value> {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Individual Source Searches
-// ═══════════════════════════════════════════════════════════════════════════════
+// --- Individual Source Searches
 
 /// Shared nix search helper used by both nxs and NUR.
 fn search_nix_source(
@@ -107,7 +96,6 @@ fn search_nix_source(
     let resolved = mapped_name(name);
 
     for search_name in search_name_variants(name) {
-        let mut found = false;
         for target in targets {
             if let Some(data) =
                 run_json_command("nix", &["search", "--json", target, &search_name], 30)
@@ -117,12 +105,8 @@ fn search_nix_source(
                         all_entries.push(entry);
                     }
                 }
-                found = true;
-                break;
+                break; // found results for this variant, try next
             }
-        }
-        if found {
-            // variant matched — continue to next variant for additional results
         }
     }
 
@@ -206,43 +190,38 @@ pub fn search_flake_inputs(name: &str, flake_lock_path: &Path) -> Vec<SourceResu
         return Vec::new();
     };
 
-    // Known overlays that provide packages
-    let overlay_packages: &[(&str, &[&str])] = &[
-        ("neovim-nightly-overlay", &["neovim", "neovim-nightly"]),
-        ("rust-overlay", &["rust", "cargo", "rustc", "rust-analyzer"]),
-        (
-            "fenix",
-            &["rust", "cargo", "rustc", "rust-analyzer", "rust-src"],
-        ),
-        ("nxs-mozilla", &["firefox", "firefox-nightly"]),
-    ];
+    // Build overlay->packages index from domain OVERLAY_PACKAGES (package->overlay).
+    let mut overlay_to_pkgs: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (&pkg, &(overlay, _, _)) in OVERLAY_PACKAGES.iter() {
+        overlay_to_pkgs.entry(overlay).or_default().push(pkg);
+    }
 
     let search_name = mapped_name(name).to_lowercase();
     let mut results = Vec::new();
 
-    for (input_name, _) in nodes {
+    for input_name in nodes.keys() {
         if input_name == "root" {
             continue;
         }
 
-        for &(overlay, provided) in overlay_packages {
-            if input_name != overlay {
-                continue;
-            }
+        let Some(provided) = overlay_to_pkgs.get(input_name.as_str()) else {
+            continue;
+        };
 
-            for &pkg in provided {
-                let pkg_lower = pkg.to_lowercase();
-                if search_name.contains(&pkg_lower) || pkg_lower.contains(&search_name) {
-                    let confidence = if pkg_lower == search_name { 0.9 } else { 0.7 };
-                    results.push(SourceResult {
-                        name: name.to_string(),
-                        source: "flake-input".to_string(),
-                        attr: Some(pkg.to_string()),
-                        confidence,
-                        description: format!("From {input_name} overlay"),
-                        ..SourceResult::new(name, "flake-input")
-                    });
-                }
+        for &pkg in provided {
+            let pkg_lower = pkg.to_lowercase();
+            if search_name.contains(&pkg_lower) || pkg_lower.contains(&search_name) {
+                let confidence = if pkg_lower == search_name { 0.9 } else { 0.7 };
+                results.push(SourceResult {
+                    name: name.to_string(),
+                    source: "flake-input".to_string(),
+                    attr: Some(pkg.to_string()),
+                    version: None,
+                    confidence,
+                    description: format!("From {input_name} overlay"),
+                    requires_flake_mod: false,
+                    flake_url: None,
+                });
             }
         }
     }
@@ -277,7 +256,8 @@ pub fn search_homebrew(name: &str, is_cask: bool, allow_fallback: bool) -> Vec<S
                         .and_then(Value::as_str)
                         .unwrap_or("GUI application")
                         .to_string(),
-                    ..SourceResult::new(name, "cask")
+                    requires_flake_mod: false,
+                    flake_url: None,
                 }]
             } else {
                 vec![SourceResult {
@@ -301,7 +281,8 @@ pub fn search_homebrew(name: &str, is_cask: bool, allow_fallback: bool) -> Vec<S
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .to_string(),
-                    ..SourceResult::new(name, "homebrew")
+                    requires_flake_mod: false,
+                    flake_url: None,
                 }]
             }
         }
@@ -316,9 +297,7 @@ pub fn search_homebrew(name: &str, is_cask: bool, allow_fallback: bool) -> Vec<S
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Platform / Language Validation
-// ═══════════════════════════════════════════════════════════════════════════════
+// --- Platform / Language Validation
 
 /// Check if a nix package is available on the current platform.
 ///
@@ -359,9 +338,7 @@ fn validate_language_override(name: &str) -> (bool, Option<String>) {
     (true, None)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Search Shortcuts (forced / explicit / language override)
-// ═══════════════════════════════════════════════════════════════════════════════
+// --- Search Shortcuts (forced / explicit / language override)
 
 fn search_forced_source(name: &str, prefs: &SourcePreferences) -> Option<Vec<SourceResult>> {
     let source = prefs.force_source.as_deref()?;
@@ -377,18 +354,26 @@ fn search_forced_source(name: &str, prefs: &SourcePreferences) -> Option<Vec<Sou
 fn search_explicit_source(name: &str, prefs: &SourcePreferences) -> Option<Vec<SourceResult>> {
     if prefs.is_cask {
         return Some(vec![SourceResult {
+            name: name.to_string(),
+            source: "cask".to_string(),
             attr: Some(name.to_string()),
+            version: None,
             confidence: 1.0,
             description: "GUI application (cask)".to_string(),
-            ..SourceResult::new(name, "cask")
+            requires_flake_mod: false,
+            flake_url: None,
         }]);
     }
     if prefs.is_mas {
         return Some(vec![SourceResult {
+            name: name.to_string(),
+            source: "mas".to_string(),
             attr: Some(name.to_string()),
+            version: None,
             confidence: 1.0,
             description: "Mac App Store app".to_string(),
-            ..SourceResult::new(name, "mas")
+            requires_flake_mod: false,
+            flake_url: None,
         }]);
     }
     None
@@ -408,16 +393,18 @@ fn search_language_override(name: &str) -> Option<Vec<SourceResult>> {
     }
 
     Some(vec![SourceResult {
+        name: name.to_string(),
+        source: "nxs".to_string(),
         attr: Some(name.to_string()),
+        version: None,
         confidence: 1.0,
         description: format!("{runtime} package"),
-        ..SourceResult::new(name, "nxs")
+        requires_flake_mod: false,
+        flake_url: None,
     }])
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Parallel Search + Orchestration
-// ═══════════════════════════════════════════════════════════════════════════════
+// --- Parallel Search + Orchestration
 
 /// Execute parallel searches across enabled sources.
 ///
@@ -519,9 +506,7 @@ pub fn search_all_sources(
     deduplicate_results(results)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Tests
-// ═══════════════════════════════════════════════════════════════════════════════
+// --- Tests
 
 #[cfg(test)]
 mod tests {

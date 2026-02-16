@@ -4,9 +4,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::Value;
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Types
-// ═══════════════════════════════════════════════════════════════════════════════
+// --- Types
 
 /// Result from searching a package source.
 ///
@@ -63,9 +61,7 @@ pub struct NixSearchEntry {
     pub description: String,
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Constants
-// ═══════════════════════════════════════════════════════════════════════════════
+// --- Constants
 
 /// Case-insensitive alias map: common names -> canonical nix attribute names.
 static NAME_MAPPINGS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
@@ -99,24 +95,21 @@ static NAME_MAPPINGS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::
 /// Language package prefixes that need `withPackages` treatment.
 /// Maps attr prefix -> (runtime, method).
 #[allow(dead_code)] // consumed by infra::sources
-pub static LANG_PACKAGE_PREFIXES: LazyLock<Vec<(&'static str, &'static str, &'static str)>> =
-    LazyLock::new(|| {
-        vec![
-            ("python3Packages.", "python3", "withPackages"),
-            ("python311Packages.", "python3", "withPackages"),
-            ("python312Packages.", "python3", "withPackages"),
-            ("python313Packages.", "python3", "withPackages"),
-            ("python314Packages.", "python3", "withPackages"),
-            ("luaPackages.", "lua5_4", "withPackages"),
-            ("lua51Packages.", "lua5_1", "withPackages"),
-            ("lua52Packages.", "lua5_2", "withPackages"),
-            ("lua53Packages.", "lua5_3", "withPackages"),
-            ("lua54Packages.", "lua5_4", "withPackages"),
-            ("perlPackages.", "perl", "withPackages"),
-            ("rubyPackages.", "ruby", "withPackages"),
-            ("haskellPackages.", "haskellPackages.ghc", "withPackages"),
-        ]
-    });
+pub const LANG_PACKAGE_PREFIXES: &[(&str, &str, &str)] = &[
+    ("python3Packages.", "python3", "withPackages"),
+    ("python311Packages.", "python3", "withPackages"),
+    ("python312Packages.", "python3", "withPackages"),
+    ("python313Packages.", "python3", "withPackages"),
+    ("python314Packages.", "python3", "withPackages"),
+    ("luaPackages.", "lua5_4", "withPackages"),
+    ("lua51Packages.", "lua5_1", "withPackages"),
+    ("lua52Packages.", "lua5_2", "withPackages"),
+    ("lua53Packages.", "lua5_3", "withPackages"),
+    ("lua54Packages.", "lua5_4", "withPackages"),
+    ("perlPackages.", "perl", "withPackages"),
+    ("rubyPackages.", "ruby", "withPackages"),
+    ("haskellPackages.", "haskellPackages.ghc", "withPackages"),
+];
 
 /// Known overlays and the packages they replace/provide.
 /// Maps `package_name` -> `(overlay_name, attr_in_overlay, description)`.
@@ -169,9 +162,7 @@ pub static OVERLAY_PACKAGES: LazyLock<
     ])
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Pure Functions
-// ═══════════════════════════════════════════════════════════════════════════════
+// --- Pure Functions
 
 /// Normalize a package name through alias mapping (case-insensitive).
 pub fn normalize_name(name: &str) -> String {
@@ -197,7 +188,7 @@ pub fn mapped_name(name: &str) -> String {
 /// Returns `(bare_name, runtime, method)` or `None`.
 #[allow(dead_code)] // consumed by infra::sources
 pub fn detect_language_package(name: &str) -> Option<(&str, &str, &str)> {
-    for &(prefix, runtime, method) in LANG_PACKAGE_PREFIXES.iter() {
+    for &(prefix, runtime, method) in LANG_PACKAGE_PREFIXES {
         if let Some(bare) = name.strip_prefix(prefix)
             && !bare.is_empty()
         {
@@ -259,40 +250,60 @@ pub fn score_match(search_name: &str, attr: &str, pname: &str) -> f64 {
     let tail_norm = strip_separators(tail);
     let pname_norm = strip_separators(pname);
 
-    let mut score = 0.3_f64;
+    // Exact matches (highest priority, checked first)
+    let exact_score: f64 = if pname == search_name {
+        if is_root { 1.0 } else { 0.85 }
+    } else if tail == search_name {
+        if is_root { 0.98 } else { 0.80 }
+    } else if tail_lower == search_lower {
+        0.75
+    } else if tail.starts_with(search_name) {
+        0.65
+    } else if tail_lower.starts_with(&search_lower) {
+        0.60
+    } else if tail_lower.contains(&search_lower) {
+        0.45
+    } else {
+        0.3
+    };
 
-    if tail_lower.contains(&search_lower) {
-        score = 0.45;
-    }
-    if tail_lower.starts_with(&search_lower) {
-        score = 0.60;
-    }
-    if tail.starts_with(search_name) {
-        score = 0.65;
-    }
-    if tail_lower == search_lower {
-        score = 0.75;
-    }
-    if tail == search_name {
-        score = if is_root { 0.98 } else { 0.80 };
-    }
-    if pname == search_name {
-        score = if is_root { 1.0 } else { 0.85 };
-    }
+    // Separator-normalized comparison (e.g. py-yaml vs pyyaml)
+    let norm_score = if search_norm.is_empty() {
+        0.0
+    } else if pname_norm == search_norm {
+        if is_root { 1.0 } else { 0.85 }
+    } else if tail_norm == search_norm {
+        if is_root { 0.95 } else { 0.82 }
+    } else if tail_norm.starts_with(&search_norm) {
+        0.68
+    } else if tail_norm.contains(&search_norm) {
+        0.52
+    } else {
+        0.0
+    };
 
-    if !search_norm.is_empty() && tail_norm == search_norm {
-        score = score.max(if is_root { 0.95 } else { 0.82 });
-    } else if !search_norm.is_empty() && tail_norm.starts_with(&search_norm) {
-        score = score.max(0.68);
-    } else if !search_norm.is_empty() && tail_norm.contains(&search_norm) {
-        score = score.max(0.52);
-    }
+    exact_score.max(norm_score) - nesting_penalty
+}
 
-    if !search_norm.is_empty() && pname_norm == search_norm {
-        score = score.max(if is_root { 1.0 } else { 0.85 });
+/// Extract a `NixSearchEntry` from a JSON object map.
+#[allow(dead_code)] // consumed by parse_nix_search_results
+fn entry_from_obj(obj: &serde_json::Map<String, Value>, fallback_attr: &str) -> NixSearchEntry {
+    let str_field = |key| {
+        obj.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    NixSearchEntry {
+        attr_path: obj
+            .get("attrPath")
+            .and_then(Value::as_str)
+            .unwrap_or(fallback_attr)
+            .to_string(),
+        pname: str_field("pname"),
+        version: str_field("version"),
+        description: str_field("description"),
     }
-
-    score - nesting_penalty
 }
 
 /// Parse nix search JSON output into typed entries.
@@ -301,68 +312,24 @@ pub fn score_match(search_name: &str, attr: &str, pname: &str) -> f64 {
 /// and list format.
 #[allow(dead_code)] // consumed by infra::sources
 pub fn parse_nix_search_results(data: &Value) -> Vec<NixSearchEntry> {
-    let mut entries = Vec::new();
-
     match data {
-        Value::Object(map) => {
-            for (key, val) in map {
+        Value::Object(map) => map
+            .iter()
+            .map(|(key, val)| {
                 let obj = val.as_object();
-                entries.push(NixSearchEntry {
-                    attr_path: obj
-                        .and_then(|o| o.get("attrPath"))
-                        .and_then(Value::as_str)
-                        .unwrap_or(key)
-                        .to_string(),
-                    pname: obj
-                        .and_then(|o| o.get("pname"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string(),
-                    version: obj
-                        .and_then(|o| o.get("version"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string(),
-                    description: obj
-                        .and_then(|o| o.get("description"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string(),
-                });
-            }
-        }
-        Value::Array(arr) => {
-            for val in arr {
-                if let Some(obj) = val.as_object() {
-                    entries.push(NixSearchEntry {
-                        attr_path: obj
-                            .get("attrPath")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                        pname: obj
-                            .get("pname")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                        version: obj
-                            .get("version")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                        description: obj
-                            .get("description")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                    });
-                }
-            }
-        }
-        _ => {}
+                obj.map_or_else(
+                    || entry_from_obj(&serde_json::Map::new(), key),
+                    |o| entry_from_obj(o, key),
+                )
+            })
+            .collect(),
+        Value::Array(arr) => arr
+            .iter()
+            .filter_map(Value::as_object)
+            .map(|obj| entry_from_obj(obj, ""))
+            .collect(),
+        _ => Vec::new(),
     }
-
-    entries
 }
 
 /// Generate search name variants: mapped name, original, compact (max 3).
@@ -484,9 +451,7 @@ pub fn check_platforms(platforms: &Value, current_system: &str) -> (bool, Option
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Tests
-// ═══════════════════════════════════════════════════════════════════════════════
+// --- Tests
 
 #[cfg(test)]
 mod tests {

@@ -6,6 +6,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "install",
     "remove",
     "rm",
+    "uninstall",
     "search",
     "where",
     "list",
@@ -44,7 +45,7 @@ pub struct Cli {
 #[derive(Debug, Clone, Subcommand)]
 pub enum CommandKind {
     Install(InstallArgs),
-    #[command(alias = "rm")]
+    #[command(alias = "rm", alias = "uninstall")]
     Remove(RemoveArgs),
     Search(SearchArgs),
     Where(WhereArgs),

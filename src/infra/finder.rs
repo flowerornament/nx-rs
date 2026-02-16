@@ -81,6 +81,7 @@ fn find_package_exact(name: &str, repo_root: &Path) -> anyhow::Result<Option<Pac
 fn build_patterns(escaped_name: &str) -> anyhow::Result<Vec<Regex>> {
     let raw_patterns = [
         format!(r"(?i)^\s+{escaped_name}\s*(#.*)?$"),
+        format!(r"(?i)^\s+\S+\.{escaped_name}\s*(#.*)?$"),
         format!(r"(?i)^\s+pkgs\.{escaped_name}\b"),
         format!(r#"(?i)^\s*"{escaped_name}""#),
         format!(r"(?i)^\s*programs\.{escaped_name}(?:\.enable|\s*=)"),
@@ -159,6 +160,36 @@ mod tests {
         fs::create_dir_all(full.parent().expect("nix file should have a parent"))
             .expect("parent dirs should be created");
         fs::write(full, content).expect("nix content should be written");
+    }
+
+    #[test]
+    fn find_package_matches_qualified_suffix() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+
+        write_nix(
+            root,
+            "packages/nix/cli.nix",
+            r"{ pkgs }:
+[
+  ocamlPackages.cow
+  haskellPackages.pandoc
+  ripgrep
+]
+",
+        );
+
+        let found = find_package("cow", root).unwrap();
+        assert!(
+            found.is_some(),
+            "expected 'cow' to match 'ocamlPackages.cow'"
+        );
+
+        let found = find_package("pandoc", root).unwrap();
+        assert!(
+            found.is_some(),
+            "expected 'pandoc' to match 'haskellPackages.pandoc'"
+        );
     }
 
     #[test]

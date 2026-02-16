@@ -6,7 +6,10 @@ use anyhow::Context;
 use crate::cli::RemoveArgs;
 use crate::commands::context::AppContext;
 use crate::commands::shared::{SnippetMode, relative_location, show_snippet};
+use crate::infra::ai_engine::AiEngine;
+use crate::infra::ai_engine::{ClaudeEngine, build_remove_prompt};
 use crate::infra::finder::find_package;
+use crate::infra::shell::run_captured_command;
 
 pub fn cmd_remove(args: &RemoveArgs, ctx: &AppContext) -> i32 {
     if args.packages.is_empty() {
@@ -49,17 +52,21 @@ fn remove_single_package(package: &str, args: &RemoveArgs, ctx: &AppContext) -> 
         relative_location(&location, &ctx.repo_root)
     ));
 
-    let Some(line_num) = location.line() else {
-        return Ok(());
-    };
+    match location.line() {
+        Some(line_num) => remove_with_line(package, location.path(), line_num, args, ctx),
+        None => remove_via_ai(package, location.path(), args, ctx),
+    }
+}
 
-    show_snippet(
-        location.path(),
-        line_num,
-        1,
-        SnippetMode::Remove,
-        args.dry_run,
-    );
+/// Direct removal when the finder resolved an exact line number.
+fn remove_with_line(
+    package: &str,
+    file_path: &Path,
+    line_num: usize,
+    args: &RemoveArgs,
+    ctx: &AppContext,
+) -> Result<(), i32> {
+    show_snippet(file_path, line_num, 1, SnippetMode::Remove, args.dry_run);
 
     if args.dry_run {
         println!("\n- Would remove {package}");
@@ -74,25 +81,87 @@ fn remove_single_package(package: &str, args: &RemoveArgs, ctx: &AppContext) -> 
         }
     }
 
-    if let Err(err) = remove_line_directly(location.path(), line_num) {
+    if let Err(err) = remove_line_directly(file_path, line_num) {
         ctx.printer
             .error(&format!("Failed to remove {package}: {err}"));
         return Err(1);
     }
 
+    report_success(package, file_path, ctx);
+    Ok(())
+}
+
+/// AI fallback when the finder located the file but not an exact line.
+fn remove_via_ai(
+    package: &str,
+    file_path: &Path,
+    args: &RemoveArgs,
+    ctx: &AppContext,
+) -> Result<(), i32> {
+    let rel_path = file_path
+        .strip_prefix(&ctx.repo_root)
+        .unwrap_or(file_path)
+        .to_string_lossy()
+        .to_string();
+    let prompt = build_remove_prompt(package, &rel_path);
+
+    if args.dry_run {
+        ctx.printer
+            .detail(&format!("[DRY RUN] Would run AI to remove {package}"));
+        println!("\n- Would remove {package}");
+        return Ok(());
+    }
+
+    if !args.yes {
+        println!();
+        if !ctx.printer.confirm(&format!("Remove {package}?"), false) {
+            ctx.printer.detail("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    let before_diff = git_diff(&ctx.repo_root);
+
+    ctx.printer
+        .detail(&format!("Analyzing removal of {package}"));
+
+    let engine = ClaudeEngine::new(args.model.as_deref());
+    let outcome = engine.run_edit(&prompt, &ctx.repo_root);
+
+    if !outcome.success {
+        ctx.printer
+            .error(&format!("Failed to remove {package}: {}", outcome.output));
+        return Err(1);
+    }
+
+    let after_diff = git_diff(&ctx.repo_root);
+    if after_diff == before_diff {
+        ctx.printer.warn(&format!("No changes made for {package}"));
+    } else {
+        report_success(package, file_path, ctx);
+    }
+
+    Ok(())
+}
+
+fn report_success(package: &str, file_path: &Path, ctx: &AppContext) {
     #[allow(clippy::map_unwrap_or)] // map+unwrap_or_else reads better than map_or_else here
-    let file_name = location
-        .path()
+    let file_name = file_path
         .file_name()
         .and_then(|name| name.to_str())
         .map(str::to_string)
-        .unwrap_or_else(|| location.path().display().to_string());
+        .unwrap_or_else(|| file_path.display().to_string());
     println!("* {file_name}");
     println!();
     ctx.printer
         .success(&format!("{package} removed from {file_name}"));
+}
 
-    Ok(())
+/// Capture `git diff` output for change detection around AI edits.
+fn git_diff(cwd: &Path) -> String {
+    run_captured_command("git", &["diff"], Some(cwd))
+        .map(|cmd| cmd.stdout)
+        .unwrap_or_default()
 }
 
 fn remove_line_directly(file_path: &Path, line_num: usize) -> anyhow::Result<()> {
@@ -114,4 +183,82 @@ fn remove_line_directly(file_path: &Path, line_num: usize) -> anyhow::Result<()>
     }
 
     fs::write(file_path, updated).with_context(|| format!("writing {}", file_path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    // --- remove_line_directly ---
+
+    #[test]
+    fn remove_line_removes_target_line() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("test.nix");
+        fs::write(&file, "alpha\nbeta\ngamma\n").unwrap();
+
+        remove_line_directly(&file, 2).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "alpha\ngamma\n");
+    }
+
+    #[test]
+    fn remove_line_first_line() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("test.nix");
+        fs::write(&file, "first\nsecond\nthird\n").unwrap();
+
+        remove_line_directly(&file, 1).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "second\nthird\n");
+    }
+
+    #[test]
+    fn remove_line_last_line() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("test.nix");
+        fs::write(&file, "first\nsecond\nthird\n").unwrap();
+
+        remove_line_directly(&file, 3).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "first\nsecond\n");
+    }
+
+    #[test]
+    fn remove_line_preserves_no_trailing_newline() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("test.nix");
+        fs::write(&file, "alpha\nbeta\ngamma").unwrap();
+
+        remove_line_directly(&file, 2).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "alpha\ngamma");
+    }
+
+    #[test]
+    fn remove_line_out_of_range_errors() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("test.nix");
+        fs::write(&file, "only one line\n").unwrap();
+
+        let err = remove_line_directly(&file, 5).unwrap_err();
+        assert!(err.to_string().contains("out of range"));
+    }
+
+    #[test]
+    fn remove_line_zero_errors() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("test.nix");
+        fs::write(&file, "content\n").unwrap();
+
+        let err = remove_line_directly(&file, 0).unwrap_err();
+        assert!(err.to_string().contains("invalid line number"));
+    }
+
+    // --- git_diff ---
+
+    #[test]
+    fn git_diff_returns_empty_for_non_repo() {
+        let tmp = TempDir::new().unwrap();
+        let result = git_diff(tmp.path());
+        // Non-repo: git diff fails → empty string fallback
+        assert!(result.is_empty());
+    }
 }

@@ -17,7 +17,6 @@ pub struct RouteDecision {
 
 /// Outcome of an AI engine command execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // consumed by remove command (.15)
 pub struct CommandOutcome {
     pub success: bool,
     pub output: String,
@@ -41,14 +40,13 @@ pub trait AiEngine: Send + Sync {
     ) -> RouteDecision;
 
     /// Execute a freeform edit prompt (fallback for complex edits).
-    #[allow(dead_code)] // consumed by remove command (.15)
     fn run_edit(&self, prompt: &str, cwd: &Path) -> CommandOutcome;
 
     /// Whether this engine can handle flake.nix input modifications.
     fn supports_flake_input(&self) -> bool;
 
     /// Human-readable engine name.
-    #[allow(dead_code)] // consumed by install logging (.15)
+    #[allow(dead_code)] // tested; consumed by install logging in future phase
     fn name(&self) -> &'static str;
 }
 
@@ -404,8 +402,18 @@ pub fn build_routing_prompt(package: &str, context: &str, candidates: Option<&[S
     }
 }
 
+/// Build a removal prompt for AI-based package removal.
+pub fn build_remove_prompt(package: &str, file_path: &str) -> String {
+    format!(
+        "Remove the package \"{package}\" from {file_path}.\n\n\
+         Remove the entire line including any inline comment.\n\
+         If it was the only item in a section, you can remove the section header comment too.\n\n\
+         Only make the edit, no explanation. Use the Edit tool."
+    )
+}
+
 /// Build an edit prompt from a resolved install plan (fallback for complex edits).
-#[allow(dead_code)] // consumed by remove command (.15)
+#[allow(dead_code)] // tested; consumed by install AI edit path in future phase
 pub fn build_edit_prompt(plan: &InstallPlan) -> String {
     let target = plan.target_file.to_string_lossy();
 
@@ -878,5 +886,22 @@ mod tests {
             normalize_path_token("packages/nix/cli.nix,"),
             "packages/nix/cli.nix"
         );
+    }
+
+    // --- build_remove_prompt ---
+
+    #[test]
+    fn remove_prompt_contains_package_and_path() {
+        let prompt = build_remove_prompt("ripgrep", "packages/nix/cli.nix");
+        assert!(prompt.contains("ripgrep"));
+        assert!(prompt.contains("packages/nix/cli.nix"));
+        assert!(prompt.contains("Remove"));
+    }
+
+    #[test]
+    fn remove_prompt_instructs_edit_only() {
+        let prompt = build_remove_prompt("htop", "packages/nix/cli.nix");
+        assert!(prompt.contains("no explanation"));
+        assert!(prompt.contains("Edit tool"));
     }
 }

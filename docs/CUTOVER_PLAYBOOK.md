@@ -27,7 +27,7 @@ scripts/cutover/validate_shadow_canary.sh
 
 1. Build and resolve binaries
 - Python baseline: `~/.nix-config/scripts/nx/nx`
-- Rust candidate: `target/debug/nx-rs` (auto-built if missing)
+- Rust candidate: `target/debug/nx` (auto-built if missing)
 
 2. Shadow matrix (Python vs Rust)
 - Compare exit code, normalized stdout, normalized stderr for:
@@ -118,41 +118,102 @@ Evidence trail:
 - `just ci` green (fmt + clippy + test + check).
 - Legacy in-tree copy decommissioned and quarantined.
 
-## Rollback Steps
+## Flake Cutover Procedure
 
-If a canary or cutover attempt causes issues, restore Python `nx` immediately:
+The production cutover uses nix flakes. nx-rs exposes a `flake.nix` that builds the `nx` binary.
 
-1. Remove or disable nx-rs PATH override/symlink.
-- If you created `~/.local/bin/nx` symlink to nx-rs:
+### Prerequisites
+
+1. `nix build` succeeds in `~/code/nx-rs`.
+2. `just ci` passes.
+3. `just cutover-validate` passes (shadow + canary + mutation safety).
+
+### Step 1: Extract Python nx to standalone repo
 
 ```bash
-rm -f ~/.local/bin/nx
+# Clean copy (no git history needed — reference/ already has frozen copy)
+mkdir -p ~/code/nx-python
+cp -R ~/.nix-config/scripts/nx/* ~/code/nx-python/
+cd ~/code/nx-python
+git init && git add . && git commit -m "Initial commit: extract from nix-config"
+# Create repo on GitHub, then:
+# git remote add origin git@github.com:flowerornament/nx-python.git
+# git push -u origin main
 ```
 
-2. Ensure Python `nx` resolves first:
+### Step 2: Add nx-rs as flake input in nix-config
 
-```bash
-command -v nx
-# expected: /Users/morgan/.nix-config/scripts/nx/nx
+In `~/.nix-config/flake.nix`, add to `inputs`:
+
+```nix
+nx-rs = {
+  url = "github:flowerornament/nx-rs";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
 ```
 
-3. Force shell command hash refresh:
+### Step 3: Add nx package to system packages
+
+Where system packages are declared (e.g. in a host or home module), add:
+
+```nix
+inputs.nx-rs.packages.${pkgs.system}.default
+```
+
+### Step 4: Remove Python nx from nix-config
 
 ```bash
+rm -rf ~/.nix-config/scripts/nx
+```
+
+Remove any PATH entries or shell aliases that pointed to `scripts/nx/nx`.
+
+### Step 5: Rebuild and verify
+
+```bash
+cd ~/.nix-config
+nix flake lock --update-input nx-rs
+darwin-rebuild switch --flake .
 hash -r
+command -v nx    # should resolve to /run/current-system/sw/bin/nx or similar
+nx --plain --minimal status
 ```
 
-4. Smoke check with Python baseline:
+### Step 6: Smoke test
 
 ```bash
-/Users/morgan/.nix-config/scripts/nx/nx --plain --minimal status
+nx where ripgrep
+nx list --plain | head -5
+nx installed ripgrep --json
 ```
 
-5. If any unexpected file changes occurred in `~/.nix-config`, inspect and revert manually:
+## Rollback (Flake-Based)
+
+If the Rust `nx` has issues after cutover:
+
+1. Remove the `nx-rs` input from `~/.nix-config/flake.nix` and its package reference.
+
+2. Restore Python `nx`:
 
 ```bash
-git -C ~/.nix-config status --short
-git -C ~/.nix-config diff
+# If nx-python is on GitHub:
+git clone git@github.com:flowerornament/nx-python.git ~/.nix-config/scripts/nx
+# Or from local copy:
+cp -R ~/code/nx-python ~/.nix-config/scripts/nx
+```
+
+3. Rebuild:
+
+```bash
+cd ~/.nix-config && darwin-rebuild switch --flake .
+hash -r
+command -v nx
+```
+
+4. Smoke check:
+
+```bash
+nx --plain --minimal status
 ```
 
 ## Decommission Task: In-Tree `nx-rs` Copy

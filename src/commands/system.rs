@@ -1,7 +1,8 @@
 use std::path::Path;
 
-use crate::cli::PassthroughArgs;
+use crate::cli::{PassthroughArgs, UpgradeArgs};
 use crate::commands::context::AppContext;
+use crate::domain::upgrade::{diff_locks, load_flake_lock, short_rev};
 use crate::infra::shell::{CapturedCommand, run_captured_command, run_indented_command};
 use crate::output::printer::Printer;
 
@@ -77,6 +78,186 @@ fn git_diff_stat(file: &str, repo_root: &Path) -> Option<String> {
             line.contains("insertion") || line.contains("deletion") || line.contains("changed")
         })
         .map(|line| line.trim().to_string())
+}
+
+// ─── upgrade ─────────────────────────────────────────────────────────────────
+
+pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
+    if args.dry_run {
+        ctx.printer.dry_run_banner();
+    }
+
+    let flake_changed = match run_flake_phase(args, ctx) {
+        Ok(changed) => changed,
+        Err(code) => return code,
+    };
+
+    // Brew phase and rebuild/commit are in .18
+    if args.dry_run {
+        ctx.printer.detail("Dry run complete — no changes made");
+        return 0;
+    }
+
+    if !args.skip_rebuild {
+        let passthrough = PassthroughArgs {
+            passthrough: Vec::new(),
+        };
+        if cmd_rebuild(&passthrough, ctx) != 0 {
+            return 1;
+        }
+    }
+
+    if !args.skip_commit && flake_changed {
+        commit_flake_lock(ctx);
+    }
+
+    0
+}
+
+/// Flake phase: load old lock → update → load new lock → diff → report.
+///
+/// Returns `Ok(true)` if flake inputs changed, `Ok(false)` if unchanged,
+/// `Err(exit_code)` on failure.
+fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<bool, i32> {
+    let old_inputs = load_flake_lock(&ctx.repo_root).unwrap_or_default();
+
+    let new_inputs = if args.dry_run {
+        old_inputs.clone()
+    } else {
+        if !stream_nix_update(args, ctx) {
+            ctx.printer.error("Flake update failed");
+            return Err(1);
+        }
+        load_flake_lock(&ctx.repo_root).unwrap_or_default()
+    };
+
+    let diff = diff_locks(&old_inputs, &new_inputs);
+
+    if diff.changed.is_empty() && diff.added.is_empty() && diff.removed.is_empty() {
+        ctx.printer.success("All flake inputs up to date");
+        return Ok(false);
+    }
+
+    if !diff.changed.is_empty() {
+        ctx.printer
+            .action(&format!("Flake Inputs Changed ({})", diff.changed.len()));
+        for change in &diff.changed {
+            println!(
+                "  {} ({}/{}) {} \u{2192} {}",
+                change.name,
+                change.owner,
+                change.repo,
+                short_rev(&change.old_rev),
+                short_rev(&change.new_rev),
+            );
+        }
+    }
+
+    if !diff.added.is_empty() {
+        ctx.printer
+            .detail(&format!("Added: {}", diff.added.join(", ")));
+    }
+    if !diff.removed.is_empty() {
+        ctx.printer
+            .detail(&format!("Removed: {}", diff.removed.join(", ")));
+    }
+
+    Ok(!diff.changed.is_empty())
+}
+
+/// Execute `nix flake update` with GitHub token and cache-corruption retry.
+fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext) -> bool {
+    let token = gh_auth_token();
+
+    let mut cmd_args: Vec<String> = vec!["flake".into(), "update".into()];
+    cmd_args.extend(args.passthrough.clone());
+    if !token.is_empty() {
+        cmd_args.extend([
+            "--option".into(),
+            "access-tokens".into(),
+            format!("github.com={token}"),
+        ]);
+    }
+
+    let arg_refs: Vec<&str> = cmd_args.iter().map(String::as_str).collect();
+
+    for attempt in 0..2 {
+        if attempt == 0 {
+            ctx.printer.action("Updating flake inputs");
+        } else {
+            ctx.printer.action("Retrying flake update");
+        }
+        println!();
+
+        let code = match run_indented_command(
+            "nix",
+            &arg_refs,
+            Some(&ctx.repo_root),
+            &ctx.printer,
+            "  ",
+        ) {
+            Ok(code) => code,
+            Err(err) => {
+                ctx.printer.error(&format!("{err:#}"));
+                return false;
+            }
+        };
+
+        if code == 0 {
+            return true;
+        }
+
+        // First attempt failure: try cache-corruption retry
+        if attempt == 0 && clear_fetcher_cache() {
+            ctx.printer
+                .warn("Nix cache corruption detected, clearing cache");
+            continue;
+        }
+
+        return false;
+    }
+
+    false
+}
+
+/// Get GitHub token from `gh auth token`.
+fn gh_auth_token() -> String {
+    run_captured_command("gh", &["auth", "token"], None)
+        .map(|cmd| cmd.stdout.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Clear the nix fetcher cache to fix corruption issues.
+fn clear_fetcher_cache() -> bool {
+    let cache_path = dirs_home().join(".cache/nix/fetcher-cache-v4.sqlite");
+    if cache_path.exists() {
+        std::fs::remove_file(&cache_path).is_ok()
+    } else {
+        false
+    }
+}
+
+fn dirs_home() -> std::path::PathBuf {
+    std::env::var_os("HOME").map_or_else(|| std::path::PathBuf::from("/"), std::path::PathBuf::from)
+}
+
+/// Commit `flake.lock` after a successful upgrade.
+fn commit_flake_lock(ctx: &AppContext) {
+    let repo = ctx.repo_root.display().to_string();
+    let _ = run_captured_command("git", &["-C", &repo, "add", "flake.lock"], None);
+    let result = run_captured_command(
+        "git",
+        &["-C", &repo, "commit", "-m", "chore: update flake.lock"],
+        None,
+    );
+    match result {
+        Ok(cmd) if cmd.code == 0 => {
+            ctx.printer.success("Committed flake.lock");
+        }
+        _ => {
+            ctx.printer.warn("No flake.lock changes to commit");
+        }
+    }
 }
 
 // ─── update ──────────────────────────────────────────────────────────────────

@@ -87,17 +87,24 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
         ctx.printer.dry_run_banner();
     }
 
+    // Phase 1: Flake update
     let flake_changed = match run_flake_phase(args, ctx) {
         Ok(changed) => changed,
         Err(code) => return code,
     };
 
-    // Brew phase and rebuild/commit are in .18
+    // Phase 2: Brew
+    if !args.skip_brew {
+        run_brew_phase(args, ctx);
+    }
+
     if args.dry_run {
-        ctx.printer.detail("Dry run complete — no changes made");
+        ctx.printer
+            .detail("Dry run complete \u{2014} no changes made");
         return 0;
     }
 
+    // Phase 3: Rebuild
     if !args.skip_rebuild {
         let passthrough = PassthroughArgs {
             passthrough: Vec::new(),
@@ -107,6 +114,7 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
         }
     }
 
+    // Phase 4: Commit
     if !args.skip_commit && flake_changed {
         commit_flake_lock(ctx);
     }
@@ -163,6 +171,118 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<bool, i32> {
     }
 
     Ok(!diff.changed.is_empty())
+}
+
+/// Brew phase: check outdated packages, display, and upgrade.
+fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
+    ctx.printer.action("Checking Homebrew updates");
+
+    let outdated = brew_outdated();
+
+    if outdated.is_empty() {
+        ctx.printer.success("All Homebrew packages up to date");
+        return;
+    }
+
+    ctx.printer.detail(&format!(
+        "{} outdated package{}",
+        outdated.len(),
+        if outdated.len() == 1 { "" } else { "s" }
+    ));
+
+    for (name, installed, current) in &outdated {
+        println!("  {name}: {installed} \u{2192} {current}");
+    }
+
+    if args.dry_run {
+        return;
+    }
+
+    let pkg_names: Vec<&str> = outdated.iter().map(|(name, _, _)| name.as_str()).collect();
+    ctx.printer
+        .action(&format!("Upgrading {} Homebrew packages", pkg_names.len()));
+    println!();
+
+    let code = match run_indented_command("brew", &["upgrade"], None, &ctx.printer, "  ") {
+        Ok(code) => code,
+        Err(err) => {
+            ctx.printer.error(&format!("{err:#}"));
+            return;
+        }
+    };
+
+    println!();
+    if code == 0 {
+        ctx.printer.success("Homebrew packages upgraded");
+    } else {
+        ctx.printer.warn("Some Homebrew upgrades may have failed");
+    }
+}
+
+/// Fetch outdated brew packages via `brew outdated --json`.
+fn brew_outdated() -> Vec<(String, String, String)> {
+    let output = match run_captured_command("brew", &["outdated", "--json"], None) {
+        Ok(cmd) if cmd.code == 0 => cmd.stdout,
+        _ => return Vec::new(),
+    };
+    parse_brew_outdated_json(&output)
+}
+
+/// Parse brew outdated JSON into (name, installed, current) version tuples.
+fn parse_brew_outdated_json(json_str: &str) -> Vec<(String, String, String)> {
+    let data: serde_json::Value = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut results = Vec::new();
+
+    // Formulae
+    if let Some(formulae) = data.get("formulae").and_then(|v| v.as_array()) {
+        for formula in formulae {
+            let name = formula
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let installed = formula
+                .get("installed_versions")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let current = formula
+                .get("current_version")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            if !name.is_empty() && !installed.is_empty() && !current.is_empty() {
+                results.push((name.to_string(), installed.to_string(), current.to_string()));
+            }
+        }
+    }
+
+    // Casks
+    if let Some(casks) = data.get("casks").and_then(|v| v.as_array()) {
+        for cask in casks {
+            let name = cask
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let installed = cask
+                .get("installed_versions")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let current = cask
+                .get("current_version")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            if !name.is_empty() && !installed.is_empty() && !current.is_empty() {
+                results.push((name.to_string(), installed.to_string(), current.to_string()));
+            }
+        }
+    }
+
+    results.sort_by(|a, b| a.0.cmp(&b.0));
+    results
 }
 
 /// Execute `nix flake update` with GitHub token and cache-corruption retry.
@@ -563,5 +683,120 @@ mod tests {
         let tmp = init_git_repo();
         let summary = git_diff_stat("file.txt", tmp.path());
         assert!(summary.is_none());
+    }
+
+    // --- parse_brew_outdated_json ---
+
+    #[test]
+    fn brew_parse_extracts_formulae() {
+        let json = r#"{
+            "formulae": [
+                {
+                    "name": "git",
+                    "installed_versions": ["2.43.0"],
+                    "current_version": "2.44.0"
+                },
+                {
+                    "name": "jq",
+                    "installed_versions": ["1.6"],
+                    "current_version": "1.7.1"
+                }
+            ],
+            "casks": []
+        }"#;
+
+        let result = parse_brew_outdated_json(json);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], ("git".into(), "2.43.0".into(), "2.44.0".into()));
+        assert_eq!(result[1], ("jq".into(), "1.6".into(), "1.7.1".into()));
+    }
+
+    #[test]
+    fn brew_parse_extracts_casks() {
+        let json = r#"{
+            "formulae": [],
+            "casks": [
+                {
+                    "name": "firefox",
+                    "installed_versions": "120.0",
+                    "current_version": "121.0"
+                }
+            ]
+        }"#;
+
+        let result = parse_brew_outdated_json(json);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0],
+            ("firefox".into(), "120.0".into(), "121.0".into())
+        );
+    }
+
+    #[test]
+    fn brew_parse_mixed_formulae_and_casks_sorted() {
+        let json = r#"{
+            "formulae": [
+                {
+                    "name": "zsh",
+                    "installed_versions": ["5.9"],
+                    "current_version": "5.9.1"
+                }
+            ],
+            "casks": [
+                {
+                    "name": "alacritty",
+                    "installed_versions": "0.12",
+                    "current_version": "0.13"
+                }
+            ]
+        }"#;
+
+        let result = parse_brew_outdated_json(json);
+        assert_eq!(result.len(), 2);
+        // Sorted by name: alacritty < zsh
+        assert_eq!(result[0].0, "alacritty");
+        assert_eq!(result[1].0, "zsh");
+    }
+
+    #[test]
+    fn brew_parse_skips_incomplete_entries() {
+        let json = r#"{
+            "formulae": [
+                {
+                    "name": "",
+                    "installed_versions": ["1.0"],
+                    "current_version": "2.0"
+                },
+                {
+                    "name": "valid",
+                    "installed_versions": ["1.0"],
+                    "current_version": "2.0"
+                }
+            ],
+            "casks": []
+        }"#;
+
+        let result = parse_brew_outdated_json(json);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "valid");
+    }
+
+    #[test]
+    fn brew_parse_invalid_json_returns_empty() {
+        let result = parse_brew_outdated_json("not json at all");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn brew_parse_empty_json_returns_empty() {
+        let result = parse_brew_outdated_json("{}");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn brew_parse_empty_arrays_returns_empty() {
+        let json = r#"{"formulae": [], "casks": []}"#;
+        let result = parse_brew_outdated_json(json);
+        assert!(result.is_empty());
     }
 }

@@ -402,10 +402,12 @@ fn clear_fetcher_cache() -> bool {
 }
 
 /// Clear the nix tarball pack cache to fix FD exhaustion from stale packfiles.
+/// Recreates the empty directory so nix can write new packfiles.
 fn clear_tarball_pack_cache() {
     let pack_dir = dirs_home().join(".cache/nix/tarball-cache-v2/objects/pack");
     if pack_dir.is_dir() {
         let _ = std::fs::remove_dir_all(&pack_dir);
+        let _ = std::fs::create_dir_all(&pack_dir);
     }
 }
 

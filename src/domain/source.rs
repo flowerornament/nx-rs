@@ -1,13 +1,20 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+use regex::Regex;
+use serde_json::Value;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Result from searching a package source.
 ///
 /// `PartialEq` is derived for test assertions on confidence values.
 /// The `f64` `confidence` field is safe here because values are deserialized
 /// from JSON (exact decimal representations) and compared with `f64::EPSILON`.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // search command consumers arrive via .12/.13
+#[allow(dead_code)] // consumed by infra::sources and install command (.13)
 pub struct SourceResult {
     pub name: String,
     pub source: String,
@@ -19,7 +26,7 @@ pub struct SourceResult {
     pub flake_url: Option<String>,
 }
 
-#[allow(dead_code)] // search command consumers arrive via .12/.13
+#[allow(dead_code)] // consumed by infra::sources and install command (.13)
 impl SourceResult {
     pub fn new(name: impl Into<String>, source: impl Into<String>) -> Self {
         Self {
@@ -35,7 +42,32 @@ impl SourceResult {
     }
 }
 
-/// Case-insensitive alias map: common names → canonical nix attribute names.
+/// User preferences for source selection.
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // consumed by infra::sources and install command (.13)
+pub struct SourcePreferences {
+    pub bleeding_edge: bool,
+    pub nur: bool,
+    pub force_source: Option<String>,
+    pub is_cask: bool,
+    pub is_mas: bool,
+}
+
+/// Typed intermediate from `nix search --json` output.
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // consumed by infra::sources
+pub struct NixSearchEntry {
+    pub attr_path: String,
+    pub pname: String,
+    pub version: String,
+    pub description: String,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Constants
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Case-insensitive alias map: common names -> canonical nix attribute names.
 static NAME_MAPPINGS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     HashMap::from([
         // Numeric prefix packages
@@ -64,6 +96,83 @@ static NAME_MAPPINGS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::
     ])
 });
 
+/// Language package prefixes that need `withPackages` treatment.
+/// Maps attr prefix -> (runtime, method).
+#[allow(dead_code)] // consumed by infra::sources
+pub static LANG_PACKAGE_PREFIXES: LazyLock<Vec<(&'static str, &'static str, &'static str)>> =
+    LazyLock::new(|| {
+        vec![
+            ("python3Packages.", "python3", "withPackages"),
+            ("python311Packages.", "python3", "withPackages"),
+            ("python312Packages.", "python3", "withPackages"),
+            ("python313Packages.", "python3", "withPackages"),
+            ("python314Packages.", "python3", "withPackages"),
+            ("luaPackages.", "lua5_4", "withPackages"),
+            ("lua51Packages.", "lua5_1", "withPackages"),
+            ("lua52Packages.", "lua5_2", "withPackages"),
+            ("lua53Packages.", "lua5_3", "withPackages"),
+            ("lua54Packages.", "lua5_4", "withPackages"),
+            ("perlPackages.", "perl", "withPackages"),
+            ("rubyPackages.", "ruby", "withPackages"),
+            ("haskellPackages.", "haskellPackages.ghc", "withPackages"),
+        ]
+    });
+
+/// Known overlays and the packages they replace/provide.
+/// Maps `package_name` -> `(overlay_name, attr_in_overlay, description)`.
+#[allow(dead_code)] // consumed by infra::sources
+pub static OVERLAY_PACKAGES: LazyLock<
+    HashMap<&'static str, (&'static str, &'static str, &'static str)>,
+> = LazyLock::new(|| {
+    HashMap::from([
+        (
+            "neovim",
+            ("neovim-nightly-overlay", "default", "Neovim nightly build"),
+        ),
+        (
+            "nvim",
+            ("neovim-nightly-overlay", "default", "Neovim nightly build"),
+        ),
+        (
+            "rust",
+            ("fenix", "default.toolchain", "Rust nightly toolchain"),
+        ),
+        (
+            "cargo",
+            ("fenix", "default.toolchain", "Rust nightly toolchain"),
+        ),
+        (
+            "rustc",
+            ("fenix", "default.toolchain", "Rust nightly toolchain"),
+        ),
+        (
+            "rust-analyzer",
+            ("fenix", "rust-analyzer", "Rust analyzer nightly"),
+        ),
+        (
+            "emacs",
+            ("emacs-overlay", "emacs-git", "Emacs from git master"),
+        ),
+        ("zig", ("zig-overlay", "master", "Zig nightly build")),
+        (
+            "firefox",
+            ("nxs-mozilla", "firefox-nightly-bin", "Firefox Nightly"),
+        ),
+        (
+            "firefox-nightly",
+            ("nxs-mozilla", "firefox-nightly-bin", "Firefox Nightly"),
+        ),
+        (
+            "rust-bin",
+            ("rust-overlay", "rust", "Rust from rust-overlay"),
+        ),
+    ])
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Pure Functions
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Normalize a package name through alias mapping (case-insensitive).
 pub fn normalize_name(name: &str) -> String {
     let lower = name.to_lowercase();
@@ -73,9 +182,318 @@ pub fn normalize_name(name: &str) -> String {
     }
 }
 
+/// Resolve common aliases case-insensitively (returns mapped or original).
+#[allow(dead_code)] // consumed by infra::sources
+pub fn mapped_name(name: &str) -> String {
+    let lower = name.to_lowercase();
+    match NAME_MAPPINGS.get(lower.as_str()) {
+        Some(mapped) => (*mapped).to_string(),
+        None => name.to_string(),
+    }
+}
+
+/// Detect if a package is a language-specific package.
+///
+/// Returns `(bare_name, runtime, method)` or `None`.
+#[allow(dead_code)] // consumed by infra::sources
+pub fn detect_language_package(name: &str) -> Option<(&str, &str, &str)> {
+    for &(prefix, runtime, method) in LANG_PACKAGE_PREFIXES.iter() {
+        if let Some(bare) = name.strip_prefix(prefix)
+            && !bare.is_empty()
+        {
+            return Some((bare, runtime, method));
+        }
+    }
+    None
+}
+
+/// Strip the `legacyPackages.<arch>` prefix from a nix attribute path.
+#[allow(dead_code)] // consumed by infra::sources
+pub fn clean_attr_path(attr: &str) -> &str {
+    if let Some(rest) = attr.strip_prefix("legacyPackages.") {
+        // Skip the arch segment: find the second dot after the prefix
+        if let Some(idx) = rest.find('.') {
+            return &rest[idx + 1..];
+        }
+    }
+    attr
+}
+
+/// Strip non-alphanumeric characters for normalized comparison.
+#[allow(dead_code)] // consumed by score_match, search_name_variants
+fn strip_separators(s: &str) -> String {
+    static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9]+").unwrap());
+    RE.replace_all(&s.to_lowercase(), "").into_owned()
+}
+
+/// Score how well an attribute matches the search name.
+///
+/// Prefers root-level packages (pkgs.redis) over nested ones
+/// (`pkgs.chickenPackages.eggs.redis`). Returns 0.0-1.0.
+#[allow(dead_code)] // consumed by infra::sources
+pub fn score_match(search_name: &str, attr: &str, pname: &str) -> f64 {
+    let parts: Vec<&str> = attr.split('.').collect();
+    let tail = parts.last().copied().unwrap_or(attr);
+
+    let is_root = if attr.starts_with("legacyPackages.") {
+        parts.len() == 3
+    } else {
+        parts.len() == 1
+    };
+
+    let nesting_penalty = if is_root {
+        0.0
+    } else {
+        let depth = if attr.starts_with("legacyPackages.") {
+            parts.len().saturating_sub(3)
+        } else {
+            parts.len().saturating_sub(1)
+        };
+        #[allow(clippy::cast_precision_loss)] // depth is always small (< 10)
+        f64::min(0.3, depth as f64 * 0.1)
+    };
+
+    let search_lower = search_name.to_lowercase();
+    let tail_lower = tail.to_lowercase();
+    let search_norm = strip_separators(search_name);
+    let tail_norm = strip_separators(tail);
+    let pname_norm = strip_separators(pname);
+
+    let mut score = 0.3_f64;
+
+    if tail_lower.contains(&search_lower) {
+        score = 0.45;
+    }
+    if tail_lower.starts_with(&search_lower) {
+        score = 0.60;
+    }
+    if tail.starts_with(search_name) {
+        score = 0.65;
+    }
+    if tail_lower == search_lower {
+        score = 0.75;
+    }
+    if tail == search_name {
+        score = if is_root { 0.98 } else { 0.80 };
+    }
+    if pname == search_name {
+        score = if is_root { 1.0 } else { 0.85 };
+    }
+
+    if !search_norm.is_empty() && tail_norm == search_norm {
+        score = score.max(if is_root { 0.95 } else { 0.82 });
+    } else if !search_norm.is_empty() && tail_norm.starts_with(&search_norm) {
+        score = score.max(0.68);
+    } else if !search_norm.is_empty() && tail_norm.contains(&search_norm) {
+        score = score.max(0.52);
+    }
+
+    if !search_norm.is_empty() && pname_norm == search_norm {
+        score = score.max(if is_root { 1.0 } else { 0.85 });
+    }
+
+    score - nesting_penalty
+}
+
+/// Parse nix search JSON output into typed entries.
+///
+/// Handles both dict format (`attrPath -> {pname, description, ...}`)
+/// and list format.
+#[allow(dead_code)] // consumed by infra::sources
+pub fn parse_nix_search_results(data: &Value) -> Vec<NixSearchEntry> {
+    let mut entries = Vec::new();
+
+    match data {
+        Value::Object(map) => {
+            for (key, val) in map {
+                let obj = val.as_object();
+                entries.push(NixSearchEntry {
+                    attr_path: obj
+                        .and_then(|o| o.get("attrPath"))
+                        .and_then(Value::as_str)
+                        .unwrap_or(key)
+                        .to_string(),
+                    pname: obj
+                        .and_then(|o| o.get("pname"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    version: obj
+                        .and_then(|o| o.get("version"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    description: obj
+                        .and_then(|o| o.get("description"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                });
+            }
+        }
+        Value::Array(arr) => {
+            for val in arr {
+                if let Some(obj) = val.as_object() {
+                    entries.push(NixSearchEntry {
+                        attr_path: obj
+                            .get("attrPath")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                        pname: obj
+                            .get("pname")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                        version: obj
+                            .get("version")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                        description: obj
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+
+    entries
+}
+
+/// Generate search name variants: mapped name, original, compact (max 3).
+#[allow(dead_code)] // consumed by infra::sources
+pub fn search_name_variants(name: &str) -> Vec<String> {
+    let mut variants = Vec::with_capacity(3);
+    let mapped = mapped_name(name);
+
+    for candidate in [&mapped, &name.to_string()] {
+        if !candidate.is_empty() && !variants.contains(candidate) {
+            variants.push(candidate.clone());
+        }
+        let compact = strip_separators(candidate);
+        if !compact.is_empty() && !variants.contains(&compact) {
+            variants.push(compact);
+        }
+    }
+
+    variants.truncate(3);
+    variants
+}
+
+/// Return the current Nix system identifier (e.g., `aarch64-darwin`).
+#[allow(dead_code)] // consumed by infra::sources
+pub fn get_current_system() -> &'static str {
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    {
+        "aarch64-darwin"
+    }
+    #[cfg(all(target_arch = "x86_64", target_os = "macos"))]
+    {
+        "x86_64-darwin"
+    }
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    {
+        "aarch64-linux"
+    }
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    {
+        "x86_64-linux"
+    }
+}
+
+/// Sort results in-place by source priority and confidence.
+#[allow(dead_code)] // consumed by infra::sources
+pub fn sort_results(results: &mut [SourceResult], prefs: &SourcePreferences) {
+    let priority = |source: &str| -> u8 {
+        if prefs.bleeding_edge {
+            match source {
+                "flake-input" => 0,
+                "nur" => 1,
+                "nxs" => 2,
+                "homebrew" => 3,
+                "cask" => 4,
+                _ => 99,
+            }
+        } else {
+            match source {
+                "flake-input" => 0,
+                "nxs" => 1,
+                "nur" => 2,
+                "homebrew" => 3,
+                "cask" => 4,
+                _ => 99,
+            }
+        }
+    };
+
+    results.sort_by(|a, b| {
+        let pa = priority(&a.source);
+        let pb = priority(&b.source);
+        pa.cmp(&pb).then_with(|| {
+            // Higher confidence first (reverse order)
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    });
+}
+
+/// Remove duplicate results by `(source, attr)`, preserving order.
+#[allow(dead_code)] // consumed by infra::sources
+pub fn deduplicate_results(results: Vec<SourceResult>) -> Vec<SourceResult> {
+    let mut seen = std::collections::HashSet::new();
+    results
+        .into_iter()
+        .filter(|r| seen.insert((r.source.clone(), r.attr.clone())))
+        .collect()
+}
+
+/// Check if a platform list includes the current system.
+///
+/// Returns `(available, reason)`. Permissive when platforms is not a
+/// string list or is empty.
+#[allow(dead_code)] // consumed by infra::sources
+pub fn check_platforms(platforms: &Value, current_system: &str) -> (bool, Option<String>) {
+    let arr = match platforms.as_array() {
+        Some(a) if !a.is_empty() => a,
+        _ => return (true, None),
+    };
+
+    let strings: Vec<&str> = arr.iter().filter_map(Value::as_str).collect();
+
+    // If no entries are plain strings, treat permissively
+    if strings.is_empty() {
+        return (true, None);
+    }
+
+    if strings.contains(&current_system) {
+        (true, None)
+    } else {
+        (
+            false,
+            Some(format!(
+                "not available on {current_system} (only: {})",
+                strings.join(", ")
+            )),
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    // --- normalize_name ---
 
     #[test]
     fn normalize_aliases() {
@@ -97,5 +515,297 @@ mod tests {
     fn normalize_is_case_insensitive() {
         assert_eq!(normalize_name("Nvim"), "neovim");
         assert_eq!(normalize_name("PY-YAML"), "pyyaml");
+    }
+
+    // --- score_match ---
+
+    #[test]
+    fn score_match_exact_root() {
+        let s = score_match(
+            "ripgrep",
+            "legacyPackages.aarch64-darwin.ripgrep",
+            "ripgrep",
+        );
+        assert!(
+            (s - 1.0).abs() < f64::EPSILON,
+            "exact root pname match should be 1.0, got {s}"
+        );
+    }
+
+    #[test]
+    fn score_match_nested_penalty() {
+        let root = score_match("redis", "legacyPackages.aarch64-darwin.redis", "redis");
+        let nested = score_match(
+            "redis",
+            "legacyPackages.aarch64-darwin.chickenPackages.eggs.redis",
+            "redis",
+        );
+        assert!(
+            root > nested,
+            "root ({root}) should score higher than nested ({nested})"
+        );
+    }
+
+    #[test]
+    fn score_match_separator_normalization() {
+        let s = score_match("py-yaml", "legacyPackages.aarch64-darwin.pyyaml", "pyyaml");
+        assert!(
+            s >= 0.8,
+            "separator-normalized match should score high, got {s}"
+        );
+    }
+
+    #[test]
+    fn score_match_exact_bare() {
+        let s = score_match("ripgrep", "ripgrep", "ripgrep");
+        assert!(
+            (s - 1.0).abs() < f64::EPSILON,
+            "bare exact should be 1.0, got {s}"
+        );
+    }
+
+    #[test]
+    fn score_match_substring() {
+        let s = score_match("grep", "legacyPackages.aarch64-darwin.ripgrep", "ripgrep");
+        assert!(s >= 0.3, "substring match should pass threshold, got {s}");
+        assert!(s < 0.7, "substring match should not be high, got {s}");
+    }
+
+    // --- clean_attr_path ---
+
+    #[test]
+    fn clean_attr_path_with_prefix() {
+        assert_eq!(
+            clean_attr_path("legacyPackages.aarch64-darwin.ripgrep"),
+            "ripgrep"
+        );
+    }
+
+    #[test]
+    fn clean_attr_path_nested() {
+        assert_eq!(
+            clean_attr_path("legacyPackages.x86_64-linux.python3Packages.requests"),
+            "python3Packages.requests"
+        );
+    }
+
+    #[test]
+    fn clean_attr_path_without_prefix() {
+        assert_eq!(clean_attr_path("ripgrep"), "ripgrep");
+    }
+
+    // --- parse_nix_search_results ---
+
+    #[test]
+    fn parse_dict_format() {
+        let data = json!({
+            "legacyPackages.aarch64-darwin.ripgrep": {
+                "pname": "ripgrep",
+                "version": "14.1.0",
+                "description": "fast grep"
+            }
+        });
+        let entries = parse_nix_search_results(&data);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].pname, "ripgrep");
+        assert_eq!(entries[0].version, "14.1.0");
+    }
+
+    #[test]
+    fn parse_empty_input() {
+        let entries = parse_nix_search_results(&json!({}));
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn parse_dict_uses_key_as_attr_path() {
+        let data = json!({
+            "legacyPackages.x86_64-linux.fd": {
+                "pname": "fd",
+                "version": "9.0.0",
+                "description": "find alternative"
+            }
+        });
+        let entries = parse_nix_search_results(&data);
+        assert_eq!(entries[0].attr_path, "legacyPackages.x86_64-linux.fd");
+    }
+
+    // --- detect_language_package ---
+
+    #[test]
+    fn detect_python_package() {
+        let result = detect_language_package("python3Packages.rich");
+        assert_eq!(result, Some(("rich", "python3", "withPackages")));
+    }
+
+    #[test]
+    fn detect_lua_package() {
+        let result = detect_language_package("luaPackages.lpeg");
+        assert_eq!(result, Some(("lpeg", "lua5_4", "withPackages")));
+    }
+
+    #[test]
+    fn detect_not_language_package() {
+        assert!(detect_language_package("ripgrep").is_none());
+    }
+
+    #[test]
+    fn detect_versioned_python() {
+        let result = detect_language_package("python312Packages.requests");
+        assert_eq!(result, Some(("requests", "python3", "withPackages")));
+    }
+
+    // --- search_name_variants ---
+
+    #[test]
+    fn variants_dedup() {
+        let v = search_name_variants("ripgrep");
+        assert!(v.len() <= 3);
+        let unique: std::collections::HashSet<_> = v.iter().collect();
+        assert_eq!(unique.len(), v.len(), "variants should be unique");
+    }
+
+    #[test]
+    fn variants_max_three() {
+        let v = search_name_variants("py-yaml");
+        assert!(
+            v.len() <= 3,
+            "should produce at most 3 variants, got {}",
+            v.len()
+        );
+    }
+
+    #[test]
+    fn variants_includes_mapped() {
+        let v = search_name_variants("rg");
+        assert!(
+            v.contains(&"ripgrep".to_string()),
+            "should include mapped name"
+        );
+    }
+
+    // --- sort_results ---
+
+    #[test]
+    fn sort_normal_priority() {
+        let prefs = SourcePreferences::default();
+        let mut results = vec![
+            SourceResult {
+                source: "homebrew".into(),
+                confidence: 0.9,
+                ..SourceResult::new("x", "homebrew")
+            },
+            SourceResult {
+                source: "nxs".into(),
+                confidence: 0.8,
+                ..SourceResult::new("x", "nxs")
+            },
+            SourceResult {
+                source: "flake-input".into(),
+                confidence: 0.7,
+                ..SourceResult::new("x", "flake-input")
+            },
+        ];
+        sort_results(&mut results, &prefs);
+        assert_eq!(results[0].source, "flake-input");
+        assert_eq!(results[1].source, "nxs");
+        assert_eq!(results[2].source, "homebrew");
+    }
+
+    #[test]
+    fn sort_bleeding_edge_swaps_nur_nxs() {
+        let prefs = SourcePreferences {
+            bleeding_edge: true,
+            ..Default::default()
+        };
+        let mut results = vec![
+            SourceResult {
+                source: "nxs".into(),
+                confidence: 0.9,
+                ..SourceResult::new("x", "nxs")
+            },
+            SourceResult {
+                source: "nur".into(),
+                confidence: 0.8,
+                ..SourceResult::new("x", "nur")
+            },
+        ];
+        sort_results(&mut results, &prefs);
+        assert_eq!(results[0].source, "nur");
+        assert_eq!(results[1].source, "nxs");
+    }
+
+    // --- deduplicate_results ---
+
+    #[test]
+    fn dedup_preserves_first() {
+        let results = vec![
+            SourceResult {
+                attr: Some("ripgrep".into()),
+                confidence: 0.9,
+                ..SourceResult::new("rg", "nxs")
+            },
+            SourceResult {
+                attr: Some("ripgrep".into()),
+                confidence: 0.7,
+                ..SourceResult::new("rg", "nxs")
+            },
+        ];
+        let deduped = deduplicate_results(results);
+        assert_eq!(deduped.len(), 1);
+        assert!((deduped[0].confidence - 0.9).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn dedup_keeps_different_sources() {
+        let results = vec![
+            SourceResult {
+                attr: Some("ripgrep".into()),
+                ..SourceResult::new("rg", "nxs")
+            },
+            SourceResult {
+                attr: Some("ripgrep".into()),
+                ..SourceResult::new("rg", "homebrew")
+            },
+        ];
+        let deduped = deduplicate_results(results);
+        assert_eq!(deduped.len(), 2);
+    }
+
+    #[test]
+    fn dedup_handles_none_attr() {
+        let results = vec![SourceResult::new("x", "nxs"), SourceResult::new("x", "nxs")];
+        let deduped = deduplicate_results(results);
+        assert_eq!(deduped.len(), 1);
+    }
+
+    // --- check_platforms ---
+
+    #[test]
+    fn platforms_includes_current() {
+        let platforms = json!(["aarch64-darwin", "x86_64-linux"]);
+        let (avail, reason) = check_platforms(&platforms, "aarch64-darwin");
+        assert!(avail);
+        assert!(reason.is_none());
+    }
+
+    #[test]
+    fn platforms_excludes_current() {
+        let platforms = json!(["x86_64-linux", "aarch64-linux"]);
+        let (avail, reason) = check_platforms(&platforms, "aarch64-darwin");
+        assert!(!avail);
+        assert!(reason.unwrap().contains("not available on aarch64-darwin"));
+    }
+
+    #[test]
+    fn platforms_non_list_permissive() {
+        let (avail, _) = check_platforms(&json!("all"), "aarch64-darwin");
+        assert!(avail);
+    }
+
+    #[test]
+    fn platforms_empty_permissive() {
+        let (avail, _) = check_platforms(&json!([]), "aarch64-darwin");
+        assert!(avail);
     }
 }

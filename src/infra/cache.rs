@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde_json::Value;
 
-use crate::domain::source::{SourceResult, normalize_name};
+use crate::domain::source::{PackageSource, SourceResult, normalize_name};
 
 // All items below are dead until the search command lands (.12/.13).
 
@@ -14,17 +14,22 @@ const CACHE_SCHEMA_VERSION: u64 = 1;
 #[allow(dead_code)]
 const CACHE_FILENAME: &str = "packages_v4.json";
 #[allow(dead_code)]
-const SOURCE_PRIORITY: &[&str] = &["nxs", "nur", "homebrew", "cask"];
+const SOURCE_PRIORITY: &[PackageSource] = &[
+    PackageSource::Nxs,
+    PackageSource::Nur,
+    PackageSource::Homebrew,
+    PackageSource::Cask,
+];
 
-/// Maps source names to flake.lock input names for revision lookup.
+/// Maps source to flake.lock input name for revision lookup.
 #[allow(dead_code)]
-fn source_to_input(source: &str) -> &str {
+fn source_to_input(source: PackageSource) -> &'static str {
     match source {
-        "nxs" => "nxs",
-        "nur" => "nur",
-        "homebrew" | "cask" => "homebrew",
-        "mas" => "mas",
-        other => other,
+        PackageSource::Nxs => "nxs",
+        PackageSource::Nur => "nur",
+        PackageSource::Homebrew | PackageSource::Cask => "homebrew",
+        PackageSource::Mas => "mas",
+        PackageSource::FlakeInput => "flake-input",
     }
 }
 
@@ -66,13 +71,13 @@ impl MultiSourceCache {
     }
 
     /// Get the flake.lock revision for a source (12-char truncated hash).
-    pub fn get_revision(&self, source: &str) -> &str {
+    pub fn get_revision(&self, source: PackageSource) -> &str {
         let input = source_to_input(source);
         self.revisions.get(input).map_or("unknown", String::as_str)
     }
 
     /// Look up a single cached result by name + source.
-    pub fn get(&self, name: &str, source: &str) -> Option<SourceResult> {
+    pub fn get(&self, name: &str, source: PackageSource) -> Option<SourceResult> {
         let key = self.cache_key(name, source);
         let entry = self.entries.get(&key)?;
         let obj = entry.as_object()?;
@@ -85,7 +90,7 @@ impl MultiSourceCache {
 
         Some(SourceResult {
             name: name.to_string(),
-            source: source.to_string(),
+            source,
             attr: obj.get("attr").and_then(Value::as_str).map(String::from),
             version: obj.get("version").and_then(Value::as_str).map(String::from),
             confidence: obj.get("confidence").and_then(Value::as_f64).unwrap_or(0.0),
@@ -112,7 +117,7 @@ impl MultiSourceCache {
         for &source in SOURCE_PRIORITY {
             if let Some(result) = self.get(name, source) {
                 results.push(result);
-                if matches!(source, "nxs" | "nur") {
+                if matches!(source, PackageSource::Nxs | PackageSource::Nur) {
                     has_nix_source = true;
                 }
             }
@@ -133,7 +138,7 @@ impl MultiSourceCache {
         if result.attr.as_deref().is_none_or(str::is_empty) {
             return Ok(());
         }
-        let key = self.cache_key(&result.name, &result.source);
+        let key = self.cache_key(&result.name, result.source);
         self.entries.insert(key, entry_to_value(result));
         self.save()
     }
@@ -157,7 +162,7 @@ impl MultiSourceCache {
             if result.attr.as_deref().is_none_or(str::is_empty) {
                 continue;
             }
-            let key = self.cache_key(&result.name, &result.source);
+            let key = self.cache_key(&result.name, result.source);
             self.entries.insert(key, entry_to_value(result));
         }
 
@@ -165,8 +170,9 @@ impl MultiSourceCache {
     }
 
     /// Remove cached entries for a package, optionally filtered by source.
-    pub fn invalidate(&mut self, name: &str, source: Option<&str>) -> anyhow::Result<()> {
+    pub fn invalidate(&mut self, name: &str, source: Option<PackageSource>) -> anyhow::Result<()> {
         let normalized = normalize_name(name);
+        let source_str = source.map(PackageSource::as_str);
         let before = self.entries.len();
 
         self.entries.retain(|k, _| {
@@ -174,7 +180,7 @@ impl MultiSourceCache {
             let (Some(cached_name), Some(cached_source)) = (parts.next(), parts.next()) else {
                 return true;
             };
-            !(cached_name == normalized && source.is_none_or(|s| cached_source == s))
+            !(cached_name == normalized && source_str.is_none_or(|s| cached_source == s))
         });
 
         if self.entries.len() < before {
@@ -191,7 +197,7 @@ impl MultiSourceCache {
 
     // -- Internal --
 
-    fn cache_key(&self, name: &str, source: &str) -> String {
+    fn cache_key(&self, name: &str, source: PackageSource) -> String {
         let normalized = normalize_name(name);
         let rev = self.get_revision(source);
         format!("{normalized}|{source}|{rev}")
@@ -329,10 +335,10 @@ mod tests {
             .expect("cache should load successfully")
     }
 
-    fn result(name: &str, source: &str, attr: &str, confidence: f64) -> SourceResult {
+    fn result(name: &str, source: PackageSource, attr: &str, confidence: f64) -> SourceResult {
         SourceResult {
             name: name.to_string(),
-            source: source.to_string(),
+            source,
             attr: Some(attr.to_string()),
             version: None,
             confidence,
@@ -353,9 +359,9 @@ mod tests {
         fs::create_dir_all(&home).unwrap();
 
         let cache = make_cache(&repo, &home);
-        assert_eq!(cache.get_revision("nxs"), "abcdef123456");
-        assert_eq!(cache.get_revision("nur"), "0123456789ab");
-        assert_eq!(cache.get_revision("missing"), "unknown");
+        assert_eq!(cache.get_revision(PackageSource::Nxs), "abcdef123456");
+        assert_eq!(cache.get_revision(PackageSource::Nur), "0123456789ab");
+        assert_eq!(cache.get_revision(PackageSource::FlakeInput), "unknown");
     }
 
     #[test]
@@ -370,7 +376,7 @@ mod tests {
 
         let mut cache = make_cache(&repo, &home);
         cache
-            .set(&result("ripgrep", "homebrew", "ripgrep", 0.8))
+            .set(&result("ripgrep", PackageSource::Homebrew, "ripgrep", 0.8))
             .unwrap();
 
         // Homebrew-only should return empty (guardrail)
@@ -389,12 +395,12 @@ mod tests {
 
         let mut cache = make_cache(&repo, &home);
         cache
-            .set(&result("ripgrep", "nxs", "ripgrep", 0.9))
+            .set(&result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9))
             .unwrap();
 
         let results = cache.get_all("ripgrep");
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].source, "nxs");
+        assert_eq!(results[0].source, PackageSource::Nxs);
     }
 
     #[test]
@@ -453,7 +459,7 @@ mod tests {
             cache
                 .set(&SourceResult {
                     name: alias.to_string(),
-                    source: "nxs".to_string(),
+                    source: PackageSource::Nxs,
                     attr: Some(attr.to_string()),
                     version: None,
                     confidence: 0.9,
@@ -482,12 +488,12 @@ mod tests {
 
         let mut cache = make_cache(&repo, &home);
         let results = vec![
-            result("ripgrep", "nxs", "ripgrep", 0.5),
-            result("ripgrep", "nxs", "ripgrep-all", 0.9),
+            result("ripgrep", PackageSource::Nxs, "ripgrep", 0.5),
+            result("ripgrep", PackageSource::Nxs, "ripgrep-all", 0.9),
         ];
         cache.set_many(&results).unwrap();
 
-        let r = cache.get("ripgrep", "nxs").unwrap();
+        let r = cache.get("ripgrep", PackageSource::Nxs).unwrap();
         assert_eq!(r.attr.as_deref(), Some("ripgrep-all"));
         assert!((r.confidence - 0.9).abs() < f64::EPSILON);
     }
@@ -504,15 +510,15 @@ mod tests {
 
         let mut cache = make_cache(&repo, &home);
         cache
-            .set(&result("ripgrep", "nxs", "ripgrep", 0.9))
+            .set(&result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9))
             .unwrap();
         cache
-            .set(&result("ripgrep", "homebrew", "ripgrep", 0.8))
+            .set(&result("ripgrep", PackageSource::Homebrew, "ripgrep", 0.8))
             .unwrap();
 
         cache.invalidate("ripgrep", None).unwrap();
-        assert!(cache.get("ripgrep", "nxs").is_none());
-        assert!(cache.get("ripgrep", "homebrew").is_none());
+        assert!(cache.get("ripgrep", PackageSource::Nxs).is_none());
+        assert!(cache.get("ripgrep", PackageSource::Homebrew).is_none());
     }
 
     #[test]
@@ -527,15 +533,17 @@ mod tests {
 
         let mut cache = make_cache(&repo, &home);
         cache
-            .set(&result("ripgrep", "nxs", "ripgrep", 0.9))
+            .set(&result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9))
             .unwrap();
         cache
-            .set(&result("ripgrep", "homebrew", "ripgrep", 0.8))
+            .set(&result("ripgrep", PackageSource::Homebrew, "ripgrep", 0.8))
             .unwrap();
 
-        cache.invalidate("ripgrep", Some("homebrew")).unwrap();
-        assert!(cache.get("ripgrep", "nxs").is_some());
-        assert!(cache.get("ripgrep", "homebrew").is_none());
+        cache
+            .invalidate("ripgrep", Some(PackageSource::Homebrew))
+            .unwrap();
+        assert!(cache.get("ripgrep", PackageSource::Nxs).is_some());
+        assert!(cache.get("ripgrep", PackageSource::Homebrew).is_none());
     }
 
     #[test]
@@ -550,7 +558,7 @@ mod tests {
 
         let mut cache = make_cache(&repo, &home);
         cache
-            .set(&result("ripgrep", "nxs", "ripgrep", 0.9))
+            .set(&result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9))
             .unwrap();
         cache.clear().unwrap();
         assert!(cache.get_all("ripgrep").is_empty());
@@ -567,8 +575,10 @@ mod tests {
         fs::create_dir_all(&home).unwrap();
 
         let mut cache = make_cache(&repo, &home);
-        cache.set(&SourceResult::new("ripgrep", "nxs")).unwrap(); // attr is None
-        assert!(cache.get("ripgrep", "nxs").is_none());
+        cache
+            .set(&SourceResult::new("ripgrep", PackageSource::Nxs))
+            .unwrap(); // attr is None
+        assert!(cache.get("ripgrep", PackageSource::Nxs).is_none());
     }
 
     #[test]
@@ -583,7 +593,7 @@ mod tests {
 
         let mut cache = MultiSourceCache::load_with_cache_dir(&repo, &cache_dir).unwrap();
         let err = cache
-            .set(&result("ripgrep", "nxs", "ripgrep", 0.9))
+            .set(&result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9))
             .expect_err("writing into a directory path should fail");
 
         assert!(err.to_string().contains("writing cache file"));
@@ -600,7 +610,7 @@ mod tests {
         fs::create_dir_all(&home).unwrap();
 
         let cache = make_cache(&repo, &home);
-        assert_eq!(cache.get_revision("nxs"), "unknown");
+        assert_eq!(cache.get_revision(PackageSource::Nxs), "unknown");
     }
 
     #[test]
@@ -616,12 +626,12 @@ mod tests {
         // Write via one instance
         let mut cache1 = make_cache(&repo, &home);
         cache1
-            .set(&result("ripgrep", "nxs", "ripgrep", 0.9))
+            .set(&result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9))
             .unwrap();
 
         // Read via a fresh instance
         let cache2 = make_cache(&repo, &home);
-        let r = cache2.get("ripgrep", "nxs").unwrap();
+        let r = cache2.get("ripgrep", PackageSource::Nxs).unwrap();
         assert_eq!(r.attr.as_deref(), Some("ripgrep"));
     }
 
@@ -649,7 +659,7 @@ mod tests {
         fs::create_dir_all(&home).unwrap();
 
         let cache = make_cache(&repo, &home);
-        assert_eq!(cache.get_revision("homebrew"), "bbbb12345678");
-        assert_eq!(cache.get_revision("cask"), "bbbb12345678"); // shares homebrew
+        assert_eq!(cache.get_revision(PackageSource::Homebrew), "bbbb12345678");
+        assert_eq!(cache.get_revision(PackageSource::Cask), "bbbb12345678"); // shares homebrew
     }
 }

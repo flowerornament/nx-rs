@@ -18,7 +18,9 @@ pub struct ConfigFiles {
 impl ConfigFiles {
     /// Scan the repo for `.nix` files and read their `# nx:` purpose tags.
     ///
-    /// Skips `default.nix` and `common.nix` per SPEC 3.2.
+    /// Skips `default.nix` and `common.nix` per SPEC 3.2 — these are not
+    /// routing targets. Note: `config_scan::collect_nix_files` intentionally
+    /// includes `default.nix` for package/service scanning.
     /// Silently skips files that can't be read.
     pub fn discover(repo_root: &Path) -> Self {
         let mut by_purpose = BTreeMap::new();

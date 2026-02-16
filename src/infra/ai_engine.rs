@@ -4,6 +4,7 @@ use regex::Regex;
 
 use crate::domain::config::ConfigFiles;
 use crate::domain::plan::InstallPlan;
+use crate::domain::source::PackageSource;
 use crate::infra::shell::run_captured_command;
 
 // --- Types
@@ -426,29 +427,30 @@ pub fn build_edit_prompt(plan: &InstallPlan) -> String {
         );
     }
 
-    if plan.is_mas {
-        return format!(
+    match plan.source_result.source {
+        PackageSource::Mas => format!(
             "Add \"{}\" to the homebrew.masApps set in {}.\n\
              Look up the App Store ID if needed and add it as \"{}\" = <id>;.\n\
              Keep keys alphabetized. Just make the edit, no explanation.",
             plan.package_token, target, plan.package_token,
-        );
+        ),
+        PackageSource::Homebrew | PackageSource::Cask => {
+            let list_name = match plan.source_result.source {
+                PackageSource::Homebrew => "brews",
+                _ => "casks",
+            };
+            format!(
+                "Add \"{}\" to the homebrew.{} list in {}.\n\
+                 Add it alphabetically within the {} list. Just make the edit, no explanation.",
+                plan.package_token, list_name, target, list_name,
+            )
+        }
+        _ => format!(
+            "Add '{}' to {} in the appropriate section.\n\
+             Add it alphabetically within its section. Just make the edit, no explanation.",
+            plan.package_token, target,
+        ),
     }
-
-    if plan.is_brew || plan.is_cask {
-        let list_name = if plan.is_brew { "brews" } else { "casks" };
-        return format!(
-            "Add \"{}\" to the homebrew.{} list in {}.\n\
-             Add it alphabetically within the {} list. Just make the edit, no explanation.",
-            plan.package_token, list_name, target, list_name,
-        );
-    }
-
-    format!(
-        "Add '{}' to {} in the appropriate section.\n\
-         Add it alphabetically within its section. Just make the edit, no explanation.",
-        plan.package_token, target,
-    )
 }
 
 // --- Tests
@@ -458,7 +460,7 @@ mod tests {
     use super::*;
     use crate::domain::config::ConfigFiles;
     use crate::domain::plan::{InsertionMode, InstallPlan, LanguageInfo};
-    use crate::domain::source::SourceResult;
+    use crate::domain::source::{PackageSource, SourceResult};
     use std::fs;
     use tempfile::TempDir;
 
@@ -770,13 +772,11 @@ mod tests {
     #[test]
     fn edit_prompt_language_package() {
         let plan = InstallPlan {
-            source_result: SourceResult::new("pyyaml", "nxs"),
+            source_result: SourceResult::new("pyyaml", PackageSource::Nxs),
             package_token: "python3Packages.pyyaml".to_string(),
             target_file: "/repo/packages/nix/languages.nix".into(),
             insertion_mode: InsertionMode::LanguageWithPackages,
-            is_brew: false,
-            is_cask: false,
-            is_mas: false,
+
             language_info: Some(LanguageInfo {
                 bare_name: "pyyaml".to_string(),
                 runtime: "python3".to_string(),
@@ -792,13 +792,11 @@ mod tests {
     #[test]
     fn edit_prompt_brew_package() {
         let plan = InstallPlan {
-            source_result: SourceResult::new("htop", "homebrew"),
+            source_result: SourceResult::new("htop", PackageSource::Homebrew),
             package_token: "htop".to_string(),
             target_file: "/repo/packages/homebrew/brews.nix".into(),
             insertion_mode: InsertionMode::HomebrewManifest,
-            is_brew: true,
-            is_cask: false,
-            is_mas: false,
+
             language_info: None,
             routing_warning: None,
         };
@@ -810,13 +808,11 @@ mod tests {
     #[test]
     fn edit_prompt_cask_package() {
         let plan = InstallPlan {
-            source_result: SourceResult::new("firefox", "cask"),
+            source_result: SourceResult::new("firefox", PackageSource::Cask),
             package_token: "firefox".to_string(),
             target_file: "/repo/packages/homebrew/casks.nix".into(),
             insertion_mode: InsertionMode::HomebrewManifest,
-            is_brew: false,
-            is_cask: true,
-            is_mas: false,
+
             language_info: None,
             routing_warning: None,
         };
@@ -828,13 +824,11 @@ mod tests {
     #[test]
     fn edit_prompt_mas_package() {
         let plan = InstallPlan {
-            source_result: SourceResult::new("Xcode", "mas"),
+            source_result: SourceResult::new("Xcode", PackageSource::Mas),
             package_token: "Xcode".to_string(),
             target_file: "/repo/system/darwin.nix".into(),
             insertion_mode: InsertionMode::MasApps,
-            is_brew: false,
-            is_cask: false,
-            is_mas: true,
+
             language_info: None,
             routing_warning: None,
         };
@@ -846,13 +840,11 @@ mod tests {
     #[test]
     fn edit_prompt_general_nix() {
         let plan = InstallPlan {
-            source_result: SourceResult::new("ripgrep", "nxs"),
+            source_result: SourceResult::new("ripgrep", PackageSource::Nxs),
             package_token: "ripgrep".to_string(),
             target_file: "/repo/packages/nix/cli.nix".into(),
             insertion_mode: InsertionMode::NixManifest,
-            is_brew: false,
-            is_cask: false,
-            is_mas: false,
+
             language_info: None,
             routing_warning: None,
         };

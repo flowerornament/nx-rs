@@ -1,10 +1,61 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::LazyLock;
 
 use regex::Regex;
 use serde_json::Value;
 
 // --- Types
+
+/// The source a package was found in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PackageSource {
+    Nxs,
+    Nur,
+    FlakeInput,
+    Homebrew,
+    Cask,
+    Mas,
+}
+
+impl fmt::Display for PackageSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl PackageSource {
+    /// Canonical string form used in display, cache keys, and JSON output.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Nxs => "nxs",
+            Self::Nur => "nur",
+            Self::FlakeInput => "flake-input",
+            Self::Homebrew => "homebrew",
+            Self::Cask => "cask",
+            Self::Mas => "mas",
+        }
+    }
+
+    /// Parse from user-facing or serialized string (case-insensitive).
+    #[allow(dead_code)] // consumed by cache deserialization and CLI parsing
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "nxs" => Some(Self::Nxs),
+            "nur" => Some(Self::Nur),
+            "flake-input" => Some(Self::FlakeInput),
+            "homebrew" | "brew" => Some(Self::Homebrew),
+            "cask" => Some(Self::Cask),
+            "mas" => Some(Self::Mas),
+            _ => None,
+        }
+    }
+
+    /// Whether this source requires a resolved nix attribute.
+    pub fn requires_attr(self) -> bool {
+        matches!(self, Self::Nxs | Self::Nur | Self::FlakeInput)
+    }
+}
 
 /// Result from searching a package source.
 ///
@@ -15,7 +66,7 @@ use serde_json::Value;
 #[allow(dead_code)] // consumed by infra::sources and install command (.13)
 pub struct SourceResult {
     pub name: String,
-    pub source: String,
+    pub source: PackageSource,
     pub attr: Option<String>,
     pub version: Option<String>,
     pub confidence: f64,
@@ -26,10 +77,10 @@ pub struct SourceResult {
 
 #[allow(dead_code)] // consumed by infra::sources and install command (.13)
 impl SourceResult {
-    pub fn new(name: impl Into<String>, source: impl Into<String>) -> Self {
+    pub fn new(name: impl Into<String>, source: PackageSource) -> Self {
         Self {
             name: name.into(),
-            source: source.into(),
+            source,
             attr: None,
             version: None,
             confidence: 0.0,
@@ -217,6 +268,42 @@ fn strip_separators(s: &str) -> String {
     RE.replace_all(&s.to_lowercase(), "").into_owned()
 }
 
+// --- Scoring constants for score_match ---
+//
+// Hierarchy: exact pname > exact tail > case-insensitive > prefix > substring.
+// Root-level packages score higher than nested ones (e.g. pkgs.redis > pkgs.foo.redis).
+
+/// Exact pname match at root level (best possible).
+const SCORE_EXACT_ROOT_PNAME: f64 = 1.0;
+/// Exact tail match at root level.
+const SCORE_EXACT_ROOT_TAIL: f64 = 0.98;
+/// Exact tail match, normalized, at root level.
+const SCORE_NORM_ROOT_TAIL: f64 = 0.95;
+/// Exact pname/norm match when nested.
+const SCORE_EXACT_NESTED_PNAME: f64 = 0.85;
+/// Exact tail/norm match when nested.
+const SCORE_EXACT_NESTED_TAIL: f64 = 0.82;
+/// Exact tail match, case-insensitive only.
+const SCORE_TAIL_CASE_INSENSITIVE: f64 = 0.80;
+/// Case-insensitive exact tail match.
+const SCORE_CASE_INSENSITIVE: f64 = 0.75;
+/// Normalized prefix match.
+const SCORE_NORM_PREFIX: f64 = 0.68;
+/// Case-sensitive prefix match.
+const SCORE_PREFIX: f64 = 0.65;
+/// Case-insensitive prefix match.
+const SCORE_PREFIX_CI: f64 = 0.60;
+/// Normalized substring match.
+const SCORE_NORM_SUBSTRING: f64 = 0.52;
+/// Case-insensitive substring match.
+const SCORE_SUBSTRING_CI: f64 = 0.45;
+/// Minimum score: no exact/prefix/substring match found.
+const SCORE_FLOOR: f64 = 0.3;
+/// Maximum nesting penalty.
+const MAX_NESTING_PENALTY: f64 = 0.3;
+/// Per-level nesting penalty.
+const NESTING_PENALTY_PER_LEVEL: f64 = 0.1;
+
 /// Score how well an attribute matches the search name.
 ///
 /// Prefers root-level packages (pkgs.redis) over nested ones
@@ -241,7 +328,10 @@ pub fn score_match(search_name: &str, attr: &str, pname: &str) -> f64 {
             parts.len().saturating_sub(1)
         };
         #[allow(clippy::cast_precision_loss)] // depth is always small (< 10)
-        f64::min(0.3, depth as f64 * 0.1)
+        f64::min(
+            MAX_NESTING_PENALTY,
+            depth as f64 * NESTING_PENALTY_PER_LEVEL,
+        )
     };
 
     let search_lower = search_name.to_lowercase();
@@ -252,32 +342,48 @@ pub fn score_match(search_name: &str, attr: &str, pname: &str) -> f64 {
 
     // Exact matches (highest priority, checked first)
     let exact_score: f64 = if pname == search_name {
-        if is_root { 1.0 } else { 0.85 }
+        if is_root {
+            SCORE_EXACT_ROOT_PNAME
+        } else {
+            SCORE_EXACT_NESTED_PNAME
+        }
     } else if tail == search_name {
-        if is_root { 0.98 } else { 0.80 }
+        if is_root {
+            SCORE_EXACT_ROOT_TAIL
+        } else {
+            SCORE_TAIL_CASE_INSENSITIVE
+        }
     } else if tail_lower == search_lower {
-        0.75
+        SCORE_CASE_INSENSITIVE
     } else if tail.starts_with(search_name) {
-        0.65
+        SCORE_PREFIX
     } else if tail_lower.starts_with(&search_lower) {
-        0.60
+        SCORE_PREFIX_CI
     } else if tail_lower.contains(&search_lower) {
-        0.45
+        SCORE_SUBSTRING_CI
     } else {
-        0.3
+        SCORE_FLOOR
     };
 
     // Separator-normalized comparison (e.g. py-yaml vs pyyaml)
     let norm_score = if search_norm.is_empty() {
         0.0
     } else if pname_norm == search_norm {
-        if is_root { 1.0 } else { 0.85 }
+        if is_root {
+            SCORE_EXACT_ROOT_PNAME
+        } else {
+            SCORE_EXACT_NESTED_PNAME
+        }
     } else if tail_norm == search_norm {
-        if is_root { 0.95 } else { 0.82 }
+        if is_root {
+            SCORE_NORM_ROOT_TAIL
+        } else {
+            SCORE_EXACT_NESTED_TAIL
+        }
     } else if tail_norm.starts_with(&search_norm) {
-        0.68
+        SCORE_NORM_PREFIX
     } else if tail_norm.contains(&search_norm) {
-        0.52
+        SCORE_NORM_SUBSTRING
     } else {
         0.0
     };
@@ -376,31 +482,31 @@ pub fn get_current_system() -> &'static str {
 /// Sort results in-place by source priority and confidence.
 #[allow(dead_code)] // consumed by infra::sources
 pub fn sort_results(results: &mut [SourceResult], prefs: &SourcePreferences) {
-    let priority = |source: &str| -> u8 {
+    let priority = |source: PackageSource| -> u8 {
         if prefs.bleeding_edge {
             match source {
-                "flake-input" => 0,
-                "nur" => 1,
-                "nxs" => 2,
-                "homebrew" => 3,
-                "cask" => 4,
-                _ => 99,
+                PackageSource::FlakeInput => 0,
+                PackageSource::Nur => 1,
+                PackageSource::Nxs => 2,
+                PackageSource::Homebrew => 3,
+                PackageSource::Cask => 4,
+                PackageSource::Mas => 5,
             }
         } else {
             match source {
-                "flake-input" => 0,
-                "nxs" => 1,
-                "nur" => 2,
-                "homebrew" => 3,
-                "cask" => 4,
-                _ => 99,
+                PackageSource::FlakeInput => 0,
+                PackageSource::Nxs => 1,
+                PackageSource::Nur => 2,
+                PackageSource::Homebrew => 3,
+                PackageSource::Cask => 4,
+                PackageSource::Mas => 5,
             }
         }
     };
 
     results.sort_by(|a, b| {
-        let pa = priority(&a.source);
-        let pb = priority(&b.source);
+        let pa = priority(a.source);
+        let pb = priority(b.source);
         pa.cmp(&pb).then_with(|| {
             // Higher confidence first (reverse order)
             b.confidence
@@ -416,7 +522,7 @@ pub fn deduplicate_results(results: Vec<SourceResult>) -> Vec<SourceResult> {
     let mut seen = std::collections::HashSet::new();
     results
         .into_iter()
-        .filter(|r| seen.insert((r.source.clone(), r.attr.clone())))
+        .filter(|r| seen.insert((r.source, r.attr.clone())))
         .collect()
 }
 
@@ -656,25 +762,22 @@ mod tests {
         let prefs = SourcePreferences::default();
         let mut results = vec![
             SourceResult {
-                source: "homebrew".into(),
                 confidence: 0.9,
-                ..SourceResult::new("x", "homebrew")
+                ..SourceResult::new("x", PackageSource::Homebrew)
             },
             SourceResult {
-                source: "nxs".into(),
                 confidence: 0.8,
-                ..SourceResult::new("x", "nxs")
+                ..SourceResult::new("x", PackageSource::Nxs)
             },
             SourceResult {
-                source: "flake-input".into(),
                 confidence: 0.7,
-                ..SourceResult::new("x", "flake-input")
+                ..SourceResult::new("x", PackageSource::FlakeInput)
             },
         ];
         sort_results(&mut results, &prefs);
-        assert_eq!(results[0].source, "flake-input");
-        assert_eq!(results[1].source, "nxs");
-        assert_eq!(results[2].source, "homebrew");
+        assert_eq!(results[0].source, PackageSource::FlakeInput);
+        assert_eq!(results[1].source, PackageSource::Nxs);
+        assert_eq!(results[2].source, PackageSource::Homebrew);
     }
 
     #[test]
@@ -685,19 +788,17 @@ mod tests {
         };
         let mut results = vec![
             SourceResult {
-                source: "nxs".into(),
                 confidence: 0.9,
-                ..SourceResult::new("x", "nxs")
+                ..SourceResult::new("x", PackageSource::Nxs)
             },
             SourceResult {
-                source: "nur".into(),
                 confidence: 0.8,
-                ..SourceResult::new("x", "nur")
+                ..SourceResult::new("x", PackageSource::Nur)
             },
         ];
         sort_results(&mut results, &prefs);
-        assert_eq!(results[0].source, "nur");
-        assert_eq!(results[1].source, "nxs");
+        assert_eq!(results[0].source, PackageSource::Nur);
+        assert_eq!(results[1].source, PackageSource::Nxs);
     }
 
     // --- deduplicate_results ---
@@ -708,12 +809,12 @@ mod tests {
             SourceResult {
                 attr: Some("ripgrep".into()),
                 confidence: 0.9,
-                ..SourceResult::new("rg", "nxs")
+                ..SourceResult::new("rg", PackageSource::Nxs)
             },
             SourceResult {
                 attr: Some("ripgrep".into()),
                 confidence: 0.7,
-                ..SourceResult::new("rg", "nxs")
+                ..SourceResult::new("rg", PackageSource::Nxs)
             },
         ];
         let deduped = deduplicate_results(results);
@@ -726,11 +827,11 @@ mod tests {
         let results = vec![
             SourceResult {
                 attr: Some("ripgrep".into()),
-                ..SourceResult::new("rg", "nxs")
+                ..SourceResult::new("rg", PackageSource::Nxs)
             },
             SourceResult {
                 attr: Some("ripgrep".into()),
-                ..SourceResult::new("rg", "homebrew")
+                ..SourceResult::new("rg", PackageSource::Homebrew)
             },
         ];
         let deduped = deduplicate_results(results);
@@ -739,7 +840,10 @@ mod tests {
 
     #[test]
     fn dedup_handles_none_attr() {
-        let results = vec![SourceResult::new("x", "nxs"), SourceResult::new("x", "nxs")];
+        let results = vec![
+            SourceResult::new("x", PackageSource::Nxs),
+            SourceResult::new("x", PackageSource::Nxs),
+        ];
         let deduped = deduplicate_results(results);
         assert_eq!(deduped.len(), 1);
     }

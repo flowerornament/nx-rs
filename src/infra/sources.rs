@@ -8,9 +8,10 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::domain::source::{
-    NixSearchEntry, OVERLAY_PACKAGES, SourcePreferences, SourceResult, check_platforms,
-    clean_attr_path, deduplicate_results, detect_language_package, get_current_system, mapped_name,
-    parse_nix_search_results, score_match, search_name_variants, sort_results,
+    NixSearchEntry, OVERLAY_PACKAGES, PackageSource, SourcePreferences, SourceResult,
+    check_platforms, clean_attr_path, deduplicate_results, detect_language_package,
+    get_current_system, mapped_name, parse_nix_search_results, score_match, search_name_variants,
+    sort_results,
 };
 
 // --- Shell Helpers
@@ -25,9 +26,11 @@ fn command_available(name: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Spawn a command and parse its stdout as JSON. Returns `None` on failure or timeout.
-fn run_json_command(program: &str, args: &[&str], _timeout_secs: u64) -> Option<Value> {
-    // Per-command timeout not yet implemented; backstopped by 45s scope timeout.
+/// Spawn a command and parse its stdout as JSON. Returns `None` on failure.
+///
+/// Timeouts are handled at the scope level (45s `mpsc::recv_timeout` in
+/// `parallel_search`), not per-command.
+fn run_json_command(program: &str, args: &[&str]) -> Option<Value> {
     let output = Command::new(program)
         .args(args)
         .stdout(std::process::Stdio::piped())
@@ -46,7 +49,7 @@ fn run_json_command(program: &str, args: &[&str], _timeout_secs: u64) -> Option<
 fn eval_nix_attr(targets: &[&str], attr_path: &str) -> Option<Value> {
     for target in targets {
         let full_attr = format!("{target}#{attr_path}");
-        if let Some(val) = run_json_command("nix", &["eval", "--json", &full_attr], 15) {
+        if let Some(val) = run_json_command("nix", &["eval", "--json", &full_attr]) {
             return Some(val);
         }
     }
@@ -65,7 +68,7 @@ fn get_homebrew_info_entry(name: &str, is_cask: bool) -> Option<Value> {
     }
     args.push(name);
 
-    let data = run_json_command("brew", &args, 15)?;
+    let data = run_json_command("brew", &args)?;
     let key = if is_cask { "casks" } else { "formulae" };
     let entries = data.get(key)?.as_array()?;
     let entry = entries.first()?;
@@ -83,7 +86,7 @@ fn get_homebrew_info_entry(name: &str, is_cask: bool) -> Option<Value> {
 fn search_nix_source(
     name: &str,
     targets: &[&str],
-    source: &str,
+    source: PackageSource,
     requires_flake_mod: bool,
     flake_url: Option<&str>,
 ) -> Vec<SourceResult> {
@@ -97,8 +100,7 @@ fn search_nix_source(
 
     for search_name in search_name_variants(name) {
         for target in targets {
-            if let Some(data) =
-                run_json_command("nix", &["search", "--json", target, &search_name], 30)
+            if let Some(data) = run_json_command("nix", &["search", "--json", target, &search_name])
             {
                 for entry in parse_nix_search_results(&data) {
                     if !entry.attr_path.is_empty() && seen_attrs.insert(entry.attr_path.clone()) {
@@ -131,7 +133,7 @@ fn search_nix_source(
 
             Some(SourceResult {
                 name: name.to_string(),
-                source: source.to_string(),
+                source,
                 attr: Some(attr_clean),
                 version: if entry.version.is_empty() {
                     None
@@ -162,7 +164,7 @@ pub fn search_nxs(name: &str, prefer_unstable: bool) -> Vec<SourceResult> {
     } else {
         vec!["nixpkgs", "github:nixos/nixpkgs/nixos-unstable"]
     };
-    search_nix_source(name, &targets, "nxs", false, None)
+    search_nix_source(name, &targets, PackageSource::Nxs, false, None)
 }
 
 /// Search NUR (Nix User Repository) for a package.
@@ -170,7 +172,7 @@ pub fn search_nur(name: &str) -> Vec<SourceResult> {
     search_nix_source(
         name,
         &["github:nix-community/NUR"],
-        "nur",
+        PackageSource::Nur,
         true,
         Some("github:nix-community/NUR"),
     )
@@ -214,7 +216,7 @@ pub fn search_flake_inputs(name: &str, flake_lock_path: &Path) -> Vec<SourceResu
                 let confidence = if pkg_lower == search_name { 0.9 } else { 0.7 };
                 results.push(SourceResult {
                     name: name.to_string(),
-                    source: "flake-input".to_string(),
+                    source: PackageSource::FlakeInput,
                     attr: Some(pkg.to_string()),
                     version: None,
                     confidence,
@@ -238,7 +240,7 @@ pub fn search_homebrew(name: &str, is_cask: bool, allow_fallback: bool) -> Vec<S
             if is_cask {
                 vec![SourceResult {
                     name: name.to_string(),
-                    source: "cask".to_string(),
+                    source: PackageSource::Cask,
                     attr: Some(
                         entry
                             .get("token")
@@ -262,7 +264,7 @@ pub fn search_homebrew(name: &str, is_cask: bool, allow_fallback: bool) -> Vec<S
             } else {
                 vec![SourceResult {
                     name: name.to_string(),
-                    source: "homebrew".to_string(),
+                    source: PackageSource::Homebrew,
                     attr: Some(
                         entry
                             .get("name")
@@ -346,7 +348,7 @@ fn search_forced_source(name: &str, prefs: &SourcePreferences) -> Option<Vec<Sou
         "nxs" => Some(search_nxs(name, false)),
         "unstable" => Some(search_nxs(name, true)),
         "nur" => Some(search_nur(name)),
-        "homebrew" => Some(search_homebrew(name, prefs.is_cask, true)),
+        "homebrew" | "brew" => Some(search_homebrew(name, prefs.is_cask, true)),
         _ => None,
     }
 }
@@ -355,7 +357,7 @@ fn search_explicit_source(name: &str, prefs: &SourcePreferences) -> Option<Vec<S
     if prefs.is_cask {
         return Some(vec![SourceResult {
             name: name.to_string(),
-            source: "cask".to_string(),
+            source: PackageSource::Cask,
             attr: Some(name.to_string()),
             version: None,
             confidence: 1.0,
@@ -367,7 +369,7 @@ fn search_explicit_source(name: &str, prefs: &SourcePreferences) -> Option<Vec<S
     if prefs.is_mas {
         return Some(vec![SourceResult {
             name: name.to_string(),
-            source: "mas".to_string(),
+            source: PackageSource::Mas,
             attr: Some(name.to_string()),
             version: None,
             confidence: 1.0,
@@ -394,7 +396,7 @@ fn search_language_override(name: &str) -> Option<Vec<SourceResult>> {
 
     Some(vec![SourceResult {
         name: name.to_string(),
-        source: "nxs".to_string(),
+        source: PackageSource::Nxs,
         attr: Some(name.to_string()),
         version: None,
         confidence: 1.0,
@@ -541,7 +543,7 @@ mod tests {
         let lock = make_flake_lock(&dir, &["fenix"]);
         let results = search_flake_inputs("rust", &lock);
         assert!(!results.is_empty(), "should find rust in fenix overlay");
-        assert_eq!(results[0].source, "flake-input");
+        assert_eq!(results[0].source, PackageSource::FlakeInput);
     }
 
     #[test]
@@ -594,7 +596,7 @@ mod tests {
         };
         let results = search_explicit_source("firefox", &prefs).unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].source, "cask");
+        assert_eq!(results[0].source, PackageSource::Cask);
         assert!((results[0].confidence - 1.0).abs() < f64::EPSILON);
     }
 
@@ -605,7 +607,7 @@ mod tests {
             ..Default::default()
         };
         let results = search_explicit_source("Xcode", &prefs).unwrap();
-        assert_eq!(results[0].source, "mas");
+        assert_eq!(results[0].source, PackageSource::Mas);
     }
 
     #[test]

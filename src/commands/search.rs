@@ -37,7 +37,7 @@ fn render_json(results: &[SourceResult]) -> i32 {
         .map(|r| {
             serde_json::json!({
                 "name": r.name,
-                "source": r.source,
+                "source": r.source.as_str(),
                 "attr": r.attr,
                 "version": r.version,
                 "confidence": r.confidence,

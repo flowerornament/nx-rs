@@ -246,7 +246,7 @@ fn search_for_package(package: &str, args: &InstallArgs, ctx: &AppContext) -> Op
         return None;
     }
 
-    Some(results.into_iter().next().unwrap())
+    results.into_iter().next()
 }
 
 #[cfg(test)]

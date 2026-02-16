@@ -719,7 +719,7 @@ mod tests {
     #[test]
     fn apply_edit_writes_file() {
         use crate::domain::plan::{InsertionMode, InstallPlan};
-        use crate::domain::source::SourceResult;
+        use crate::domain::source::{PackageSource, SourceResult};
 
         let tmp = tempfile::TempDir::new().unwrap();
         let cli_path = tmp.path().join("cli.nix");
@@ -730,13 +730,11 @@ mod tests {
         .unwrap();
 
         let plan = InstallPlan {
-            source_result: SourceResult::new("fd", "nxs"),
+            source_result: SourceResult::new("fd", PackageSource::Nxs),
             package_token: "fd".to_string(),
             target_file: cli_path.clone(),
             insertion_mode: InsertionMode::NixManifest,
-            is_brew: false,
-            is_cask: false,
-            is_mas: false,
+
             language_info: None,
             routing_warning: None,
         };
@@ -752,16 +750,14 @@ mod tests {
     #[test]
     fn apply_edit_missing_file_errors() {
         use crate::domain::plan::{InsertionMode, InstallPlan};
-        use crate::domain::source::SourceResult;
+        use crate::domain::source::{PackageSource, SourceResult};
 
         let plan = InstallPlan {
-            source_result: SourceResult::new("fd", "nxs"),
+            source_result: SourceResult::new("fd", PackageSource::Nxs),
             package_token: "fd".to_string(),
             target_file: std::path::PathBuf::from("/nonexistent/cli.nix"),
             insertion_mode: InsertionMode::NixManifest,
-            is_brew: false,
-            is_cask: false,
-            is_mas: false,
+
             language_info: None,
             routing_warning: None,
         };

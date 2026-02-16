@@ -393,7 +393,7 @@ fn gh_auth_token() -> String {
 
 /// Clear the nix fetcher cache to fix corruption issues.
 fn clear_fetcher_cache() -> bool {
-    let cache_path = dirs_home().join(".cache/nix/fetcher-cache-v4.sqlite");
+    let cache_path = crate::app::dirs_home().join(".cache/nix/fetcher-cache-v4.sqlite");
     if cache_path.exists() {
         std::fs::remove_file(&cache_path).is_ok()
     } else {
@@ -404,15 +404,11 @@ fn clear_fetcher_cache() -> bool {
 /// Clear the nix tarball pack cache to fix FD exhaustion from stale packfiles.
 /// Recreates the empty directory so nix can write new packfiles.
 fn clear_tarball_pack_cache() {
-    let pack_dir = dirs_home().join(".cache/nix/tarball-cache-v2/objects/pack");
+    let pack_dir = crate::app::dirs_home().join(".cache/nix/tarball-cache-v2/objects/pack");
     if pack_dir.is_dir() {
         let _ = std::fs::remove_dir_all(&pack_dir);
         let _ = std::fs::create_dir_all(&pack_dir);
     }
-}
-
-fn dirs_home() -> std::path::PathBuf {
-    std::env::var_os("HOME").map_or_else(|| std::path::PathBuf::from("/"), std::path::PathBuf::from)
 }
 
 /// Commit `flake.lock` after a successful upgrade.

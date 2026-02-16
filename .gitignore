@@ -9,3 +9,4 @@ result
 # Python reference cache artifacts (generated when parity invokes nx-python).
 reference/nx-python/**/__pycache__/
 reference/nx-python/**/*.pyc
+.vercel

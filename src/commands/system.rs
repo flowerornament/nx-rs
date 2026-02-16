@@ -5,6 +5,82 @@ use crate::commands::context::AppContext;
 use crate::infra::shell::{CapturedCommand, run_captured_command, run_indented_command};
 use crate::output::printer::Printer;
 
+// ─── undo ────────────────────────────────────────────────────────────────────
+
+pub fn cmd_undo(ctx: &AppContext) -> i32 {
+    let modified = match git_modified_files(&ctx.repo_root) {
+        Ok(files) => files,
+        Err(err) => {
+            ctx.printer.error(&format!("git status failed: {err:#}"));
+            return 0;
+        }
+    };
+
+    if modified.is_empty() {
+        println!();
+        println!("Nothing to undo.");
+        return 0;
+    }
+
+    ctx.printer
+        .action(&format!("Undo Changes ({} files)", modified.len()));
+
+    for file in &modified {
+        println!("  {file}");
+        if let Some(summary) = git_diff_stat(file, &ctx.repo_root) {
+            ctx.printer.detail(&summary);
+        }
+    }
+
+    println!();
+    if !ctx.printer.confirm("Revert all changes?", false) {
+        println!("Cancelled.");
+        return 0;
+    }
+
+    for file in &modified {
+        let _ = run_captured_command("git", &["checkout", "--", file], Some(&ctx.repo_root));
+    }
+
+    ctx.printer
+        .success(&format!("Reverted {} files", modified.len()));
+    0
+}
+
+/// Parse `git status --porcelain` for unstaged modifications (` M` prefix).
+fn git_modified_files(repo_root: &Path) -> anyhow::Result<Vec<String>> {
+    let output = run_captured_command("git", &["status", "--porcelain"], Some(repo_root))?;
+
+    if output.stdout.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let modified = output
+        .stdout
+        .lines()
+        .filter(|line| line.starts_with(" M"))
+        .filter_map(|line| line.get(3..))
+        .map(String::from)
+        .collect();
+
+    Ok(modified)
+}
+
+/// Get the diff stat summary line for a single file.
+fn git_diff_stat(file: &str, repo_root: &Path) -> Option<String> {
+    let output = run_captured_command("git", &["diff", "--stat", file], Some(repo_root)).ok()?;
+
+    output
+        .stdout
+        .lines()
+        .find(|line| {
+            line.contains("insertion") || line.contains("deletion") || line.contains("changed")
+        })
+        .map(|line| line.trim().to_string())
+}
+
+// ─── update ──────────────────────────────────────────────────────────────────
+
 const DARWIN_REBUILD: &str = "/run/current-system/sw/bin/darwin-rebuild";
 
 pub fn cmd_update(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
@@ -218,4 +294,93 @@ fn do_rebuild(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
 
     ctx.printer.error("Rebuild failed");
     1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    /// Create a minimal git repo with one committed file.
+    fn init_git_repo() -> TempDir {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        run_captured_command("git", &["init"], Some(root)).unwrap();
+        run_captured_command(
+            "git",
+            &["config", "user.email", "test@test.com"],
+            Some(root),
+        )
+        .unwrap();
+        run_captured_command("git", &["config", "user.name", "Test"], Some(root)).unwrap();
+
+        fs::write(root.join("file.txt"), "initial\n").unwrap();
+        run_captured_command("git", &["add", "file.txt"], Some(root)).unwrap();
+        run_captured_command("git", &["commit", "-m", "init"], Some(root)).unwrap();
+
+        tmp
+    }
+
+    // --- git_modified_files ---
+
+    #[test]
+    fn modified_files_empty_on_clean_tree() {
+        let tmp = init_git_repo();
+        let modified = git_modified_files(tmp.path()).unwrap();
+        assert!(modified.is_empty());
+    }
+
+    #[test]
+    fn modified_files_detects_unstaged_changes() {
+        let tmp = init_git_repo();
+        fs::write(tmp.path().join("file.txt"), "changed\n").unwrap();
+
+        let modified = git_modified_files(tmp.path()).unwrap();
+        assert_eq!(modified, vec!["file.txt"]);
+    }
+
+    #[test]
+    fn modified_files_ignores_staged_only() {
+        let tmp = init_git_repo();
+        fs::write(tmp.path().join("file.txt"), "staged\n").unwrap();
+        run_captured_command("git", &["add", "file.txt"], Some(tmp.path())).unwrap();
+
+        let modified = git_modified_files(tmp.path()).unwrap();
+        // Staged-only files have status `M ` not ` M`, so excluded
+        assert!(modified.is_empty());
+    }
+
+    #[test]
+    fn modified_files_ignores_untracked() {
+        let tmp = init_git_repo();
+        fs::write(tmp.path().join("new.txt"), "new\n").unwrap();
+
+        let modified = git_modified_files(tmp.path()).unwrap();
+        assert!(modified.is_empty());
+    }
+
+    // --- git_diff_stat ---
+
+    #[test]
+    fn diff_stat_returns_summary_for_modified_file() {
+        let tmp = init_git_repo();
+        fs::write(tmp.path().join("file.txt"), "changed\n").unwrap();
+
+        let summary = git_diff_stat("file.txt", tmp.path());
+        assert!(summary.is_some());
+        let text = summary.unwrap();
+        assert!(
+            text.contains("changed") || text.contains("insertion") || text.contains("deletion"),
+            "expected diff stat summary, got: {text}"
+        );
+    }
+
+    #[test]
+    fn diff_stat_returns_none_for_clean_file() {
+        let tmp = init_git_repo();
+        let summary = git_diff_stat("file.txt", tmp.path());
+        assert!(summary.is_none());
+    }
 }

@@ -9,7 +9,7 @@ use crate::commands::context::AppContext;
 use crate::commands::install::cmd_install;
 use crate::commands::query::{cmd_info, cmd_installed, cmd_list, cmd_status, cmd_where};
 use crate::commands::remove::cmd_remove;
-use crate::commands::system::{cmd_rebuild, cmd_test, cmd_update};
+use crate::commands::system::{cmd_rebuild, cmd_test, cmd_undo, cmd_update};
 use crate::domain::config::ConfigFiles;
 use crate::output::printer::Printer;
 use crate::output::style::OutputStyle;
@@ -37,7 +37,7 @@ pub fn execute(cli: Cli) -> i32 {
         CommandKind::Info(args) => cmd_info(&args, &ctx),
         CommandKind::Status => cmd_status(&ctx),
         CommandKind::Installed(args) => cmd_installed(&args, &ctx),
-        CommandKind::Undo => 0,
+        CommandKind::Undo => cmd_undo(&ctx),
         CommandKind::Update(args) => cmd_update(&args, &ctx),
         CommandKind::Test => cmd_test(&ctx),
         CommandKind::Rebuild(args) => cmd_rebuild(&args, &ctx),

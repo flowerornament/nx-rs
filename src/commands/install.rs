@@ -17,7 +17,7 @@ use crate::infra::cache::MultiSourceCache;
 use crate::infra::file_edit::{EditOutcome, apply_edit};
 use crate::infra::finder::find_package;
 use crate::infra::shell::run_captured_command;
-use crate::infra::sources::search_all_sources;
+use crate::infra::sources::{check_nix_available, search_all_sources};
 
 pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
     if args.packages.is_empty() {
@@ -343,6 +343,15 @@ enum SearchResolution {
     Skipped,
 }
 
+#[derive(Debug)]
+enum PlatformResolution {
+    Primary(SourceResult),
+    Fallback {
+        candidate: SourceResult,
+        reason: String,
+    },
+}
+
 /// Search all sources for a package. Returns `None` with error printed if not found.
 fn search_for_package(
     package: &str,
@@ -416,11 +425,13 @@ fn resolve_search_candidates(
             show_resolution_groups(package, candidates, None, ctx);
 
             if args.yes || args.dry_run || candidates.len() == 1 {
-                return candidates.first().cloned().map(SearchResolution::Install);
+                return candidates
+                    .first()
+                    .and_then(|selected| resolve_platform_candidate(selected, candidates, ctx));
             }
 
             if let Some(choice) = prompt_source_choice(candidates.len()) {
-                Some(SearchResolution::Install(candidates[choice].clone()))
+                resolve_platform_candidate(&candidates[choice], candidates, ctx)
             } else {
                 ctx.printer.detail("Cancelled.");
                 Some(SearchResolution::Skipped)
@@ -431,6 +442,71 @@ fn resolve_search_candidates(
             None
         }
     }
+}
+
+fn resolve_platform_candidate(
+    selected: &SourceResult,
+    candidates: &[SourceResult],
+    ctx: &AppContext,
+) -> Option<SearchResolution> {
+    match resolve_platform_candidate_with(selected, candidates, check_nix_available) {
+        Ok(PlatformResolution::Primary(primary)) => Some(SearchResolution::Install(primary)),
+        Ok(PlatformResolution::Fallback { candidate, reason }) => {
+            let fallback_desc = candidate.attr.as_deref().unwrap_or(&candidate.name);
+            ctx.printer.warn(&format!(
+                "{}: {reason}; trying {fallback_desc}",
+                selected.name
+            ));
+            Some(SearchResolution::Install(candidate))
+        }
+        Err(reason) => {
+            ctx.printer.error(&format!("{}: {reason}", selected.name));
+            None
+        }
+    }
+}
+
+fn resolve_platform_candidate_with<F>(
+    selected: &SourceResult,
+    candidates: &[SourceResult],
+    mut check_available: F,
+) -> Result<PlatformResolution, String>
+where
+    F: FnMut(&str) -> (bool, Option<String>),
+{
+    if !selected.source.requires_attr() {
+        return Ok(PlatformResolution::Primary(selected.clone()));
+    }
+
+    let Some(primary_attr) = selected.attr.as_deref() else {
+        return Ok(PlatformResolution::Primary(selected.clone()));
+    };
+
+    let (available, reason) = check_available(primary_attr);
+    if available {
+        return Ok(PlatformResolution::Primary(selected.clone()));
+    }
+
+    let reason = reason.unwrap_or_else(|| "not available on current platform".to_string());
+
+    for candidate in candidates {
+        if candidate.source != selected.source || candidate.attr == selected.attr {
+            continue;
+        }
+
+        let Some(attr) = candidate.attr.as_deref() else {
+            continue;
+        };
+
+        if check_available(attr).0 {
+            return Ok(PlatformResolution::Fallback {
+                candidate: candidate.clone(),
+                reason,
+            });
+        }
+    }
+
+    Err(reason)
 }
 
 fn show_unknown_group(package: &str, ctx: &AppContext) {
@@ -978,5 +1054,81 @@ mod tests {
 
         assert!(!execute_edit(&plan, "packages/nix/cli.nix", &ctx, &engine));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn platform_resolution_uses_primary_when_available() {
+        let primary = source_result("ripgrep", PackageSource::Nxs, Some("ripgrep"));
+        let candidates = vec![primary.clone()];
+        let mut checks = 0usize;
+
+        let outcome = resolve_platform_candidate_with(&primary, &candidates, |_attr| {
+            checks += 1;
+            (true, None)
+        })
+        .expect("platform resolution should succeed");
+
+        match outcome {
+            PlatformResolution::Primary(sr) => {
+                assert_eq!(sr.attr.as_deref(), Some("ripgrep"));
+            }
+            PlatformResolution::Fallback { .. } => panic!("expected primary candidate"),
+        }
+        assert_eq!(checks, 1);
+    }
+
+    #[test]
+    fn platform_resolution_uses_same_source_fallback_when_primary_unavailable() {
+        let primary = source_result(
+            "py-yaml",
+            PackageSource::Nxs,
+            Some("python3Packages.aspy-yaml"),
+        );
+        let fallback = source_result(
+            "py-yaml",
+            PackageSource::Nxs,
+            Some("python3Packages.pyyaml"),
+        );
+        let homebrew = source_result("py-yaml", PackageSource::Homebrew, Some("pyyaml"));
+        let candidates = vec![primary.clone(), homebrew, fallback.clone()];
+
+        let outcome = resolve_platform_candidate_with(&primary, &candidates, |attr| {
+            if attr == "python3Packages.aspy-yaml" {
+                return (
+                    false,
+                    Some("not available on aarch64-darwin (only: x86_64-linux)".to_string()),
+                );
+            }
+            (true, None)
+        })
+        .expect("fallback should resolve");
+
+        match outcome {
+            PlatformResolution::Fallback { candidate, reason } => {
+                assert_eq!(candidate.attr.as_deref(), Some("python3Packages.pyyaml"));
+                assert!(reason.contains("not available on aarch64-darwin"));
+            }
+            PlatformResolution::Primary(_) => panic!("expected fallback candidate"),
+        }
+    }
+
+    #[test]
+    fn platform_resolution_errors_without_same_source_fallback() {
+        let primary = source_result("roc", PackageSource::Nxs, Some("roc"));
+        let other_source = source_result("roc", PackageSource::Homebrew, Some("roc"));
+        let candidates = vec![primary.clone(), other_source];
+
+        let outcome = resolve_platform_candidate_with(&primary, &candidates, |attr| {
+            if attr == "roc" {
+                return (
+                    false,
+                    Some("not available on aarch64-darwin (only: x86_64-linux)".to_string()),
+                );
+            }
+            (true, None)
+        });
+
+        let err = outcome.expect_err("resolution should fail");
+        assert!(err.contains("not available on aarch64-darwin"));
     }
 }

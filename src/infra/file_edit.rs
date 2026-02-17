@@ -21,21 +21,26 @@ pub struct EditOutcome {
 /// Dispatches to the per-mode inserter. Idempotent: returns
 /// `file_changed: false` if the token is already present.
 pub fn apply_edit(plan: &InstallPlan) -> Result<EditOutcome> {
+    apply_plan(plan, dispatch_insert)
+}
+
+/// Apply a removal to the target file using the plan's insertion mode.
+///
+/// Dispatches to the per-mode remover. Idempotent: returns
+/// `file_changed: false` if the token is not found.
+#[allow(dead_code)] // wired in by install engine paths (nx-rs-8u2)
+pub fn apply_removal(plan: &InstallPlan) -> Result<EditOutcome> {
+    apply_plan(plan, dispatch_remove)
+}
+
+/// Shared read-dispatch-write skeleton for both insertion and removal.
+fn apply_plan(
+    plan: &InstallPlan,
+    transform: impl FnOnce(&str, &InstallPlan) -> Result<(String, Option<usize>)>,
+) -> Result<EditOutcome> {
     let path = &plan.target_file;
     let content = read_file(path)?;
-
-    let (new_content, line_number) = match plan.insertion_mode {
-        InsertionMode::NixManifest => insert_nix_manifest(&content, &plan.package_token),
-        InsertionMode::LanguageWithPackages => {
-            let lang = plan
-                .language_info
-                .as_ref()
-                .expect("language_info required for LanguageWithPackages");
-            insert_language_package(&content, &lang.bare_name, &lang.runtime)
-        }
-        InsertionMode::HomebrewManifest => insert_homebrew_manifest(&content, &plan.package_token),
-        InsertionMode::MasApps => insert_mas_app(&content, &plan.package_token),
-    }?;
+    let (new_content, line_number) = transform(&content, plan)?;
 
     if let Some(ln) = line_number {
         fs::write(path, &new_content)?;
@@ -48,6 +53,36 @@ pub fn apply_edit(plan: &InstallPlan) -> Result<EditOutcome> {
             file_changed: false,
             line_number: None,
         })
+    }
+}
+
+fn dispatch_insert(content: &str, plan: &InstallPlan) -> Result<(String, Option<usize>)> {
+    match plan.insertion_mode {
+        InsertionMode::NixManifest => insert_nix_manifest(content, &plan.package_token),
+        InsertionMode::LanguageWithPackages => {
+            let lang = plan
+                .language_info
+                .as_ref()
+                .expect("language_info required for LanguageWithPackages");
+            insert_language_package(content, &lang.bare_name, &lang.runtime)
+        }
+        InsertionMode::HomebrewManifest => insert_homebrew_manifest(content, &plan.package_token),
+        InsertionMode::MasApps => insert_mas_app(content, &plan.package_token),
+    }
+}
+
+fn dispatch_remove(content: &str, plan: &InstallPlan) -> Result<(String, Option<usize>)> {
+    match plan.insertion_mode {
+        InsertionMode::NixManifest => remove_nix_manifest(content, &plan.package_token),
+        InsertionMode::LanguageWithPackages => {
+            let lang = plan
+                .language_info
+                .as_ref()
+                .expect("language_info required for LanguageWithPackages");
+            remove_language_package(content, &lang.bare_name, &lang.runtime)
+        }
+        InsertionMode::HomebrewManifest => remove_homebrew_manifest(content, &plan.package_token),
+        InsertionMode::MasApps => remove_mas_app(content, &plan.package_token),
     }
 }
 
@@ -211,10 +246,145 @@ fn insert_mas_app(content: &str, token: &str) -> Result<(String, Option<usize>)>
     bail!("masApps insertion not yet implemented; add manually for now");
 }
 
+// --- Per-mode Removers
+//
+// Each returns `(new_content, Some(line_number))` on removal,
+// or `(original_content, None)` when the token is absent (idempotent).
+
+/// Remove a bare identifier from `home.packages = with pkgs; [ ... ]`.
+#[allow(dead_code)]
+fn remove_nix_manifest(content: &str, token: &str) -> Result<(String, Option<usize>)> {
+    if !nix_manifest_contains(content, token) {
+        return Ok((content.to_string(), None));
+    }
+
+    let (bracket_start, bracket_end) = find_bracket_region(content, "home.packages")
+        .or_else(|| find_bracket_region(content, "environment.systemPackages"))
+        .ok_or_else(|| {
+            anyhow::anyhow!("no home.packages or environment.systemPackages list found")
+        })?;
+
+    let lines: Vec<&str> = content.lines().collect();
+    let remove_idx = find_ident_line(&lines, bracket_start + 1, bracket_end, token);
+
+    match remove_idx {
+        Some(idx) => Ok((splice_out_line(content, &lines, idx), Some(idx + 1))),
+        None => Ok((content.to_string(), None)),
+    }
+}
+
+/// Remove a bare name from the correct `runtime.withPackages (ps: ...)` block.
+#[allow(dead_code)]
+fn remove_language_package(
+    content: &str,
+    bare_name: &str,
+    runtime: &str,
+) -> Result<(String, Option<usize>)> {
+    if !lang_package_contains(content, bare_name, runtime) {
+        return Ok((content.to_string(), None));
+    }
+
+    let lines: Vec<&str> = content.lines().collect();
+    let (block_start, block_end) = find_with_packages_block(&lines, runtime)
+        .ok_or_else(|| anyhow::anyhow!("no {runtime}.withPackages block found"))?;
+
+    let remove_idx = find_ident_line(&lines, block_start + 1, block_end, bare_name);
+
+    match remove_idx {
+        Some(idx) => Ok((splice_out_line(content, &lines, idx), Some(idx + 1))),
+        None => Ok((content.to_string(), None)),
+    }
+}
+
+/// Remove a double-quoted name from a homebrew `[ "pkg" ... ]` list.
+#[allow(dead_code)]
+fn remove_homebrew_manifest(content: &str, token: &str) -> Result<(String, Option<usize>)> {
+    if !homebrew_manifest_contains(content, token) {
+        return Ok((content.to_string(), None));
+    }
+
+    let (bracket_start, bracket_end) = find_top_level_brackets(content)
+        .ok_or_else(|| anyhow::anyhow!("no bracket list found in homebrew manifest"))?;
+
+    let lines: Vec<&str> = content.lines().collect();
+    let remove_idx = find_quoted_line(&lines, bracket_start + 1, bracket_end, token);
+
+    match remove_idx {
+        Some(idx) => Ok((splice_out_line(content, &lines, idx), Some(idx + 1))),
+        None => Ok((content.to_string(), None)),
+    }
+}
+
+/// Remove a `"Name" = <id>;` entry from `masApps = { ... }`.
+///
+/// Currently bails if no masApps block exists.
+#[allow(dead_code)]
+fn remove_mas_app(content: &str, token: &str) -> Result<(String, Option<usize>)> {
+    if !content.contains("masApps") {
+        bail!("no masApps block found in target file");
+    }
+
+    // Find the line containing `"token"` inside the masApps block
+    let lines: Vec<&str> = content.lines().collect();
+    let target = format!("\"{token}\"");
+
+    for (i, line) in lines.iter().enumerate() {
+        if line.contains(&target) {
+            return Ok((splice_out_line(content, &lines, i), Some(i + 1)));
+        }
+    }
+
+    Ok((content.to_string(), None))
+}
+
 // --- Helpers
 
 fn read_file(path: &Path) -> Result<String> {
     fs::read_to_string(path).map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))
+}
+
+/// Reconstruct file content with a single line removed.
+///
+/// Preserves the original trailing-newline behavior.
+#[allow(dead_code)]
+fn splice_out_line(content: &str, lines: &[&str], remove_idx: usize) -> String {
+    let mut out = String::with_capacity(content.len());
+    for (i, line) in lines.iter().enumerate() {
+        if i == remove_idx {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !content.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+/// Find the line index of a bare identifier within a region.
+#[allow(dead_code)]
+fn find_ident_line(lines: &[&str], start: usize, end: usize, token: &str) -> Option<usize> {
+    for (i, line) in lines.iter().enumerate().take(end).skip(start) {
+        let ident = extract_bare_ident(line.trim());
+        if ident == token {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Find the line index of a double-quoted value within a region.
+#[allow(dead_code)]
+fn find_quoted_line(lines: &[&str], start: usize, end: usize, token: &str) -> Option<usize> {
+    for (i, line) in lines.iter().enumerate().take(end).skip(start) {
+        if let Some(existing) = extract_quoted_value(line.trim())
+            && existing == token
+        {
+            return Some(i);
+        }
+    }
+    None
 }
 
 /// Check if a bare nix identifier already exists as a package entry.
@@ -763,5 +933,380 @@ mod tests {
         };
 
         assert!(apply_edit(&plan).is_err());
+    }
+
+    // --- remove_nix_manifest ---
+
+    #[test]
+    fn nix_manifest_removes_middle_entry() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    bat
+    fd
+    ripgrep
+  ];
+}
+";
+        let (result, line) = remove_nix_manifest(content, "fd").unwrap();
+        assert_eq!(line, Some(5)); // 1-indexed
+        assert!(!result.contains("\n    fd\n"));
+        assert!(result.contains("    bat\n"));
+        assert!(result.contains("    ripgrep\n"));
+    }
+
+    #[test]
+    fn nix_manifest_removes_first_entry() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    bat
+    fd
+  ];
+}
+";
+        let (result, line) = remove_nix_manifest(content, "bat").unwrap();
+        assert!(line.is_some());
+        assert!(!result.contains("bat"));
+        assert!(result.contains("    fd\n"));
+    }
+
+    #[test]
+    fn nix_manifest_removes_last_entry() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    bat
+    fd
+  ];
+}
+";
+        let (result, line) = remove_nix_manifest(content, "fd").unwrap();
+        assert!(line.is_some());
+        assert!(!result.contains("fd"));
+        assert!(result.contains("    bat\n"));
+    }
+
+    #[test]
+    fn nix_manifest_remove_not_found() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    bat
+  ];
+}
+";
+        let (_, line) = remove_nix_manifest(content, "nonexistent").unwrap();
+        assert!(line.is_none());
+    }
+
+    #[test]
+    fn nix_manifest_remove_preserves_comments() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    bat           # cat replacement
+    fd
+    ripgrep       # grep replacement
+  ];
+}
+";
+        let (result, line) = remove_nix_manifest(content, "fd").unwrap();
+        assert!(line.is_some());
+        assert!(result.contains("bat           # cat replacement"));
+        assert!(result.contains("ripgrep       # grep replacement"));
+    }
+
+    #[test]
+    fn nix_manifest_remove_preserves_section_headers() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    # === Core tools ===
+    bat
+    fd
+    # === Dev tools ===
+    ripgrep
+  ];
+}
+";
+        let (result, line) = remove_nix_manifest(content, "fd").unwrap();
+        assert!(line.is_some());
+        assert!(result.contains("# === Core tools ==="));
+        assert!(result.contains("# === Dev tools ==="));
+        assert!(result.contains("    bat\n"));
+        assert!(result.contains("    ripgrep\n"));
+    }
+
+    // --- remove_language_package ---
+
+    #[test]
+    fn language_package_removes_from_python_block() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    (python3.withPackages (ps: with ps; [
+      pyyaml
+      requests
+      rich
+    ]))
+  ];
+}
+";
+        let (result, line) = remove_language_package(content, "requests", "python3").unwrap();
+        assert!(line.is_some());
+        assert!(!result.contains("requests"));
+        assert!(result.contains("      pyyaml\n"));
+        assert!(result.contains("      rich\n"));
+    }
+
+    #[test]
+    fn language_package_remove_not_found() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    (python3.withPackages (ps: with ps; [
+      pyyaml
+    ]))
+  ];
+}
+";
+        let (_, line) = remove_language_package(content, "nonexistent", "python3").unwrap();
+        assert!(line.is_none());
+    }
+
+    #[test]
+    fn language_package_remove_correct_runtime() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    (lua5_4.withPackages (ps: [
+      dkjson
+    ]))
+    (python3.withPackages (ps: with ps; [
+      pyyaml
+      rich
+    ]))
+  ];
+}
+";
+        let (result, line) = remove_language_package(content, "rich", "python3").unwrap();
+        assert!(line.is_some());
+        assert!(!result.contains("      rich\n"));
+        // lua block untouched
+        assert!(result.contains("      dkjson\n"));
+        assert!(result.contains("      pyyaml\n"));
+    }
+
+    #[test]
+    fn language_package_remove_missing_runtime_errors() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    (python3.withPackages (ps: with ps; [
+      pyyaml
+    ]))
+  ];
+}
+";
+        // lua5_4 block doesn't exist but token also doesn't exist → idempotent, not error
+        let (_, line) = remove_language_package(content, "lpeg", "lua5_4").unwrap();
+        assert!(line.is_none());
+    }
+
+    // --- remove_homebrew_manifest ---
+
+    #[test]
+    fn homebrew_removes_entry() {
+        let content = "\
+[
+  \"deno\"
+  \"htop\"
+  \"yt-dlp\"
+]
+";
+        let (result, line) = remove_homebrew_manifest(content, "htop").unwrap();
+        assert!(line.is_some());
+        assert!(!result.contains("\"htop\""));
+        assert!(result.contains("\"deno\""));
+        assert!(result.contains("\"yt-dlp\""));
+    }
+
+    #[test]
+    fn homebrew_remove_not_found() {
+        let content = "\
+[
+  \"deno\"
+]
+";
+        let (_, line) = remove_homebrew_manifest(content, "nonexistent").unwrap();
+        assert!(line.is_none());
+    }
+
+    #[test]
+    fn homebrew_remove_preserves_comments() {
+        let content = "\
+[
+  \"deno\"                          # JS runtime
+  \"htop\"
+  \"yt-dlp\"                        # Video downloader
+]
+";
+        let (result, line) = remove_homebrew_manifest(content, "htop").unwrap();
+        assert!(line.is_some());
+        assert!(result.contains("# JS runtime"));
+        assert!(result.contains("# Video downloader"));
+    }
+
+    // --- remove_mas_app ---
+
+    #[test]
+    fn mas_app_removes_entry() {
+        let content = "\
+{ ... }:
+{
+  homebrew.masApps = {
+    \"Xcode\" = 497799835;
+    \"Slack\" = 803453959;
+  };
+}
+";
+        let (result, line) = remove_mas_app(content, "Xcode").unwrap();
+        assert!(line.is_some());
+        assert!(!result.contains("Xcode"));
+        assert!(result.contains("Slack"));
+    }
+
+    #[test]
+    fn mas_app_remove_not_found() {
+        let content = "\
+{ ... }:
+{
+  homebrew.masApps = {
+    \"Xcode\" = 497799835;
+  };
+}
+";
+        let (_, line) = remove_mas_app(content, "Nonexistent").unwrap();
+        assert!(line.is_none());
+    }
+
+    #[test]
+    fn mas_app_remove_missing_block_errors() {
+        let content = "\
+{ ... }:
+{
+  system.defaults = {};
+}
+";
+        let result = remove_mas_app(content, "Xcode");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no masApps block"));
+    }
+
+    // --- apply_removal (integration via temp files) ---
+
+    #[test]
+    fn apply_removal_writes_file() {
+        use crate::domain::plan::{InsertionMode, InstallPlan};
+        use crate::domain::source::{PackageSource, SourceResult};
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cli_path = tmp.path().join("cli.nix");
+        fs::write(
+            &cli_path,
+            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    bat\n    fd\n    ripgrep\n  ];\n}\n",
+        )
+        .unwrap();
+
+        let plan = InstallPlan {
+            source_result: SourceResult::new("fd", PackageSource::Nxs),
+            package_token: "fd".to_string(),
+            target_file: cli_path.clone(),
+            insertion_mode: InsertionMode::NixManifest,
+            language_info: None,
+            routing_warning: None,
+        };
+
+        let outcome = apply_removal(&plan).unwrap();
+        assert!(outcome.file_changed);
+        assert!(outcome.line_number.is_some());
+
+        let written = fs::read_to_string(&cli_path).unwrap();
+        assert!(!written.contains("fd"));
+        assert!(written.contains("bat"));
+        assert!(written.contains("ripgrep"));
+    }
+
+    #[test]
+    fn apply_removal_idempotent_no_write() {
+        use crate::domain::plan::{InsertionMode, InstallPlan};
+        use crate::domain::source::{PackageSource, SourceResult};
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cli_path = tmp.path().join("cli.nix");
+        fs::write(
+            &cli_path,
+            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    bat\n  ];\n}\n",
+        )
+        .unwrap();
+
+        let plan = InstallPlan {
+            source_result: SourceResult::new("nonexistent", PackageSource::Nxs),
+            package_token: "nonexistent".to_string(),
+            target_file: cli_path,
+            insertion_mode: InsertionMode::NixManifest,
+            language_info: None,
+            routing_warning: None,
+        };
+
+        let outcome = apply_removal(&plan).unwrap();
+        assert!(!outcome.file_changed);
+        assert!(outcome.line_number.is_none());
+    }
+
+    // --- roundtrip: insert then remove restores original ---
+
+    #[test]
+    fn nix_manifest_insert_then_remove_roundtrip() {
+        let original = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    bat
+    ripgrep
+  ];
+}
+";
+        let (with_fd, _) = insert_nix_manifest(original, "fd").unwrap();
+        assert!(with_fd.contains("    fd\n"));
+
+        let (restored, _) = remove_nix_manifest(&with_fd, "fd").unwrap();
+        assert_eq!(restored, original);
+    }
+
+    #[test]
+    fn homebrew_insert_then_remove_roundtrip() {
+        let original = "\
+[
+  \"deno\"
+  \"yt-dlp\"
+]
+";
+        let (with_htop, _) = insert_homebrew_manifest(original, "htop").unwrap();
+        assert!(with_htop.contains("\"htop\""));
+
+        let (restored, _) = remove_homebrew_manifest(&with_htop, "htop").unwrap();
+        assert_eq!(restored, original);
     }
 }

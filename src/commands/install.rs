@@ -1090,7 +1090,7 @@ mod tests {
             Some("python3Packages.pyyaml"),
         );
         let homebrew = source_result("py-yaml", PackageSource::Homebrew, Some("pyyaml"));
-        let candidates = vec![primary.clone(), homebrew, fallback.clone()];
+        let candidates = vec![primary.clone(), homebrew, fallback];
 
         let outcome = resolve_platform_candidate_with(&primary, &candidates, |attr| {
             if attr == "python3Packages.aspy-yaml" {
@@ -1130,5 +1130,46 @@ mod tests {
 
         let err = outcome.expect_err("resolution should fail");
         assert!(err.contains("not available on aarch64-darwin"));
+    }
+
+    #[test]
+    fn platform_resolution_skips_unavailable_same_source_and_uses_later_fallback() {
+        let primary = source_result(
+            "py-yaml",
+            PackageSource::Nxs,
+            Some("python3Packages.aspy-yaml"),
+        );
+        let unavailable_fallback = source_result(
+            "py-yaml",
+            PackageSource::Nxs,
+            Some("python3Packages.bad-alt"),
+        );
+        let available_fallback = source_result(
+            "py-yaml",
+            PackageSource::Nxs,
+            Some("python3Packages.pyyaml"),
+        );
+        let candidates = vec![
+            primary.clone(),
+            unavailable_fallback,
+            available_fallback.clone(),
+        ];
+
+        let outcome = resolve_platform_candidate_with(&primary, &candidates, |attr| match attr {
+            "python3Packages.aspy-yaml" | "python3Packages.bad-alt" => (
+                false,
+                Some("not available on aarch64-darwin (only: x86_64-linux)".to_string()),
+            ),
+            _ => (true, None),
+        })
+        .expect("later fallback should resolve");
+
+        match outcome {
+            PlatformResolution::Fallback { candidate, reason } => {
+                assert_eq!(candidate.attr, available_fallback.attr);
+                assert!(reason.contains("not available on aarch64-darwin"));
+            }
+            PlatformResolution::Primary(_) => panic!("expected fallback candidate"),
+        }
     }
 }

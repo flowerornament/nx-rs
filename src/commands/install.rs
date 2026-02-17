@@ -1,3 +1,4 @@
+use std::io::{self, BufRead, Write};
 use std::path::Path;
 
 use crate::cli::InstallArgs;
@@ -93,6 +94,7 @@ fn install_one(
             report_already_installed(package, &location, ctx);
             return true;
         }
+        SearchResolution::Skipped => return true,
     };
 
     let mut plan = match build_install_plan(&sr, &ctx.config_files) {
@@ -262,6 +264,7 @@ fn report_already_installed(package: &str, location: &PackageLocation, ctx: &App
 enum SearchResolution {
     Install(SourceResult),
     AlreadyInstalled(PackageLocation),
+    Skipped,
 }
 
 /// Search all sources for a package. Returns `None` with error printed if not found.
@@ -275,7 +278,7 @@ fn search_for_package(
     if args.cask || args.mas {
         let prefs = source_prefs_from_args(args);
         let results = search_all_sources(package, &prefs, None);
-        return resolve_search_candidates(&results, &ctx.repo_root, ctx);
+        return resolve_search_candidates(package, &results, args, &ctx.repo_root, ctx);
     }
 
     if let Some(cache) = cache.as_mut() {
@@ -287,7 +290,7 @@ fn search_for_package(
                     cached.len()
                 ));
             }
-            return resolve_search_candidates(&cached, &ctx.repo_root, ctx);
+            return resolve_search_candidates(package, &cached, args, &ctx.repo_root, ctx);
         }
     }
 
@@ -300,6 +303,7 @@ fn search_for_package(
     ctx.printer.searching_done();
 
     if results.is_empty() {
+        show_unknown_group(package, ctx);
         ctx.printer
             .error(&format!("{package}: not found in any source"));
         return None;
@@ -313,11 +317,13 @@ fn search_for_package(
         ));
     }
 
-    resolve_search_candidates(&results, &ctx.repo_root, ctx)
+    resolve_search_candidates(package, &results, args, &ctx.repo_root, ctx)
 }
 
 fn resolve_search_candidates(
+    package: &str,
     candidates: &[SourceResult],
+    args: &InstallArgs,
     repo_root: &Path,
     ctx: &AppContext,
 ) -> Option<SearchResolution> {
@@ -326,13 +332,106 @@ fn resolve_search_candidates(
     }
 
     match find_existing_for_candidates(candidates, repo_root) {
-        Ok(Some(location)) => Some(SearchResolution::AlreadyInstalled(location)),
-        Ok(None) => candidates.first().cloned().map(SearchResolution::Install),
+        Ok(Some(location)) => {
+            show_resolution_groups(package, &[], Some(&location), ctx);
+            Some(SearchResolution::AlreadyInstalled(location))
+        }
+        Ok(None) => {
+            show_resolution_groups(package, candidates, None, ctx);
+
+            if args.yes || args.dry_run || candidates.len() == 1 {
+                return candidates.first().cloned().map(SearchResolution::Install);
+            }
+
+            if let Some(choice) = prompt_source_choice(candidates.len()) {
+                Some(SearchResolution::Install(candidates[choice].clone()))
+            } else {
+                ctx.printer.detail("Cancelled.");
+                Some(SearchResolution::Skipped)
+            }
+        }
         Err(err) => {
             ctx.printer.error(&format!("install lookup failed: {err}"));
             None
         }
     }
+}
+
+fn show_unknown_group(package: &str, ctx: &AppContext) {
+    println!();
+    ctx.printer.action(&format!("Results for '{package}'"));
+    ctx.printer.detail("unknown/not found:");
+    ctx.printer.detail(&format!("  - {package}"));
+}
+
+fn show_resolution_groups(
+    package: &str,
+    installable: &[SourceResult],
+    installed: Option<&PackageLocation>,
+    ctx: &AppContext,
+) {
+    println!();
+    ctx.printer.action(&format!("Results for '{package}'"));
+
+    if !installable.is_empty() {
+        ctx.printer.detail("installable:");
+        for (idx, candidate) in installable.iter().enumerate() {
+            let attr = candidate.attr.as_deref().unwrap_or(&candidate.name);
+            let detail = if candidate.description.is_empty() {
+                String::new()
+            } else {
+                format!(" - {}", candidate.description)
+            };
+            ctx.printer.detail(&format!(
+                "  {}. {} ({}){}",
+                idx + 1,
+                attr,
+                candidate.source,
+                detail
+            ));
+        }
+    }
+
+    if let Some(location) = installed {
+        ctx.printer.detail("already installed:");
+        ctx.printer.detail(&format!(
+            "  - {package} ({})",
+            relative_location(location, &ctx.repo_root)
+        ));
+    }
+}
+
+fn prompt_source_choice(count: usize) -> Option<usize> {
+    let nums = (1..=count)
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join("/");
+    print!("  Install? [{nums}/n]: ");
+    let _ = io::stdout().flush();
+
+    let mut line = String::new();
+    match io::stdin().lock().read_line(&mut line) {
+        Ok(0) | Err(_) => Some(0),
+        Ok(_) => parse_source_choice(&line, count),
+    }
+}
+
+fn parse_source_choice(response: &str, count: usize) -> Option<usize> {
+    let trimmed = response.trim().to_ascii_lowercase();
+    if trimmed.is_empty() {
+        return Some(0);
+    }
+    if trimmed == "n" || trimmed == "no" {
+        return None;
+    }
+
+    trimmed.parse::<usize>().ok().and_then(|n| {
+        if (1..=count).contains(&n) {
+            Some(n - 1)
+        } else {
+            None
+        }
+    })
 }
 
 fn find_existing_for_candidates(
@@ -525,5 +624,25 @@ mod tests {
             "expected installed location to resolve to packages/nix/cli.nix, got {}",
             location.path().display()
         );
+    }
+
+    #[test]
+    fn parse_source_choice_empty_defaults_to_first() {
+        assert_eq!(parse_source_choice("", 3), Some(0));
+        assert_eq!(parse_source_choice("   ", 3), Some(0));
+    }
+
+    #[test]
+    fn parse_source_choice_accepts_valid_number() {
+        assert_eq!(parse_source_choice("2", 3), Some(1));
+    }
+
+    #[test]
+    fn parse_source_choice_rejects_cancel_and_invalid() {
+        assert_eq!(parse_source_choice("n", 3), None);
+        assert_eq!(parse_source_choice("no", 3), None);
+        assert_eq!(parse_source_choice("0", 3), None);
+        assert_eq!(parse_source_choice("9", 3), None);
+        assert_eq!(parse_source_choice("abc", 3), None);
     }
 }

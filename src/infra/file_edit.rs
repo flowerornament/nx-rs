@@ -231,19 +231,42 @@ fn insert_homebrew_manifest(content: &str, token: &str) -> Result<(String, Optio
 
 /// Insert `"Name" = <id>;` into `masApps = { ... }`.
 ///
-/// Currently bails if no masApps block exists (block creation deferred).
+/// Uses a placeholder value (`0`) for new entries because App Store ID lookup
+/// is outside deterministic editing scope.
 fn insert_mas_app(content: &str, token: &str) -> Result<(String, Option<usize>)> {
-    // Check idempotency
-    if content.contains(&format!("\"{token}\"")) {
+    let lines: Vec<&str> = content.lines().collect();
+    let (block_start, block_end) = find_mas_apps_block(&lines).ok_or_else(|| {
+        anyhow::anyhow!(
+            "no masApps block found in target file; manual block creation required (deferred)"
+        )
+    })?;
+
+    // Check idempotency within masApps block
+    if find_quoted_line(&lines, block_start + 1, block_end, token).is_some() {
         return Ok((content.to_string(), None));
     }
 
-    // masApps block creation is deferred — bail if missing
-    if !content.contains("masApps") {
-        bail!("no masApps block found in target file; manual block creation required (deferred)");
+    let indent = detect_indent_in_region(&lines, block_start, block_end).unwrap_or("    ");
+    let insert_at = find_alpha_position_quoted(&lines, block_start + 1, block_end, token);
+    let new_line = format!("{indent}\"{token}\" = 0;");
+
+    let mut out = String::with_capacity(content.len() + new_line.len() + 1);
+    for line in &lines[..insert_at] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str(&new_line);
+    out.push('\n');
+    for line in &lines[insert_at..] {
+        out.push_str(line);
+        out.push('\n');
     }
 
-    bail!("masApps insertion not yet implemented; add manually for now");
+    if !content.ends_with('\n') {
+        out.pop();
+    }
+
+    Ok((out, Some(insert_at + 1)))
 }
 
 // --- Per-mode Removers
@@ -465,6 +488,32 @@ fn find_top_level_brackets(content: &str) -> Option<(usize, usize)> {
         let trimmed = line.trim();
         if trimmed == "]" || trimmed.starts_with(']') {
             return Some((start, j));
+        }
+    }
+    None
+}
+
+/// Find the line range (`block_open`, `block_close`) of a `masApps = { ... };` region.
+fn find_mas_apps_block(lines: &[&str]) -> Option<(usize, usize)> {
+    for (i, line) in lines.iter().enumerate() {
+        if !line.contains("masApps") {
+            continue;
+        }
+
+        let block_start = if line.contains('{') {
+            i
+        } else {
+            lines
+                .iter()
+                .enumerate()
+                .skip(i + 1)
+                .find_map(|(j, candidate)| candidate.contains('{').then_some(j))?
+        };
+
+        for (j, close_line) in lines.iter().enumerate().skip(block_start + 1) {
+            if close_line.trim().starts_with("};") || close_line.contains("};") {
+                return Some((block_start, j));
+            }
         }
     }
     None
@@ -869,6 +918,45 @@ mod tests {
 ";
         let (_, line) = insert_mas_app(content, "Xcode").unwrap();
         assert!(line.is_none());
+    }
+
+    #[test]
+    fn mas_app_alphabetical_insertion() {
+        let content = "\
+{ ... }:
+{
+  homebrew.masApps = {
+    \"Slack\" = 803453959;
+    \"Xcode\" = 497799835;
+  };
+}
+";
+        let (result, line) = insert_mas_app(content, "Telegram").unwrap();
+        assert_eq!(line, Some(5));
+        assert!(result.contains("\"Telegram\" = 0;"));
+        let lines: Vec<&str> = result.lines().collect();
+        let slack_idx = lines.iter().position(|l| l.contains("\"Slack\"")).unwrap();
+        let telegram_idx = lines
+            .iter()
+            .position(|l| l.contains("\"Telegram\""))
+            .unwrap();
+        let xcode_idx = lines.iter().position(|l| l.contains("\"Xcode\"")).unwrap();
+        assert!(slack_idx < telegram_idx);
+        assert!(telegram_idx < xcode_idx);
+    }
+
+    #[test]
+    fn mas_app_inserts_into_empty_block() {
+        let content = "\
+{ ... }:
+{
+  homebrew.masApps = {
+  };
+}
+";
+        let (result, line) = insert_mas_app(content, "Xcode").unwrap();
+        assert_eq!(line, Some(4));
+        assert!(result.contains("    \"Xcode\" = 0;"));
     }
 
     #[test]

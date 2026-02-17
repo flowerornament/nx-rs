@@ -9,10 +9,14 @@ use crate::domain::plan::{
     InsertionMode, InstallPlan, build_install_plan, nix_manifest_candidates,
 };
 use crate::domain::source::{SourcePreferences, SourceResult, detect_language_package};
-use crate::infra::ai_engine::{AiEngine, build_routing_context, select_engine};
+use crate::infra::ai_engine::{
+    AiEngine, CommandOutcome, build_edit_prompt, build_routing_context, run_edit_with_callback,
+    select_engine,
+};
 use crate::infra::cache::MultiSourceCache;
-use crate::infra::file_edit::apply_edit;
+use crate::infra::file_edit::{EditOutcome, apply_edit};
 use crate::infra::finder::find_package;
+use crate::infra::shell::run_captured_command;
 use crate::infra::sources::search_all_sources;
 
 pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
@@ -130,7 +134,7 @@ fn install_one(
         return true;
     }
 
-    execute_edit(&plan, &rel_target, ctx)
+    execute_edit(&plan, &rel_target, ctx, engine)
 }
 
 /// Refine routing for general nix packages via AI engine.
@@ -202,9 +206,75 @@ fn gate_flake_input(
     true
 }
 
-/// Apply the deterministic file edit and report outcome.
-fn execute_edit(plan: &InstallPlan, rel_target: &str, ctx: &AppContext) -> bool {
-    match apply_edit(plan) {
+/// Execute install edits per engine semantics (SPEC 7.7).
+fn execute_edit(
+    plan: &InstallPlan,
+    rel_target: &str,
+    ctx: &AppContext,
+    engine: &dyn AiEngine,
+) -> bool {
+    let prompt = build_edit_prompt(plan);
+    let before_diff = git_diff(&ctx.repo_root);
+    let mut deterministic: Option<anyhow::Result<EditOutcome>> = None;
+
+    let execution = run_edit_with_callback(engine, &prompt, &ctx.repo_root, || {
+        if engine.name() != "codex" {
+            return None;
+        }
+
+        deterministic = Some(apply_edit(plan));
+        deterministic.as_ref().map(|result| match result {
+            Ok(_) => CommandOutcome {
+                success: true,
+                output: "deterministic edit applied".to_string(),
+            },
+            Err(err) => CommandOutcome {
+                success: false,
+                output: err.to_string(),
+            },
+        })
+    });
+
+    if let Some(result) = deterministic {
+        return report_deterministic_edit(result, plan, rel_target, ctx);
+    }
+
+    if !execution.outcome.success {
+        ctx.printer.error(&format!(
+            "failed to edit {rel_target}: {}",
+            execution.outcome.output
+        ));
+        return false;
+    }
+
+    let after_diff = git_diff(&ctx.repo_root);
+    if after_diff == before_diff {
+        println!();
+        ctx.printer.success(&format!(
+            "'{}' already present in {rel_target}",
+            plan.package_token,
+        ));
+        return true;
+    }
+
+    println!();
+    ctx.printer
+        .success(&format!("Added '{}' to {rel_target}", plan.package_token));
+    if let Ok(Some(location)) = find_package(&plan.package_token, &ctx.repo_root)
+        && let Some(line) = location.line()
+    {
+        show_snippet(location.path(), line, 2, SnippetMode::Add, false);
+    }
+    true
+}
+
+fn report_deterministic_edit(
+    result: anyhow::Result<EditOutcome>,
+    plan: &InstallPlan,
+    rel_target: &str,
+    ctx: &AppContext,
+) -> bool {
+    match result {
         Ok(outcome) => {
             if outcome.file_changed {
                 println!();
@@ -228,6 +298,12 @@ fn execute_edit(plan: &InstallPlan, rel_target: &str, ctx: &AppContext) -> bool 
             false
         }
     }
+}
+
+fn git_diff(cwd: &Path) -> String {
+    run_captured_command("git", &["diff"], Some(cwd))
+        .map(|cmd| cmd.stdout)
+        .unwrap_or_default()
 }
 
 /// Map CLI flags to source preferences for search.
@@ -484,8 +560,14 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use crate::domain::config::ConfigFiles;
     use crate::domain::source::PackageSource;
+    use crate::infra::ai_engine::RouteDecision;
+    use crate::output::printer::Printer;
+    use crate::output::style::OutputStyle;
     use tempfile::TempDir;
 
     fn source_result(name: &str, source: PackageSource, attr: Option<&str>) -> SourceResult {
@@ -506,6 +588,61 @@ mod tests {
         fs::create_dir_all(full.parent().expect("nix file should have parent dirs"))
             .expect("nix parent dirs should be created");
         fs::write(full, content).expect("nix content should be written");
+    }
+
+    fn test_context(root: &Path) -> AppContext {
+        AppContext::new(
+            root.to_path_buf(),
+            Printer::new(OutputStyle::from_flags(true, false, false)),
+            ConfigFiles::discover(root),
+        )
+    }
+
+    fn test_plan(root: &Path, token: &str) -> InstallPlan {
+        InstallPlan {
+            source_result: SourceResult::new(token, PackageSource::Nxs),
+            package_token: token.to_string(),
+            target_file: root.join("packages/nix/cli.nix"),
+            insertion_mode: InsertionMode::NixManifest,
+            language_info: None,
+            routing_warning: None,
+        }
+    }
+
+    struct StubEngine {
+        engine_name: &'static str,
+        supports_flake: bool,
+        run_edit_calls: Arc<AtomicUsize>,
+        run_edit_outcome: CommandOutcome,
+    }
+
+    impl AiEngine for StubEngine {
+        fn route_package(
+            &self,
+            _package: &str,
+            _context: &str,
+            _candidates: &[String],
+            fallback: &str,
+            _cwd: &Path,
+        ) -> RouteDecision {
+            RouteDecision {
+                target_file: fallback.to_string(),
+                warning: None,
+            }
+        }
+
+        fn run_edit(&self, _prompt: &str, _cwd: &Path) -> CommandOutcome {
+            self.run_edit_calls.fetch_add(1, Ordering::SeqCst);
+            self.run_edit_outcome.clone()
+        }
+
+        fn supports_flake_input(&self) -> bool {
+            self.supports_flake
+        }
+
+        fn name(&self) -> &'static str {
+            self.engine_name
+        }
     }
 
     #[test]
@@ -644,5 +781,202 @@ mod tests {
         assert_eq!(parse_source_choice("0", 3), None);
         assert_eq!(parse_source_choice("9", 3), None);
         assert_eq!(parse_source_choice("abc", 3), None);
+    }
+
+    fn install_args_template() -> InstallArgs {
+        InstallArgs {
+            packages: vec!["ripgrep".to_string()],
+            yes: false,
+            dry_run: false,
+            cask: false,
+            mas: false,
+            service: false,
+            rebuild: false,
+            bleeding_edge: false,
+            nur: false,
+            source: None,
+            explain: false,
+            engine: None,
+            model: None,
+        }
+    }
+
+    #[test]
+    fn gate_flake_input_refuses_codex_engine() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_nix(
+            root,
+            "packages/nix/cli.nix",
+            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    bat\n  ];\n}\n",
+        );
+        let ctx = test_context(root);
+        let mut args = install_args_template();
+        args.yes = true;
+
+        let mut plan = test_plan(root, "ripgrep");
+        plan.source_result.requires_flake_mod = true;
+
+        let engine = StubEngine {
+            engine_name: "codex",
+            supports_flake: false,
+            run_edit_calls: Arc::new(AtomicUsize::new(0)),
+            run_edit_outcome: CommandOutcome {
+                success: true,
+                output: String::new(),
+            },
+        };
+
+        assert!(!gate_flake_input("ripgrep", &plan, &args, &ctx, &engine));
+    }
+
+    #[test]
+    fn gate_flake_input_allows_claude_with_yes() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_nix(
+            root,
+            "packages/nix/cli.nix",
+            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    bat\n  ];\n}\n",
+        );
+        let ctx = test_context(root);
+        let mut args = install_args_template();
+        args.yes = true;
+
+        let mut plan = test_plan(root, "ripgrep");
+        plan.source_result.requires_flake_mod = true;
+
+        let engine = StubEngine {
+            engine_name: "claude",
+            supports_flake: true,
+            run_edit_calls: Arc::new(AtomicUsize::new(0)),
+            run_edit_outcome: CommandOutcome {
+                success: true,
+                output: String::new(),
+            },
+        };
+
+        assert!(gate_flake_input("ripgrep", &plan, &args, &ctx, &engine));
+    }
+
+    #[test]
+    fn gate_flake_input_dry_run_reports_intent_and_allows() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_nix(
+            root,
+            "packages/nix/cli.nix",
+            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    bat\n  ];\n}\n",
+        );
+        let ctx = test_context(root);
+        let mut args = install_args_template();
+        args.dry_run = true;
+
+        let mut plan = test_plan(root, "ripgrep");
+        plan.source_result.requires_flake_mod = true;
+
+        let engine = StubEngine {
+            engine_name: "claude",
+            supports_flake: true,
+            run_edit_calls: Arc::new(AtomicUsize::new(0)),
+            run_edit_outcome: CommandOutcome {
+                success: true,
+                output: String::new(),
+            },
+        };
+
+        assert!(gate_flake_input("ripgrep", &plan, &args, &ctx, &engine));
+    }
+
+    #[test]
+    fn execute_edit_codex_uses_deterministic_path() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_nix(
+            root,
+            "packages/nix/cli.nix",
+            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    bat\n  ];\n}\n",
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let engine = StubEngine {
+            engine_name: "codex",
+            supports_flake: false,
+            run_edit_calls: calls.clone(),
+            run_edit_outcome: CommandOutcome {
+                success: true,
+                output: "unused".to_string(),
+            },
+        };
+
+        let ctx = test_context(root);
+        let plan = test_plan(root, "ripgrep");
+
+        assert!(execute_edit(&plan, "packages/nix/cli.nix", &ctx, &engine));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        let edited = fs::read_to_string(root.join("packages/nix/cli.nix"))
+            .expect("edited file should be readable");
+        assert!(edited.contains("ripgrep"));
+    }
+
+    #[test]
+    fn execute_edit_claude_uses_ai_path() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_nix(
+            root,
+            "packages/nix/cli.nix",
+            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    bat\n  ];\n}\n",
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let engine = StubEngine {
+            engine_name: "claude",
+            supports_flake: true,
+            run_edit_calls: calls.clone(),
+            run_edit_outcome: CommandOutcome {
+                success: true,
+                output: "ok".to_string(),
+            },
+        };
+
+        let ctx = test_context(root);
+        let plan = test_plan(root, "ripgrep");
+
+        assert!(execute_edit(&plan, "packages/nix/cli.nix", &ctx, &engine));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let edited = fs::read_to_string(root.join("packages/nix/cli.nix"))
+            .expect("target file should be readable");
+        assert!(!edited.contains("ripgrep"));
+    }
+
+    #[test]
+    fn execute_edit_claude_failure_returns_false() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_nix(
+            root,
+            "packages/nix/cli.nix",
+            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    bat\n  ];\n}\n",
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let engine = StubEngine {
+            engine_name: "claude",
+            supports_flake: true,
+            run_edit_calls: calls.clone(),
+            run_edit_outcome: CommandOutcome {
+                success: false,
+                output: "boom".to_string(),
+            },
+        };
+
+        let ctx = test_context(root);
+        let plan = test_plan(root, "ripgrep");
+
+        assert!(!execute_edit(&plan, "packages/nix/cli.nix", &ctx, &engine));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

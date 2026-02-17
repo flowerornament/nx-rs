@@ -51,12 +51,30 @@ just compile        # strict checks + cargo check
 just ci             # fmt-check + clippy + test + check
 ```
 
-Agent hooks:
+Quality gates:
 
-- `scripts/agent-hooks/pre-compile.sh`
-- `scripts/agent-hooks/compile.sh`
-- `scripts/agent-hooks/post-compile.sh`
-- `.githooks/pre-commit`
+| What | Command | Details |
+|------|---------|---------|
+| Format | `just fmt` / `just fmt-check` | `cargo fmt --all`; check-only variant for CI |
+| Lint | `just lint` | `cargo clippy` with `-D warnings`, all targets/features |
+| Test | `just test` | `cargo test`, all targets/features |
+| Check | `just check` | `cargo check`, all targets/features |
+| **Full CI gate** | **`just ci`** | fmt-check + lint + test + check in sequence |
+| System tests | `just test-system` | Integration matrix with deterministic stubs |
+| Parity (Python) | `just parity-check` | Validates Python reference against captured baselines |
+| Parity (Rust) | `just parity-check-rust` | Validates Rust candidate against same baselines |
+| Cutover validation | `just cutover-validate` | Shadow/canary comparison of Rust vs Python on `~/.nix-config` |
+
+All flags use `--workspace --all-targets --all-features`. Clippy treats warnings as errors.
+
+Run `just ci` before finishing any code change. For migration-specific validation, also run `just parity-check-rust` and `just cutover-validate`.
+
+Agent hook pipeline (`just compile` runs this full sequence):
+
+1. `pre-compile.sh` — fmt-check, clippy, test (same as `just guard`)
+2. `compile.sh` — calls pre-compile, then `cargo check`
+3. `post-compile.sh` — success confirmation
+4. `.githooks/pre-commit` — runs pre-compile on every commit
 
 ## Issue Tracking
 
@@ -118,3 +136,4 @@ bd sync               # sync state (run at session end)
 - Use abstraction
 - Plan before acting
 - Understand the codebase idioms
+- Run `just ci` and fix all issues before finishing (see Quality Gates above)

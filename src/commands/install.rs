@@ -1,11 +1,15 @@
+use std::path::Path;
+
 use crate::cli::InstallArgs;
 use crate::commands::context::AppContext;
 use crate::commands::shared::{SnippetMode, relative_location, show_snippet};
+use crate::domain::location::PackageLocation;
 use crate::domain::plan::{
     InsertionMode, InstallPlan, build_install_plan, nix_manifest_candidates,
 };
-use crate::domain::source::{SourcePreferences, SourceResult};
+use crate::domain::source::{SourcePreferences, SourceResult, detect_language_package};
 use crate::infra::ai_engine::{AiEngine, build_routing_context, select_engine};
+use crate::infra::cache::MultiSourceCache;
 use crate::infra::file_edit::apply_edit;
 use crate::infra::finder::find_package;
 use crate::infra::sources::search_all_sources;
@@ -33,11 +37,19 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
 
     let engine = select_engine(args.engine.as_deref(), args.model.as_deref());
     let routing_context = build_routing_context(&ctx.config_files);
+    let mut cache = load_cache(ctx);
 
     let mut success_count = 0;
 
     for package in &args.packages {
-        if install_one(package, args, ctx, engine.as_ref(), &routing_context) {
+        if install_one(
+            package,
+            args,
+            ctx,
+            &mut cache,
+            engine.as_ref(),
+            &routing_context,
+        ) {
             success_count += 1;
         }
     }
@@ -55,17 +67,14 @@ fn install_one(
     package: &str,
     args: &InstallArgs,
     ctx: &AppContext,
+    cache: &mut Option<MultiSourceCache>,
     engine: &dyn AiEngine,
     routing_context: &str,
 ) -> bool {
     // Check if already installed
     match find_package(package, &ctx.repo_root) {
         Ok(Some(location)) => {
-            println!();
-            ctx.printer.success(&format!(
-                "{package} already installed ({})",
-                relative_location(&location, &ctx.repo_root)
-            ));
+            report_already_installed(package, &location, ctx);
             return true;
         }
         Ok(None) => {} // not installed — proceed
@@ -75,8 +84,15 @@ fn install_one(
         }
     }
 
-    let Some(sr) = search_for_package(package, args, ctx) else {
+    let Some(resolution) = search_for_package(package, args, ctx, cache) else {
         return false;
+    };
+    let sr = match resolution {
+        SearchResolution::Install(sr) => sr,
+        SearchResolution::AlreadyInstalled(location) => {
+            report_already_installed(package, &location, ctx);
+            return true;
+        }
     };
 
     let mut plan = match build_install_plan(&sr, &ctx.config_files) {
@@ -223,13 +239,56 @@ fn source_prefs_from_args(args: &InstallArgs) -> SourcePreferences {
     }
 }
 
+fn load_cache(ctx: &AppContext) -> Option<MultiSourceCache> {
+    match MultiSourceCache::load(&ctx.repo_root) {
+        Ok(cache) => Some(cache),
+        Err(err) => {
+            ctx.printer.warn(&format!(
+                "cache unavailable; continuing without cache: {err}"
+            ));
+            None
+        }
+    }
+}
+
+fn report_already_installed(package: &str, location: &PackageLocation, ctx: &AppContext) {
+    println!();
+    ctx.printer.success(&format!(
+        "{package} already installed ({})",
+        relative_location(location, &ctx.repo_root)
+    ));
+}
+
+enum SearchResolution {
+    Install(SourceResult),
+    AlreadyInstalled(PackageLocation),
+}
+
 /// Search all sources for a package. Returns `None` with error printed if not found.
-fn search_for_package(package: &str, args: &InstallArgs, ctx: &AppContext) -> Option<SourceResult> {
+fn search_for_package(
+    package: &str,
+    args: &InstallArgs,
+    ctx: &AppContext,
+    cache: &mut Option<MultiSourceCache>,
+) -> Option<SearchResolution> {
     // Explicit --cask / --mas skip search (instant, no ambiguity)
     if args.cask || args.mas {
         let prefs = source_prefs_from_args(args);
         let results = search_all_sources(package, &prefs, None);
-        return results.into_iter().next();
+        return resolve_search_candidates(&results, &ctx.repo_root, ctx);
+    }
+
+    if let Some(cache) = cache.as_mut() {
+        let cached = cache.get_all(package);
+        if !cached.is_empty() {
+            if args.explain {
+                ctx.printer.detail(&format!(
+                    "Cache hit for '{package}' ({} sources)",
+                    cached.len()
+                ));
+            }
+            return resolve_search_candidates(&cached, &ctx.repo_root, ctx);
+        }
     }
 
     let prefs = source_prefs_from_args(args);
@@ -246,12 +305,109 @@ fn search_for_package(package: &str, args: &InstallArgs, ctx: &AppContext) -> Op
         return None;
     }
 
-    results.into_iter().next()
+    if let Some(cache) = cache.as_mut()
+        && let Err(err) = cache.set_many(&results)
+    {
+        ctx.printer.warn(&format!(
+            "failed to update search cache for {package}: {err}"
+        ));
+    }
+
+    resolve_search_candidates(&results, &ctx.repo_root, ctx)
+}
+
+fn resolve_search_candidates(
+    candidates: &[SourceResult],
+    repo_root: &Path,
+    ctx: &AppContext,
+) -> Option<SearchResolution> {
+    if candidates.is_empty() {
+        return None;
+    }
+
+    match find_existing_for_candidates(candidates, repo_root) {
+        Ok(Some(location)) => Some(SearchResolution::AlreadyInstalled(location)),
+        Ok(None) => candidates.first().cloned().map(SearchResolution::Install),
+        Err(err) => {
+            ctx.printer.error(&format!("install lookup failed: {err}"));
+            None
+        }
+    }
+}
+
+fn find_existing_for_candidates(
+    candidates: &[SourceResult],
+    repo_root: &Path,
+) -> anyhow::Result<Option<PackageLocation>> {
+    for candidate in candidates {
+        if let Some(existing) = find_existing_for_result(candidate, repo_root)? {
+            return Ok(Some(existing));
+        }
+    }
+    Ok(None)
+}
+
+fn find_existing_for_result(
+    candidate: &SourceResult,
+    repo_root: &Path,
+) -> anyhow::Result<Option<PackageLocation>> {
+    for name in lookup_names(candidate) {
+        if let Some(location) = find_package(&name, repo_root)? {
+            return Ok(Some(location));
+        }
+    }
+    Ok(None)
+}
+
+fn lookup_names(candidate: &SourceResult) -> Vec<String> {
+    let mut names = Vec::new();
+
+    push_unique(&mut names, candidate.name.clone());
+
+    if let Some(attr) = candidate.attr.as_deref() {
+        push_unique(&mut names, attr.to_string());
+        if let Some((bare, _runtime, _method)) = detect_language_package(attr) {
+            push_unique(&mut names, bare.to_string());
+        }
+    }
+
+    names
+}
+
+fn push_unique(items: &mut Vec<String>, value: String) {
+    if !value.is_empty() && !items.contains(&value) {
+        items.push(value);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::Path;
+
+    use crate::domain::source::PackageSource;
+    use tempfile::TempDir;
+
+    fn source_result(name: &str, source: PackageSource, attr: Option<&str>) -> SourceResult {
+        SourceResult {
+            name: name.to_string(),
+            source,
+            attr: attr.map(str::to_string),
+            version: None,
+            confidence: 1.0,
+            description: String::new(),
+            requires_flake_mod: false,
+            flake_url: None,
+        }
+    }
+
+    fn write_nix(root: &Path, rel_path: &str, content: &str) {
+        let full = root.join(rel_path);
+        fs::create_dir_all(full.parent().expect("nix file should have parent dirs"))
+            .expect("nix parent dirs should be created");
+        fs::write(full, content).expect("nix content should be written");
+    }
 
     #[test]
     fn source_prefs_defaults_match_no_flags() {
@@ -320,5 +476,54 @@ mod tests {
         assert!(prefs.bleeding_edge);
         assert!(prefs.nur);
         assert_eq!(prefs.force_source.as_deref(), Some("unstable"));
+    }
+
+    #[test]
+    fn lookup_names_includes_attr_and_language_bare_name() {
+        let result = source_result(
+            "py-yaml",
+            PackageSource::Nxs,
+            Some("python3Packages.pyyaml"),
+        );
+
+        let names = lookup_names(&result);
+        assert_eq!(
+            names,
+            vec![
+                "py-yaml".to_string(),
+                "python3Packages.pyyaml".to_string(),
+                "pyyaml".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn find_existing_for_candidates_checks_alternates() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+
+        write_nix(
+            root,
+            "packages/nix/cli.nix",
+            r"{ pkgs }:
+[
+  ripgrep
+]
+",
+        );
+
+        let candidates = vec![
+            source_result("rg", PackageSource::Nxs, Some("fd")),
+            source_result("rg", PackageSource::Nxs, Some("ripgrep")),
+        ];
+
+        let location = find_existing_for_candidates(&candidates, root)
+            .expect("finder should not error")
+            .expect("alternate candidate should resolve as installed");
+        assert!(
+            location.path().ends_with(Path::new("packages/nix/cli.nix")),
+            "expected installed location to resolve to packages/nix/cli.nix, got {}",
+            location.path().display()
+        );
     }
 }

@@ -112,7 +112,7 @@ bd sync               # sync state (run at session end)
 
 ## Rust Guidelines
 
-- Use /rust-\* skills
+- Always use /rust-skills and /rust-router skills when writing Rust code, choosing the right sub-skills skills for the current job
 - Avoid deep nesting
 - Modularize
 - Use abstraction

@@ -6,8 +6,12 @@ use anyhow::Context;
 use crate::cli::RemoveArgs;
 use crate::commands::context::AppContext;
 use crate::commands::shared::{SnippetMode, relative_location, show_snippet};
-use crate::infra::ai_engine::AiEngine;
-use crate::infra::ai_engine::{ClaudeEngine, build_remove_prompt};
+use crate::domain::plan::{InsertionMode, InstallPlan, LanguageInfo};
+use crate::domain::source::{PackageSource, SourceResult, detect_language_package};
+use crate::infra::ai_engine::{
+    ClaudeEngine, CommandOutcome, build_remove_prompt, run_edit_with_callback,
+};
+use crate::infra::file_edit::{EditOutcome, apply_removal};
 use crate::infra::finder::find_package;
 use crate::infra::shell::run_captured_command;
 
@@ -126,12 +130,25 @@ fn remove_via_ai(
         .detail(&format!("Analyzing removal of {package}"));
 
     let engine = ClaudeEngine::new(args.model.as_deref());
-    let outcome = engine.run_edit(&prompt, &ctx.repo_root);
+    let mut deterministic_edit: Option<EditOutcome> = None;
+    let execution = run_edit_with_callback(&engine, &prompt, &ctx.repo_root, || {
+        deterministic_edit = try_deterministic_remove(package, file_path);
+        deterministic_edit.as_ref().map(|_| CommandOutcome {
+            success: true,
+            output: "deterministic removal applied".to_string(),
+        })
+    });
+    let outcome = execution.outcome;
 
     if !outcome.success {
         ctx.printer
             .error(&format!("Failed to remove {package}: {}", outcome.output));
         return Err(1);
+    }
+
+    if deterministic_edit.is_some() {
+        report_success(package, file_path, ctx);
+        return Ok(());
     }
 
     let after_diff = git_diff(&ctx.repo_root);
@@ -183,6 +200,93 @@ fn remove_line_directly(file_path: &Path, line_num: usize) -> anyhow::Result<()>
     }
 
     fs::write(file_path, updated).with_context(|| format!("writing {}", file_path.display()))
+}
+
+fn try_deterministic_remove(package: &str, file_path: &Path) -> Option<EditOutcome> {
+    deterministic_remove_plans(package, file_path)
+        .into_iter()
+        .find_map(|plan| match apply_removal(&plan) {
+            Ok(outcome) if outcome.file_changed => Some(outcome),
+            Ok(_) | Err(_) => None,
+        })
+}
+
+fn deterministic_remove_plans(package: &str, file_path: &Path) -> Vec<InstallPlan> {
+    let file_name = file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+
+    let mut plans = Vec::new();
+
+    if matches!(file_name, "brews.nix" | "casks.nix" | "taps.nix") {
+        let source = if file_name == "casks.nix" {
+            PackageSource::Cask
+        } else {
+            PackageSource::Homebrew
+        };
+        plans.push(make_remove_plan(
+            package,
+            file_path,
+            InsertionMode::HomebrewManifest,
+            None,
+            source,
+        ));
+    }
+
+    if file_name == "darwin.nix" {
+        plans.push(make_remove_plan(
+            package,
+            file_path,
+            InsertionMode::MasApps,
+            None,
+            PackageSource::Mas,
+        ));
+    }
+
+    if file_name == "languages.nix"
+        && let Some((bare_name, runtime, method)) = detect_language_package(package)
+    {
+        plans.push(make_remove_plan(
+            package,
+            file_path,
+            InsertionMode::LanguageWithPackages,
+            Some(LanguageInfo {
+                bare_name: bare_name.to_string(),
+                runtime: runtime.to_string(),
+                method: method.to_string(),
+            }),
+            PackageSource::Nxs,
+        ));
+    }
+
+    // Generic nix manifests are tried last.
+    plans.push(make_remove_plan(
+        package,
+        file_path,
+        InsertionMode::NixManifest,
+        None,
+        PackageSource::Nxs,
+    ));
+
+    plans
+}
+
+fn make_remove_plan(
+    package: &str,
+    file_path: &Path,
+    insertion_mode: InsertionMode,
+    language_info: Option<LanguageInfo>,
+    source: PackageSource,
+) -> InstallPlan {
+    InstallPlan {
+        source_result: SourceResult::new(package, source),
+        package_token: package.to_string(),
+        target_file: file_path.to_path_buf(),
+        insertion_mode,
+        language_info,
+        routing_warning: None,
+    }
 }
 
 #[cfg(test)]
@@ -260,5 +364,61 @@ mod tests {
         let result = git_diff(tmp.path());
         // Non-repo: git diff fails → empty string fallback
         assert!(result.is_empty());
+    }
+
+    // --- deterministic callback helpers ---
+
+    #[test]
+    fn deterministic_remove_handles_homebrew_manifest() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("brews.nix");
+        fs::write(
+            &file,
+            r#"[
+  "htop"
+  "ripgrep"
+]
+"#,
+        )
+        .unwrap();
+
+        let outcome = try_deterministic_remove("htop", &file);
+
+        assert!(outcome.is_some());
+        assert!(!fs::read_to_string(&file).unwrap().contains("\"htop\""));
+    }
+
+    #[test]
+    fn deterministic_remove_handles_mas_apps() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("darwin.nix");
+        fs::write(
+            &file,
+            r#"{ ... }:
+{
+  homebrew.masApps = {
+    "Slack" = 803453959;
+    "Xcode" = 497799835;
+  };
+}
+"#,
+        )
+        .unwrap();
+
+        let outcome = try_deterministic_remove("Xcode", &file);
+
+        assert!(outcome.is_some());
+        assert!(!fs::read_to_string(&file).unwrap().contains("\"Xcode\""));
+    }
+
+    #[test]
+    fn deterministic_remove_returns_none_for_unsupported_file() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("custom.nix");
+        fs::write(&file, "{ }\n").unwrap();
+
+        let outcome = try_deterministic_remove("ripgrep", &file);
+
+        assert!(outcome.is_none());
     }
 }

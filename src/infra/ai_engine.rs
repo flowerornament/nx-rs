@@ -23,6 +23,20 @@ pub struct CommandOutcome {
     pub output: String,
 }
 
+/// Which pathway produced an edit outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditPathway {
+    Deterministic,
+    AiFallback,
+}
+
+/// Unified edit execution result: deterministic callback first, AI fallback second.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditExecution {
+    pub pathway: EditPathway,
+    pub outcome: CommandOutcome,
+}
+
 // --- Trait
 
 /// AI engine abstraction for package routing and fallback editing.
@@ -202,6 +216,26 @@ pub fn select_engine(engine: Option<&str>, model: Option<&str>) -> Box<dyn AiEng
     match engine.unwrap_or("codex") {
         "claude" => Box::new(ClaudeEngine::new(model)),
         _ => Box::new(CodexEngine::new(model)),
+    }
+}
+
+/// Execute an edit via deterministic callback when available, otherwise AI fallback.
+pub fn run_edit_with_callback(
+    engine: &dyn AiEngine,
+    prompt: &str,
+    cwd: &Path,
+    callback: impl FnOnce() -> Option<CommandOutcome>,
+) -> EditExecution {
+    if let Some(outcome) = callback() {
+        EditExecution {
+            pathway: EditPathway::Deterministic,
+            outcome,
+        }
+    } else {
+        EditExecution {
+            pathway: EditPathway::AiFallback,
+            outcome: engine.run_edit(prompt, cwd),
+        }
     }
 }
 
@@ -463,6 +497,38 @@ mod tests {
     use crate::domain::source::{PackageSource, SourceResult};
     use std::fs;
     use tempfile::TempDir;
+
+    struct StubEngine {
+        outcome: CommandOutcome,
+    }
+
+    impl AiEngine for StubEngine {
+        fn route_package(
+            &self,
+            _package: &str,
+            _context: &str,
+            _candidates: &[String],
+            fallback: &str,
+            _cwd: &Path,
+        ) -> RouteDecision {
+            RouteDecision {
+                target_file: fallback.to_string(),
+                warning: None,
+            }
+        }
+
+        fn run_edit(&self, _prompt: &str, _cwd: &Path) -> CommandOutcome {
+            self.outcome.clone()
+        }
+
+        fn supports_flake_input(&self) -> bool {
+            false
+        }
+
+        fn name(&self) -> &'static str {
+            "stub"
+        }
+    }
 
     fn write_nix(dir: &std::path::Path, rel_path: &str, content: &str) {
         let full = dir.join(rel_path);
@@ -895,5 +961,44 @@ mod tests {
         let prompt = build_remove_prompt("htop", "packages/nix/cli.nix");
         assert!(prompt.contains("no explanation"));
         assert!(prompt.contains("Edit tool"));
+    }
+
+    // --- run_edit_with_callback ---
+
+    #[test]
+    fn edit_callback_path_uses_deterministic_outcome() {
+        let engine = StubEngine {
+            outcome: CommandOutcome {
+                success: true,
+                output: "ai".to_string(),
+            },
+        };
+
+        let execution = run_edit_with_callback(&engine, "prompt", Path::new("/tmp"), || {
+            Some(CommandOutcome {
+                success: true,
+                output: "deterministic".to_string(),
+            })
+        });
+
+        assert_eq!(execution.pathway, EditPathway::Deterministic);
+        assert!(execution.outcome.success);
+        assert_eq!(execution.outcome.output, "deterministic");
+    }
+
+    #[test]
+    fn edit_callback_path_falls_back_to_engine() {
+        let engine = StubEngine {
+            outcome: CommandOutcome {
+                success: true,
+                output: "ai fallback".to_string(),
+            },
+        };
+
+        let execution = run_edit_with_callback(&engine, "prompt", Path::new("/tmp"), || None);
+
+        assert_eq!(execution.pathway, EditPathway::AiFallback);
+        assert!(execution.outcome.success);
+        assert_eq!(execution.outcome.output, "ai fallback");
     }
 }

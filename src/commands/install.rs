@@ -1,9 +1,10 @@
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
-use crate::cli::InstallArgs;
+use crate::cli::{InstallArgs, PassthroughArgs};
 use crate::commands::context::AppContext;
 use crate::commands::shared::{SnippetMode, relative_location, show_snippet};
+use crate::commands::system::cmd_rebuild;
 use crate::domain::location::PackageLocation;
 use crate::domain::plan::{
     InsertionMode, InstallPlan, build_install_plan, nix_manifest_candidates,
@@ -59,12 +60,34 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
         }
     }
 
-    if success_count > 0 && !args.dry_run {
-        println!();
-        ctx.printer.detail("Run: nx rebuild");
-    }
+    run_post_install_actions(success_count, args, ctx, || {
+        let passthrough = PassthroughArgs {
+            passthrough: Vec::new(),
+        };
+        cmd_rebuild(&passthrough, ctx)
+    });
 
     i32::from(success_count != args.packages.len())
+}
+
+fn run_post_install_actions<F>(
+    success_count: usize,
+    args: &InstallArgs,
+    ctx: &AppContext,
+    rebuild: F,
+) where
+    F: FnOnce() -> i32,
+{
+    if success_count == 0 || args.dry_run {
+        return;
+    }
+
+    println!();
+    ctx.printer.detail("Run: nx rebuild");
+
+    if args.rebuild {
+        let _ = rebuild();
+    }
 }
 
 /// Install a single package. Returns `true` on success.
@@ -875,6 +898,74 @@ mod tests {
             engine: None,
             model: None,
         }
+    }
+
+    #[test]
+    fn post_install_runs_rebuild_when_requested() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let ctx = test_context(tmp.path());
+        let mut args = install_args_template();
+        args.rebuild = true;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = Arc::clone(&calls);
+        run_post_install_actions(1, &args, &ctx, move || {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+            0
+        });
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn post_install_skips_rebuild_without_flag() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let ctx = test_context(tmp.path());
+        let args = install_args_template();
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = Arc::clone(&calls);
+        run_post_install_actions(1, &args, &ctx, move || {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+            0
+        });
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn post_install_skips_rebuild_in_dry_run() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let ctx = test_context(tmp.path());
+        let mut args = install_args_template();
+        args.rebuild = true;
+        args.dry_run = true;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = Arc::clone(&calls);
+        run_post_install_actions(1, &args, &ctx, move || {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+            0
+        });
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn post_install_skips_rebuild_when_nothing_installed() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let ctx = test_context(tmp.path());
+        let mut args = install_args_template();
+        args.rebuild = true;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = Arc::clone(&calls);
+        run_post_install_actions(0, &args, &ctx, move || {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+            0
+        });
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]

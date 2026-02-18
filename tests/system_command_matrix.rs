@@ -40,12 +40,26 @@ const REBUILD_BASE_ARGS: &[&str] = &["rebuild"];
 const INFO_FOUND_ARGS: &[&str] = &["info", "ripgrep"];
 const INFO_JSON_FOUND_ARGS: &[&str] = &["info", "ripgrep", "--json"];
 const INFO_BLEEDING_EDGE_ARGS: &[&str] = &["info", "ripgrep", "--bleeding-edge"];
+const INFO_JSON_HM_MODULE_ARGS: &[&str] = &["info", "git", "--json"];
+const INFO_JSON_DARWIN_SERVICE_ARGS: &[&str] = &["info", "yabai", "--json"];
 
 const INFO_FOUND_STDOUT: &[&str] = &["ripgrep (installed)", "Location: packages/nix/cli.nix:5"];
 const INFO_JSON_FOUND_STDOUT: &[&str] = &[
     "\"name\": \"ripgrep\"",
     "\"installed\": true",
     "\"sources\": []",
+];
+const INFO_JSON_HM_MODULE_STDOUT: &[&str] = &[
+    "\"name\": \"git\"",
+    "\"hm_module\": {",
+    "\"path\": \"programs.git\"",
+    "\"enabled\": false",
+];
+const INFO_JSON_DARWIN_SERVICE_STDOUT: &[&str] = &[
+    "\"name\": \"yabai\"",
+    "\"darwin_service\": {",
+    "\"path\": \"services.yabai\"",
+    "\"enabled\": false",
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -321,6 +335,22 @@ const MATRIX_CASES: &[MatrixCase] = &[
         expected_exit: 0,
         expected_calls: None,
         stdout_contains: INFO_FOUND_STDOUT,
+    },
+    MatrixCase {
+        id: "info_json_hm_module_known_package",
+        cli_args: INFO_JSON_HM_MODULE_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 0,
+        expected_calls: None,
+        stdout_contains: INFO_JSON_HM_MODULE_STDOUT,
+    },
+    MatrixCase {
+        id: "info_json_darwin_service_known_package",
+        cli_args: INFO_JSON_DARWIN_SERVICE_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 0,
+        expected_calls: None,
+        stdout_contains: INFO_JSON_DARWIN_SERVICE_STDOUT,
     },
 ];
 

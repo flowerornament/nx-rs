@@ -10,6 +10,9 @@ use crate::domain::source::{SourcePreferences, SourceResult};
 use crate::infra::cache::MultiSourceCache;
 use crate::infra::config_scan::{PackageBuckets, scan_packages};
 use crate::infra::finder::{PackageMatch, find_package, find_package_fuzzy};
+use crate::infra::query_info::{
+    ConfigOptionInfo, FlakeHubInfo, darwin_service_info, hm_module_info, search_flakehub,
+};
 use crate::infra::sources::search_all_sources_quiet;
 use crate::output::json::to_string_compact;
 use crate::output::printer::Printer;
@@ -111,9 +114,9 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
             installed: location.is_some(),
             location: location.map(|value| value.to_string()),
             sources,
-            hm_module: None,
-            darwin_service: None,
-            flakehub: Vec::new(),
+            hm_module: hm_module_info(package, &ctx.repo_root),
+            darwin_service: darwin_service_info(package, &ctx.repo_root),
+            flakehub: collect_info_flakehub(package, args.bleeding_edge, search_flakehub),
         };
         match serde_json::to_string_pretty(&output) {
             Ok(text) => {
@@ -197,6 +200,16 @@ where
     }
 
     results
+}
+
+fn collect_info_flakehub<F>(package: &str, include: bool, mut search: F) -> Vec<FlakeHubInfo>
+where
+    F: FnMut(&str) -> Vec<FlakeHubInfo>,
+{
+    if !include {
+        return Vec::new();
+    }
+    search(package).into_iter().take(3).collect()
 }
 
 pub fn cmd_status(ctx: &AppContext) -> i32 {
@@ -453,9 +466,9 @@ struct InfoJsonOutput {
     installed: bool,
     location: Option<String>,
     sources: Vec<InfoSourceJson>,
-    hm_module: Option<Value>,
-    darwin_service: Option<Value>,
-    flakehub: Vec<Value>,
+    hm_module: Option<ConfigOptionInfo>,
+    darwin_service: Option<ConfigOptionInfo>,
+    flakehub: Vec<FlakeHubInfo>,
 }
 
 #[derive(Serialize)]
@@ -669,6 +682,51 @@ mod tests {
             Some("desc")
         );
         assert_eq!(value.get("confidence").and_then(Value::as_f64), Some(0.87));
+    }
+
+    #[test]
+    fn collect_info_flakehub_skips_lookup_when_disabled() {
+        let searches = Cell::new(0usize);
+        let results = collect_info_flakehub("ripgrep", false, |_| {
+            searches.set(searches.get() + 1);
+            vec![FlakeHubInfo {
+                name: "Org/ripgrep".to_string(),
+                description: "desc".to_string(),
+                version: Some("1.0.0".to_string()),
+            }]
+        });
+        assert!(results.is_empty());
+        assert_eq!(searches.get(), 0);
+    }
+
+    #[test]
+    fn collect_info_flakehub_limits_results_to_three() {
+        let results = collect_info_flakehub("ripgrep", true, |_| {
+            vec![
+                FlakeHubInfo {
+                    name: "Org/a".to_string(),
+                    description: String::new(),
+                    version: None,
+                },
+                FlakeHubInfo {
+                    name: "Org/b".to_string(),
+                    description: String::new(),
+                    version: None,
+                },
+                FlakeHubInfo {
+                    name: "Org/c".to_string(),
+                    description: String::new(),
+                    version: None,
+                },
+                FlakeHubInfo {
+                    name: "Org/d".to_string(),
+                    description: String::new(),
+                    version: None,
+                },
+            ]
+        });
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[2].name, "Org/c");
     }
 
     fn package_from_args(args: &InfoArgs) -> &str {

@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "stdout": "{\n  \"name\": \"python3Packages.requests\",\n  \"installed\": false,\n  \"location\": null,\n  \"sources\": [\n    {\n      \"source\": \"nxs\",\n      \"version\": \"1.0.0\",\n      \"description\": \"Stub Python requests package\",\n      \"homepage\": \"https://example.test/requests\",\n      \"license\": \"MIT\",\n      \"dependencies\": null,\n      \"build_dependencies\": null,\n      \"caveats\": null,\n      \"artifacts\": null,\n      \"broken\": false,\n      \"insecure\": false,\n      \"head_available\": false\n    }\n  ],\n  \"hm_module\": null,\n  \"darwin_service\": null,\n  \"flakehub\": []\n}",
+  "stderr": "",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

@@ -42,6 +42,7 @@ enum CaseSetup {
     StubTestUnittestFail,
     StubRebuildFlakeCheckFail,
     StubRebuildGitPreflightFail,
+    StubInfoSources,
     ModifiedTrackedFile,
 }
 
@@ -314,7 +315,8 @@ fn apply_setup(repo_root: &Path, setup: CaseSetup) -> Result<(), Box<dyn Error>>
         | CaseSetup::StubTestFail
         | CaseSetup::StubTestMypyFail
         | CaseSetup::StubRebuildFlakeCheckFail
-        | CaseSetup::StubRebuildGitPreflightFail => {
+        | CaseSetup::StubRebuildGitPreflightFail
+        | CaseSetup::StubInfoSources => {
             install_system_stubs(repo_root)?;
             materialize_test_layout(repo_root, TestLayout::None)?;
             Ok(())
@@ -326,6 +328,17 @@ fn install_system_stubs(repo_root: &Path) -> Result<(), Box<dyn Error>> {
     let stub_bin = repo_root.join(".parity-bin");
     fs::create_dir_all(&stub_bin)?;
 
+    write_git_stub(&stub_bin)?;
+    write_nix_stub(&stub_bin)?;
+    write_sudo_stub(&stub_bin)?;
+    write_ruff_stub(&stub_bin)?;
+    write_mypy_stub(&stub_bin)?;
+    support::write_executable(&stub_bin.join("gh"), "#!/bin/sh\nexit 1\n")?;
+
+    Ok(())
+}
+
+fn write_git_stub(stub_bin: &Path) -> Result<(), Box<dyn Error>> {
     support::write_executable(
         &stub_bin.join("git"),
         r#"#!/bin/sh
@@ -352,7 +365,10 @@ fi
 exit 0
 "#,
     )?;
+    Ok(())
+}
 
+fn write_nix_stub(stub_bin: &Path) -> Result<(), Box<dyn Error>> {
     support::write_executable(
         &stub_bin.join("nix"),
         r#"#!/bin/sh
@@ -376,11 +392,49 @@ if [ "$1" = "flake" ] && [ "$2" = "check" ]; then
   exit 0
 fi
 
+if [ "$mode" = "stub_info_sources" ]; then
+  if [ "$1" = "search" ] && [ "$2" = "--json" ]; then
+    query="$4"
+    if [ "$query" = "python3Packages.requests" ] || [ "$query" = "requests" ]; then
+      cat <<'JSON'
+{"legacyPackages.aarch64-darwin.python3Packages.requests":{"pname":"requests","version":"1.0.0","description":"Stub Python requests package"}}
+JSON
+      exit 0
+    fi
+    echo "{}"
+    exit 0
+  fi
+
+  if [ "$1" = "eval" ] && [ "$2" = "--json" ]; then
+    attr="$3"
+    case "$attr" in
+      *python3Packages.requests.name)
+        echo "\"python3Packages.requests\""
+        ;;
+      *python3Packages.requests.version)
+        echo "\"1.0.0\""
+        ;;
+      *python3Packages.requests.meta)
+        cat <<'JSON'
+{"description":"Stub Python requests package","homepage":"https://example.test/requests","license":{"spdxId":"MIT"},"broken":false,"insecure":false}
+JSON
+        ;;
+      *)
+        echo "null"
+        ;;
+    esac
+    exit 0
+  fi
+fi
+
 echo "stub nix unsupported: $*" >&2
 exit 0
 "#,
     )?;
+    Ok(())
+}
 
+fn write_sudo_stub(stub_bin: &Path) -> Result<(), Box<dyn Error>> {
     support::write_executable(
         &stub_bin.join("sudo"),
         r#"#!/bin/sh
@@ -388,7 +442,10 @@ echo "stub sudo $*"
 exit 0
 "#,
     )?;
+    Ok(())
+}
 
+fn write_ruff_stub(stub_bin: &Path) -> Result<(), Box<dyn Error>> {
     support::write_executable(
         &stub_bin.join("ruff"),
         r#"#!/bin/sh
@@ -400,7 +457,10 @@ echo "stub ruff ok"
 exit 0
 "#,
     )?;
+    Ok(())
+}
 
+fn write_mypy_stub(stub_bin: &Path) -> Result<(), Box<dyn Error>> {
     support::write_executable(
         &stub_bin.join("mypy"),
         r#"#!/bin/sh
@@ -412,9 +472,6 @@ echo "stub mypy ok"
 exit 0
 "#,
     )?;
-
-    support::write_executable(&stub_bin.join("gh"), "#!/bin/sh\nexit 1\n")?;
-
     Ok(())
 }
 
@@ -534,6 +591,7 @@ fn uses_system_stubs(setup: CaseSetup) -> bool {
             | CaseSetup::StubTestUnittestFail
             | CaseSetup::StubRebuildFlakeCheckFail
             | CaseSetup::StubRebuildGitPreflightFail
+            | CaseSetup::StubInfoSources
     )
 }
 
@@ -546,6 +604,7 @@ fn setup_mode(setup: CaseSetup) -> Option<&'static str> {
         CaseSetup::StubTestUnittestFail => Some("stub_test_unittest_fail"),
         CaseSetup::StubRebuildFlakeCheckFail => Some("stub_rebuild_flake_check_fail"),
         CaseSetup::StubRebuildGitPreflightFail => Some("stub_rebuild_git_preflight_fail"),
+        CaseSetup::StubInfoSources => Some("stub_info_sources"),
         CaseSetup::None
         | CaseSetup::UntrackedNix
         | CaseSetup::DefaultLaunchdService

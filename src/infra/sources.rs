@@ -381,12 +381,13 @@ fn search_explicit_source(name: &str, prefs: &SourcePreferences) -> Option<Vec<S
     None
 }
 
-fn search_language_override(name: &str) -> Option<Vec<SourceResult>> {
+fn search_language_override(name: &str, warn: bool) -> Option<Vec<SourceResult>> {
     let (_bare, runtime, _method) = detect_language_package(name)?;
 
     let (valid, reason) = validate_language_override(name);
     if !valid {
-        if let Some(r) = &reason
+        if warn
+            && let Some(r) = &reason
             && r != "nix command unavailable"
         {
             eprintln!("warning: skipping language override '{name}': {r}");
@@ -513,7 +514,7 @@ fn search_all_sources_with_timeout_reporting(
     }
 
     // 3. Language override
-    if let Some(results) = search_language_override(name) {
+    if let Some(results) = search_language_override(name, warn_on_timeout) {
         return results;
     }
 

@@ -82,6 +82,12 @@
     "rust_parity": true
   },
   {
+    "id": "info_json_sources_not_installed",
+    "args": ["info", "python3Packages.requests", "--json"],
+    "setup": "stub_info_sources",
+    "rust_parity": false
+  },
+  {
     "id": "install_dry_run_installed",
     "args": ["install", "--dry-run", "ripgrep"],
     "rust_parity": true

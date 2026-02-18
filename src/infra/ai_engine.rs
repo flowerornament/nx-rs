@@ -5,7 +5,7 @@ use regex::Regex;
 use crate::domain::config::ConfigFiles;
 use crate::domain::plan::InstallPlan;
 use crate::domain::source::PackageSource;
-use crate::infra::shell::run_captured_command;
+use crate::infra::shell::{CapturedCommand, run_captured_command};
 
 // --- Types
 
@@ -90,23 +90,16 @@ impl AiEngine for CodexEngine {
         cwd: &Path,
     ) -> RouteDecision {
         let prompt = build_routing_prompt(package, context, Some(candidates));
-        let result = run_captured_command(
-            "codex",
-            &["exec", "-m", &self.model, "--full-auto", &prompt],
-            Some(cwd),
-        );
-
-        match result {
-            Ok(cmd) if cmd.code == 0 && !cmd.stdout.trim().is_empty() => {
-                resolve_candidate_routing(package, &cmd.stdout, candidates, fallback)
-            }
-            _ => RouteDecision {
-                target_file: fallback.to_string(),
-                warning: Some(format!(
-                    "routing model unavailable for {package}; using fallback {fallback}"
-                )),
-            },
-        }
+        resolve_routing_run_result(
+            package,
+            run_captured_command(
+                "codex",
+                &["exec", "-m", &self.model, "--full-auto", &prompt],
+                Some(cwd),
+            ),
+            candidates,
+            fallback,
+        )
     }
 
     fn run_edit(&self, prompt: &str, cwd: &Path) -> CommandOutcome {
@@ -165,19 +158,12 @@ impl AiEngine for ClaudeEngine {
             model_str = m.clone();
             args.extend_from_slice(&["-m", &model_str]);
         }
-        let result = run_captured_command("claude", &args, Some(cwd));
-
-        match result {
-            Ok(cmd) if cmd.code == 0 && !cmd.stdout.trim().is_empty() => {
-                resolve_candidate_routing(package, &cmd.stdout, candidates, fallback)
-            }
-            _ => RouteDecision {
-                target_file: fallback.to_string(),
-                warning: Some(format!(
-                    "routing model unavailable for {package}; using fallback {fallback}"
-                )),
-            },
-        }
+        resolve_routing_run_result(
+            package,
+            run_captured_command("claude", &args, Some(cwd)),
+            candidates,
+            fallback,
+        )
     }
 
     fn run_edit(&self, prompt: &str, cwd: &Path) -> CommandOutcome {
@@ -236,6 +222,23 @@ pub fn run_edit_with_callback(
             outcome,
         },
     )
+}
+
+fn resolve_routing_run_result(
+    package: &str,
+    result: anyhow::Result<CapturedCommand>,
+    candidates: &[String],
+    fallback: &str,
+) -> RouteDecision {
+    match result {
+        Ok(cmd) if cmd.code == 0 && !cmd.stdout.trim().is_empty() => {
+            resolve_candidate_routing(package, &cmd.stdout, candidates, fallback)
+        }
+        _ => RouteDecision {
+            target_file: fallback.to_string(),
+            warning: None,
+        },
+    }
 }
 
 // --- Routing Context Builder
@@ -727,6 +730,39 @@ mod tests {
         );
         assert_eq!(decision.target_file, "packages/nix/cli.nix");
         assert!(decision.warning.as_ref().unwrap().contains("unrecognized"));
+    }
+
+    #[test]
+    fn routing_run_silent_fallback_when_command_unavailable() {
+        let candidates = vec!["packages/nix/cli.nix".to_string()];
+        let decision = resolve_routing_run_result(
+            "ripgrep",
+            Err(anyhow::anyhow!("command execution failed (codex)")),
+            &candidates,
+            "packages/nix/cli.nix",
+        );
+        assert_eq!(decision.target_file, "packages/nix/cli.nix");
+        assert!(decision.warning.is_none());
+    }
+
+    #[test]
+    fn routing_run_parses_successful_output() {
+        let candidates = vec![
+            "packages/nix/cli.nix".to_string(),
+            "packages/nix/dev.nix".to_string(),
+        ];
+        let decision = resolve_routing_run_result(
+            "ripgrep",
+            Ok(CapturedCommand {
+                code: 0,
+                stdout: "packages/nix/dev.nix".to_string(),
+                stderr: String::new(),
+            }),
+            &candidates,
+            "packages/nix/cli.nix",
+        );
+        assert_eq!(decision.target_file, "packages/nix/dev.nix");
+        assert!(decision.warning.is_none());
     }
 
     // --- build_routing_context ---

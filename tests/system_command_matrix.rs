@@ -37,6 +37,16 @@ const UPDATE_BASE_ARGS: &[&str] = &["update"];
 const TEST_BASE_ARGS: &[&str] = &["test"];
 const REBUILD_PASSTHROUGH_ARGS: &[&str] = &["rebuild", "--", "--show-trace", "foo"];
 const REBUILD_BASE_ARGS: &[&str] = &["rebuild"];
+const INFO_FOUND_ARGS: &[&str] = &["info", "ripgrep"];
+const INFO_JSON_FOUND_ARGS: &[&str] = &["info", "ripgrep", "--json"];
+const INFO_BLEEDING_EDGE_ARGS: &[&str] = &["info", "ripgrep", "--bleeding-edge"];
+
+const INFO_FOUND_STDOUT: &[&str] = &["ripgrep (installed)", "Location: packages/nix/cli.nix:5"];
+const INFO_JSON_FOUND_STDOUT: &[&str] = &[
+    "\"name\": \"ripgrep\"",
+    "\"installed\": true",
+    "\"sources\": []",
+];
 
 #[derive(Debug, Clone, Copy)]
 enum StubMode {
@@ -92,7 +102,8 @@ struct MatrixCase {
     cli_args: &'static [&'static str],
     mode: StubMode,
     expected_exit: i32,
-    expected_calls: &'static [ExpectedCall],
+    expected_calls: Option<&'static [ExpectedCall]>,
+    stdout_contains: &'static [&'static str],
 }
 
 #[derive(Debug)]
@@ -204,77 +215,112 @@ const MATRIX_CASES: &[MatrixCase] = &[
         cli_args: UPDATE_PASSTHROUGH_ARGS,
         mode: StubMode::Success,
         expected_exit: 0,
-        expected_calls: UPDATE_SUCCESS_CALLS,
+        expected_calls: Some(UPDATE_SUCCESS_CALLS),
+        stdout_contains: &[],
     },
     MatrixCase {
         id: "update_failure_exit",
         cli_args: UPDATE_BASE_ARGS,
         mode: StubMode::UpdateFail,
         expected_exit: 1,
-        expected_calls: UPDATE_FAILURE_CALLS,
+        expected_calls: Some(UPDATE_FAILURE_CALLS),
+        stdout_contains: &[],
     },
     MatrixCase {
         id: "test_success_sequence",
         cli_args: TEST_BASE_ARGS,
         mode: StubMode::Success,
         expected_exit: 0,
-        expected_calls: TEST_SUCCESS_CALLS,
+        expected_calls: Some(TEST_SUCCESS_CALLS),
+        stdout_contains: &[],
     },
     MatrixCase {
         id: "test_ruff_failure_short_circuit",
         cli_args: TEST_BASE_ARGS,
         mode: StubMode::RuffFail,
         expected_exit: 1,
-        expected_calls: TEST_RUFF_FAIL_CALLS,
+        expected_calls: Some(TEST_RUFF_FAIL_CALLS),
+        stdout_contains: &[],
     },
     MatrixCase {
         id: "test_mypy_failure_short_circuit",
         cli_args: TEST_BASE_ARGS,
         mode: StubMode::MypyFail,
         expected_exit: 1,
-        expected_calls: TEST_MYPY_FAIL_CALLS,
+        expected_calls: Some(TEST_MYPY_FAIL_CALLS),
+        stdout_contains: &[],
     },
     MatrixCase {
         id: "test_unittest_failure_exit",
         cli_args: TEST_BASE_ARGS,
         mode: StubMode::UnittestFail,
         expected_exit: 1,
-        expected_calls: TEST_UNITTEST_FAIL_CALLS,
+        expected_calls: Some(TEST_UNITTEST_FAIL_CALLS),
+        stdout_contains: &[],
     },
     MatrixCase {
         id: "rebuild_success_passthrough",
         cli_args: REBUILD_PASSTHROUGH_ARGS,
         mode: StubMode::Success,
         expected_exit: 0,
-        expected_calls: REBUILD_SUCCESS_CALLS,
+        expected_calls: Some(REBUILD_SUCCESS_CALLS),
+        stdout_contains: &[],
     },
     MatrixCase {
         id: "rebuild_git_preflight_failure_short_circuit",
         cli_args: REBUILD_BASE_ARGS,
         mode: StubMode::GitPreflightFail,
         expected_exit: 1,
-        expected_calls: REBUILD_GIT_FAIL_CALLS,
+        expected_calls: Some(REBUILD_GIT_FAIL_CALLS),
+        stdout_contains: &[],
     },
     MatrixCase {
         id: "rebuild_untracked_nix_short_circuit",
         cli_args: REBUILD_BASE_ARGS,
         mode: StubMode::PreflightUntracked,
         expected_exit: 1,
-        expected_calls: REBUILD_UNTRACKED_CALLS,
+        expected_calls: Some(REBUILD_UNTRACKED_CALLS),
+        stdout_contains: &[],
     },
     MatrixCase {
         id: "rebuild_flake_check_failure_short_circuit",
         cli_args: REBUILD_BASE_ARGS,
         mode: StubMode::FlakeCheckFail,
         expected_exit: 1,
-        expected_calls: REBUILD_FLAKE_FAIL_CALLS,
+        expected_calls: Some(REBUILD_FLAKE_FAIL_CALLS),
+        stdout_contains: &[],
     },
     MatrixCase {
         id: "rebuild_darwin_failure_exit",
         cli_args: REBUILD_PASSTHROUGH_ARGS,
         mode: StubMode::DarwinRebuildFail,
         expected_exit: 1,
-        expected_calls: REBUILD_DARWIN_FAIL_CALLS,
+        expected_calls: Some(REBUILD_DARWIN_FAIL_CALLS),
+        stdout_contains: &[],
+    },
+    MatrixCase {
+        id: "info_found_installed_plain",
+        cli_args: INFO_FOUND_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 0,
+        expected_calls: None,
+        stdout_contains: INFO_FOUND_STDOUT,
+    },
+    MatrixCase {
+        id: "info_found_installed_json",
+        cli_args: INFO_JSON_FOUND_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 0,
+        expected_calls: None,
+        stdout_contains: INFO_JSON_FOUND_STDOUT,
+    },
+    MatrixCase {
+        id: "info_found_bleeding_edge_plain",
+        cli_args: INFO_BLEEDING_EDGE_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 0,
+        expected_calls: None,
+        stdout_contains: INFO_FOUND_STDOUT,
     },
 ];
 
@@ -348,7 +394,19 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &MatrixCase) -> Result<(), Bo
         case.id, stdout, stderr
     );
 
-    assert_invocations(case.id, repo_root.path(), &invocations, case.expected_calls);
+    if let Some(expected_calls) = case.expected_calls {
+        assert_invocations(case.id, repo_root.path(), &invocations, expected_calls);
+    }
+    for expected in case.stdout_contains {
+        assert!(
+            stdout.contains(expected),
+            "case {}: stdout missing expected fragment '{}'\nstdout:\n{}\nstderr:\n{}",
+            case.id,
+            expected,
+            stdout,
+            stderr
+        );
+    }
 
     assert_eq!(
         before, after,
@@ -469,6 +527,7 @@ fn install_stubs(stub_dir: &Path) -> Result<(), Box<dyn Error>> {
     for program in [
         "git",
         "nix",
+        "brew",
         "sudo",
         "ruff",
         "mypy",
@@ -593,6 +652,18 @@ case "$program" in
     fi
 
     echo "stub nix unsupported: $*" >&2
+    exit 1
+    ;;
+  brew)
+    if [ "${1:-}" = "info" ] && [ "${2:-}" = "--json=v2" ]; then
+      if [ "${3:-}" = "--cask" ]; then
+        echo '{"casks":[]}'
+        exit 0
+      fi
+      echo '{"formulae":[]}'
+      exit 0
+    fi
+    echo "stub brew unsupported: $*" >&2
     exit 1
     ;;
   sudo)

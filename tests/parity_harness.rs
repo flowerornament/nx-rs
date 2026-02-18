@@ -26,6 +26,8 @@ struct CaseSpec {
     setup: CaseSetup,
     #[serde(default)]
     rust_parity: bool,
+    #[serde(default)]
+    rust_parity_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -113,7 +115,9 @@ fn parity_harness() -> Result<(), Box<dyn Error>> {
         .into());
     }
 
-    let cases: Vec<CaseSpec> = read_cases(&cases_path)?
+    let all_cases = read_cases(&cases_path)?;
+    validate_case_annotations(&all_cases)?;
+    let cases: Vec<CaseSpec> = all_cases
         .into_iter()
         .filter(|case| target.includes_case(case))
         .collect();
@@ -208,6 +212,32 @@ fn run_case(
 fn read_cases(path: &Path) -> Result<Vec<CaseSpec>, Box<dyn Error>> {
     let raw = fs::read_to_string(path)?;
     Ok(serde_json::from_str(&raw)?)
+}
+
+fn validate_case_annotations(cases: &[CaseSpec]) -> Result<(), Box<dyn Error>> {
+    for case in cases {
+        if case.rust_parity {
+            continue;
+        }
+        let Some(reason) = case.rust_parity_reason.as_deref() else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "case '{}' has rust_parity=false without rust_parity_reason",
+                    case.id
+                ),
+            )
+            .into());
+        };
+        if reason.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("case '{}' has empty rust_parity_reason", case.id),
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 fn read_baseline(path: &Path) -> Result<ParityOutcome, Box<dyn Error>> {
@@ -479,7 +509,7 @@ if [ "$1" = "info" ] && [ "$2" = "--json=v2" ]; then
 fi
 
 echo "stub brew unsupported: $*" >&2
-exit 0
+exit 1
 "#,
     )?;
     Ok(())

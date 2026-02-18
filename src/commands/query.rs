@@ -1,11 +1,16 @@
+use std::path::Path;
+
 use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::cli::{InfoArgs, InstalledArgs, ListArgs, WhereArgs};
 use crate::commands::context::AppContext;
 use crate::commands::shared::{SnippetMode, relative_location, show_snippet};
+use crate::domain::source::{SourcePreferences, SourceResult};
+use crate::infra::cache::MultiSourceCache;
 use crate::infra::config_scan::{PackageBuckets, scan_packages};
 use crate::infra::finder::{PackageMatch, find_package, find_package_fuzzy};
+use crate::infra::sources::search_all_sources;
 use crate::output::json::to_string_compact;
 use crate::output::printer::Printer;
 
@@ -95,11 +100,23 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
     };
 
     if args.json {
+        let mut cache = MultiSourceCache::load(&ctx.repo_root).ok();
+        let sources = collect_info_sources(
+            package,
+            args,
+            &ctx.repo_root,
+            &mut cache,
+            location.is_some(),
+        )
+        .into_iter()
+        .map(InfoSourceJson::from)
+        .collect();
+
         let output = InfoJsonOutput {
             name: package.clone(),
             installed: location.is_some(),
             location: location.map(|value| value.to_string()),
-            sources: Vec::new(),
+            sources,
             hm_module: None,
             darwin_service: None,
             flakehub: Vec::new(),
@@ -138,6 +155,66 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
         ctx.printer.detail(&format!("Try: nx {package}"));
     }
     0
+}
+
+fn source_prefs_from_info_args(args: &InfoArgs) -> SourcePreferences {
+    SourcePreferences {
+        bleeding_edge: args.bleeding_edge,
+        nur: args.bleeding_edge,
+        ..Default::default()
+    }
+}
+
+fn collect_info_sources(
+    package: &str,
+    args: &InfoArgs,
+    repo_root: &Path,
+    cache: &mut Option<MultiSourceCache>,
+    search_on_miss: bool,
+) -> Vec<SourceResult> {
+    collect_info_sources_with(
+        package,
+        args,
+        repo_root,
+        cache,
+        search_on_miss,
+        search_all_sources,
+    )
+}
+
+fn collect_info_sources_with<F>(
+    package: &str,
+    args: &InfoArgs,
+    repo_root: &Path,
+    cache: &mut Option<MultiSourceCache>,
+    search_on_miss: bool,
+    mut search: F,
+) -> Vec<SourceResult>
+where
+    F: FnMut(&str, &SourcePreferences, Option<&Path>) -> Vec<SourceResult>,
+{
+    if let Some(cache_ref) = cache.as_ref() {
+        let cached = cache_ref.get_all(package);
+        if !cached.is_empty() {
+            return cached;
+        }
+    }
+    if !search_on_miss {
+        return Vec::new();
+    }
+
+    let prefs = source_prefs_from_info_args(args);
+    let flake_lock = repo_root.join("flake.lock");
+    let flake_lock_path = flake_lock.exists().then_some(flake_lock.as_path());
+    let results = search(package, &prefs, flake_lock_path);
+
+    if !results.is_empty()
+        && let Some(cache_ref) = cache.as_mut()
+    {
+        let _ = cache_ref.set_many(&results);
+    }
+
+    results
 }
 
 pub fn cmd_status(ctx: &AppContext) -> i32 {
@@ -393,10 +470,31 @@ struct InfoJsonOutput {
     name: String,
     installed: bool,
     location: Option<String>,
-    sources: Vec<Value>,
+    sources: Vec<InfoSourceJson>,
     hm_module: Option<Value>,
     darwin_service: Option<Value>,
     flakehub: Vec<Value>,
+}
+
+#[derive(Serialize)]
+struct InfoSourceJson {
+    source: String,
+    name: String,
+    version: Option<String>,
+    confidence: f64,
+    description: String,
+}
+
+impl From<SourceResult> for InfoSourceJson {
+    fn from(value: SourceResult) -> Self {
+        Self {
+            source: value.source.to_string(),
+            name: value.name,
+            version: value.version,
+            confidence: value.confidence,
+            description: value.description,
+        }
+    }
 }
 
 impl<'a> From<&'a PackageBuckets> for ListJsonOutput<'a> {
@@ -408,5 +506,195 @@ impl<'a> From<&'a PackageBuckets> for ListJsonOutput<'a> {
             mas: &value.mas,
             services: &value.services,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::fs;
+    use tempfile::TempDir;
+
+    use crate::domain::source::PackageSource;
+
+    fn info_args() -> InfoArgs {
+        InfoArgs {
+            package: Some("ripgrep".to_string()),
+            json: true,
+            bleeding_edge: false,
+            verbose: false,
+        }
+    }
+
+    fn source_result(
+        name: &str,
+        source: PackageSource,
+        attr: Option<&str>,
+        confidence: f64,
+    ) -> SourceResult {
+        SourceResult {
+            name: name.to_string(),
+            source,
+            attr: attr.map(str::to_string),
+            version: Some("1.2.3".to_string()),
+            confidence,
+            description: "desc".to_string(),
+            requires_flake_mod: false,
+            flake_url: None,
+        }
+    }
+
+    fn write_flake_lock(root: &Path) {
+        let lock = serde_json::json!({
+            "nodes": {
+                "root": {"inputs": {"nixpkgs": "nixpkgs"}},
+                "nixpkgs": {"locked": {"rev": "abcdef1234567890"}}
+            }
+        });
+        fs::write(
+            root.join("flake.lock"),
+            serde_json::to_string(&lock).unwrap(),
+        )
+        .expect("flake.lock should be written");
+    }
+
+    #[test]
+    fn collect_info_sources_uses_cache_before_search() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_flake_lock(root);
+        let cache_dir = root.join(".cache/nx");
+        fs::create_dir_all(&cache_dir).expect("cache dir should be created");
+
+        let mut cache = Some(
+            MultiSourceCache::load_with_cache_dir(root, &cache_dir).expect("cache should load"),
+        );
+        cache
+            .as_mut()
+            .expect("cache should exist")
+            .set(&source_result(
+                "ripgrep",
+                PackageSource::Nxs,
+                Some("ripgrep"),
+                0.95,
+            ))
+            .expect("cache set should succeed");
+
+        let args = info_args();
+        let searches = Cell::new(0usize);
+
+        let results = collect_info_sources_with(
+            package_from_args(&args),
+            &args,
+            root,
+            &mut cache,
+            true,
+            |_, _, _| {
+                searches.set(searches.get() + 1);
+                Vec::new()
+            },
+        );
+
+        assert_eq!(searches.get(), 0);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].source, PackageSource::Nxs);
+    }
+
+    #[test]
+    fn collect_info_sources_falls_back_to_search_and_updates_cache() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_flake_lock(root);
+        let cache_dir = root.join(".cache/nx");
+        fs::create_dir_all(&cache_dir).expect("cache dir should be created");
+
+        let mut cache = Some(
+            MultiSourceCache::load_with_cache_dir(root, &cache_dir).expect("cache should load"),
+        );
+
+        let args = info_args();
+        let search_calls = Cell::new(0usize);
+
+        let searched_result = source_result("ripgrep", PackageSource::Nxs, Some("ripgrep"), 0.9);
+        let results = collect_info_sources_with(
+            package_from_args(&args),
+            &args,
+            root,
+            &mut cache,
+            true,
+            |_, _, _| {
+                search_calls.set(search_calls.get() + 1);
+                vec![searched_result.clone()]
+            },
+        );
+
+        assert_eq!(search_calls.get(), 1);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].attr.as_deref(), Some("ripgrep"));
+
+        let cached = cache
+            .as_ref()
+            .expect("cache should exist")
+            .get_all("ripgrep");
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].attr.as_deref(), Some("ripgrep"));
+    }
+
+    #[test]
+    fn collect_info_sources_skips_search_when_not_installed() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_flake_lock(root);
+        let cache_dir = root.join(".cache/nx");
+        fs::create_dir_all(&cache_dir).expect("cache dir should be created");
+
+        let mut cache = Some(
+            MultiSourceCache::load_with_cache_dir(root, &cache_dir).expect("cache should load"),
+        );
+        let args = info_args();
+        let searches = Cell::new(0usize);
+
+        let results = collect_info_sources_with(
+            package_from_args(&args),
+            &args,
+            root,
+            &mut cache,
+            false,
+            |_, _, _| {
+                searches.set(searches.get() + 1);
+                vec![source_result(
+                    "ripgrep",
+                    PackageSource::Nxs,
+                    Some("ripgrep"),
+                    1.0,
+                )]
+            },
+        );
+
+        assert!(results.is_empty());
+        assert_eq!(searches.get(), 0);
+    }
+
+    #[test]
+    fn info_source_json_serializes_required_metadata() {
+        let source = source_result("ripgrep", PackageSource::Nxs, Some("ripgrep"), 0.87);
+        let entry = InfoSourceJson::from(source);
+        let value = serde_json::to_value(entry).expect("source json should serialize");
+
+        assert_eq!(value.get("source").and_then(Value::as_str), Some("nxs"));
+        assert_eq!(value.get("name").and_then(Value::as_str), Some("ripgrep"));
+        assert_eq!(value.get("version").and_then(Value::as_str), Some("1.2.3"));
+        assert_eq!(
+            value.get("description").and_then(Value::as_str),
+            Some("desc")
+        );
+        assert_eq!(value.get("confidence").and_then(Value::as_f64), Some(0.87));
+    }
+
+    fn package_from_args(args: &InfoArgs) -> &str {
+        args.package
+            .as_deref()
+            .expect("info args in tests should include package")
     }
 }

@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "stdout": "\n  ripgrep (installed (nxs))\n  Location: packages/nix/cli.nix:5\n\n  ┌── cli.nix ───\n  │      4 │   home.packages = with pkgs; [\n  │ +    5 │     ripgrep\n  │      6 │     fd\n  └────────────────────────────────────────\n\n  nxs (pkgs.ripgrep) (current)\n  Version:      14.1.1\n  Description:  Stub ripgrep package\n  Homepage:     https://example.test/ripgrep\n  License:      MIT",
+  "stderr": "",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

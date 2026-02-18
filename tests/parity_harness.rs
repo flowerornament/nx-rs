@@ -43,6 +43,7 @@ enum CaseSetup {
     StubRebuildFlakeCheckFail,
     StubRebuildGitPreflightFail,
     StubInfoSources,
+    StubInfoSourcesBleedingEdge,
     ModifiedTrackedFile,
 }
 
@@ -316,7 +317,8 @@ fn apply_setup(repo_root: &Path, setup: CaseSetup) -> Result<(), Box<dyn Error>>
         | CaseSetup::StubTestMypyFail
         | CaseSetup::StubRebuildFlakeCheckFail
         | CaseSetup::StubRebuildGitPreflightFail
-        | CaseSetup::StubInfoSources => {
+        | CaseSetup::StubInfoSources
+        | CaseSetup::StubInfoSourcesBleedingEdge => {
             install_system_stubs(repo_root)?;
             materialize_test_layout(repo_root, TestLayout::None)?;
             Ok(())
@@ -331,6 +333,7 @@ fn install_system_stubs(repo_root: &Path) -> Result<(), Box<dyn Error>> {
     write_git_stub(&stub_bin)?;
     write_nix_stub(&stub_bin)?;
     write_sudo_stub(&stub_bin)?;
+    write_brew_stub(&stub_bin)?;
     write_ruff_stub(&stub_bin)?;
     write_mypy_stub(&stub_bin)?;
     support::write_executable(&stub_bin.join("gh"), "#!/bin/sh\nexit 1\n")?;
@@ -392,12 +395,18 @@ if [ "$1" = "flake" ] && [ "$2" = "check" ]; then
   exit 0
 fi
 
-if [ "$mode" = "stub_info_sources" ]; then
+if [ "$mode" = "stub_info_sources" ] || [ "$mode" = "stub_info_sources_bleeding_edge" ]; then
   if [ "$1" = "search" ] && [ "$2" = "--json" ]; then
     query="$4"
     if [ "$query" = "python3Packages.requests" ] || [ "$query" = "requests" ]; then
       cat <<'JSON'
 {"legacyPackages.aarch64-darwin.python3Packages.requests":{"pname":"requests","version":"1.0.0","description":"Stub Python requests package"}}
+JSON
+      exit 0
+    fi
+    if [ "$query" = "ripgrep" ]; then
+      cat <<'JSON'
+{"legacyPackages.aarch64-darwin.ripgrep":{"pname":"ripgrep","version":"14.1.1","description":"Stub ripgrep package"}}
 JSON
       exit 0
     fi
@@ -417,6 +426,17 @@ JSON
       *python3Packages.requests.meta)
         cat <<'JSON'
 {"description":"Stub Python requests package","homepage":"https://example.test/requests","license":{"spdxId":"MIT"},"broken":false,"insecure":false}
+JSON
+        ;;
+      *ripgrep.name)
+        echo "\"ripgrep\""
+        ;;
+      *ripgrep.version)
+        echo "\"14.1.1\""
+        ;;
+      *ripgrep.meta)
+        cat <<'JSON'
+{"description":"Stub ripgrep package","homepage":"https://example.test/ripgrep","license":{"spdxId":"MIT"},"broken":false,"insecure":false}
 JSON
         ;;
       *)
@@ -439,6 +459,26 @@ fn write_sudo_stub(stub_bin: &Path) -> Result<(), Box<dyn Error>> {
         &stub_bin.join("sudo"),
         r#"#!/bin/sh
 echo "stub sudo $*"
+exit 0
+"#,
+    )?;
+    Ok(())
+}
+
+fn write_brew_stub(stub_bin: &Path) -> Result<(), Box<dyn Error>> {
+    support::write_executable(
+        &stub_bin.join("brew"),
+        r#"#!/bin/sh
+if [ "$1" = "info" ] && [ "$2" = "--json=v2" ]; then
+  if [ "$3" = "--cask" ]; then
+    echo '{"casks":[]}'
+    exit 0
+  fi
+  echo '{"formulae":[]}'
+  exit 0
+fi
+
+echo "stub brew unsupported: $*" >&2
 exit 0
 "#,
     )?;
@@ -561,6 +601,20 @@ fn run_target_case(
     if let Some(mode) = setup_mode(case.setup) {
         command.env("NX_PARITY_MODE", mode);
     }
+    if blocks_external_network(case.setup) {
+        for key in [
+            "HTTPS_PROXY",
+            "HTTP_PROXY",
+            "https_proxy",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ] {
+            command.env(key, "http://127.0.0.1:9");
+        }
+        command.env("NO_PROXY", "");
+        command.env("no_proxy", "");
+    }
 
     let output = command.output()?;
     let after = snapshot_repo_files(repo_root)?;
@@ -592,6 +646,7 @@ fn uses_system_stubs(setup: CaseSetup) -> bool {
             | CaseSetup::StubRebuildFlakeCheckFail
             | CaseSetup::StubRebuildGitPreflightFail
             | CaseSetup::StubInfoSources
+            | CaseSetup::StubInfoSourcesBleedingEdge
     )
 }
 
@@ -605,11 +660,16 @@ fn setup_mode(setup: CaseSetup) -> Option<&'static str> {
         CaseSetup::StubRebuildFlakeCheckFail => Some("stub_rebuild_flake_check_fail"),
         CaseSetup::StubRebuildGitPreflightFail => Some("stub_rebuild_git_preflight_fail"),
         CaseSetup::StubInfoSources => Some("stub_info_sources"),
+        CaseSetup::StubInfoSourcesBleedingEdge => Some("stub_info_sources_bleeding_edge"),
         CaseSetup::None
         | CaseSetup::UntrackedNix
         | CaseSetup::DefaultLaunchdService
         | CaseSetup::ModifiedTrackedFile => None,
     }
+}
+
+fn blocks_external_network(setup: CaseSetup) -> bool {
+    matches!(setup, CaseSetup::StubInfoSourcesBleedingEdge)
 }
 
 fn snapshot_repo_files(repo_root: &Path) -> Result<BTreeMap<String, String>, Box<dyn Error>> {

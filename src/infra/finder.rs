@@ -64,7 +64,7 @@ fn find_package_exact(name: &str, repo_root: &Path) -> anyhow::Result<Option<Pac
                 continue;
             }
             if patterns.iter().any(|pattern| pattern.is_match(line)) {
-                let output_path = fs::canonicalize(&file_path).unwrap_or(file_path.clone());
+                let output_path = fs::canonicalize(&file_path).unwrap_or(file_path);
                 let location = PackageLocation::parse(&format!(
                     "{}:{}",
                     output_path.display(),

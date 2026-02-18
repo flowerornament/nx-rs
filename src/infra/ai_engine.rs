@@ -226,17 +226,16 @@ pub fn run_edit_with_callback(
     cwd: &Path,
     callback: impl FnOnce() -> Option<CommandOutcome>,
 ) -> EditExecution {
-    if let Some(outcome) = callback() {
-        EditExecution {
-            pathway: EditPathway::Deterministic,
-            outcome,
-        }
-    } else {
-        EditExecution {
+    callback().map_or_else(
+        || EditExecution {
             pathway: EditPathway::AiFallback,
             outcome: engine.run_edit(prompt, cwd),
-        }
-    }
+        },
+        |outcome| EditExecution {
+            pathway: EditPathway::Deterministic,
+            outcome,
+        },
+    )
 }
 
 // --- Routing Context Builder
@@ -421,20 +420,23 @@ pub fn resolve_candidate_routing(
 
 /// Build a routing prompt for the AI engine.
 pub fn build_routing_prompt(package: &str, context: &str, candidates: Option<&[String]>) -> String {
-    if let Some(candidates) = candidates {
-        let list = candidates
-            .iter()
-            .map(|c| format!("- {c}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            "{context}\n\nChoose exactly one file for '{package}' from this allowed list:\n{list}\n\nReply with only one exact path from the list."
-        )
-    } else {
-        format!(
-            "{context}\n\nWhich packages/nix/*.nix file for '{package}'? Just the path (e.g., packages/nix/cli.nix)."
-        )
-    }
+    candidates.map_or_else(
+        || {
+            format!(
+                "{context}\n\nWhich packages/nix/*.nix file for '{package}'? Just the path (e.g., packages/nix/cli.nix)."
+            )
+        },
+        |candidates| {
+            let list = candidates
+                .iter()
+                .map(|c| format!("- {c}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "{context}\n\nChoose exactly one file for '{package}' from this allowed list:\n{list}\n\nReply with only one exact path from the list."
+            )
+        },
+    )
 }
 
 /// Build a removal prompt for AI-based package removal.

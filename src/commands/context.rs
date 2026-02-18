@@ -10,7 +10,7 @@ pub struct AppContext {
 }
 
 impl AppContext {
-    pub fn new(repo_root: PathBuf, printer: Printer, config_files: ConfigFiles) -> Self {
+    pub const fn new(repo_root: PathBuf, printer: Printer, config_files: ConfigFiles) -> Self {
         Self {
             repo_root,
             printer,

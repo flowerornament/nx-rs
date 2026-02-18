@@ -289,23 +289,26 @@ struct InstalledResult {
 }
 
 fn render_list_json(source: Option<&str>, buckets: &PackageBuckets, printer: &Printer) -> i32 {
-    let output = if let Some(source_key) = source {
-        let mut map = Map::new();
-        map.insert(
-            source_key.to_string(),
-            Value::Array(
-                source_values(source_key, buckets)
-                    .iter()
-                    .cloned()
-                    .map(Value::String)
-                    .collect(),
-            ),
-        );
-        serde_json::to_string_pretty(&map)
-    } else {
-        let json = ListJsonOutput::from(buckets);
-        serde_json::to_string_pretty(&json)
-    };
+    let output = source.map_or_else(
+        || {
+            let json = ListJsonOutput::from(buckets);
+            serde_json::to_string_pretty(&json)
+        },
+        |source_key| {
+            let mut map = Map::new();
+            map.insert(
+                source_key.to_string(),
+                Value::Array(
+                    source_values(source_key, buckets)
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            );
+            serde_json::to_string_pretty(&map)
+        },
+    );
     match output {
         Ok(text) => {
             println!("{text}");
@@ -323,16 +326,16 @@ fn render_installed_json(results: &[InstalledResult], printer: &Printer) -> i32 
     let map: Map<String, Value> = results
         .iter()
         .map(|result| {
-            let entry = match &result.matched {
-                Some(found) => InstalledEntry {
-                    match_name: Some(found.name.clone()),
-                    location: Some(found.location.to_string()),
-                },
-                None => InstalledEntry {
+            let entry = result.matched.as_ref().map_or(
+                InstalledEntry {
                     match_name: None,
                     location: None,
                 },
-            };
+                |found| InstalledEntry {
+                    match_name: Some(found.name.clone()),
+                    location: Some(found.location.to_string()),
+                },
+            );
             (
                 result.query.clone(),
                 serde_json::to_value(entry).unwrap_or_default(),

@@ -116,15 +116,6 @@ fn insert_nix_manifest(content: &str, token: &str) -> Result<(String, Option<usi
     let insert_at = find_alpha_position(&lines, bracket_start + 1, bracket_end, token);
     let new_line = format!("{indent}{token}");
 
-    let mut result: Vec<&str> = Vec::with_capacity(lines.len() + 1);
-    for (i, line) in lines.iter().enumerate() {
-        if i == insert_at {
-            // We'll push owned string below; collect as &str up to here
-            break;
-        }
-        result.push(line);
-    }
-
     // Build the final string with the inserted line
     let mut out = String::with_capacity(content.len() + new_line.len() + 1);
     for line in &lines[..insert_at] {
@@ -290,10 +281,10 @@ fn remove_nix_manifest(content: &str, token: &str) -> Result<(String, Option<usi
     let lines: Vec<&str> = content.lines().collect();
     let remove_idx = find_ident_line(&lines, bracket_start + 1, bracket_end, token);
 
-    match remove_idx {
-        Some(idx) => Ok((splice_out_line(content, &lines, idx), Some(idx + 1))),
-        None => Ok((content.to_string(), None)),
-    }
+    remove_idx.map_or_else(
+        || Ok((content.to_string(), None)),
+        |idx| Ok((splice_out_line(content, &lines, idx), Some(idx + 1))),
+    )
 }
 
 /// Remove a bare name from the correct `runtime.withPackages (ps: ...)` block.
@@ -313,10 +304,10 @@ fn remove_language_package(
 
     let remove_idx = find_ident_line(&lines, block_start + 1, block_end, bare_name);
 
-    match remove_idx {
-        Some(idx) => Ok((splice_out_line(content, &lines, idx), Some(idx + 1))),
-        None => Ok((content.to_string(), None)),
-    }
+    remove_idx.map_or_else(
+        || Ok((content.to_string(), None)),
+        |idx| Ok((splice_out_line(content, &lines, idx), Some(idx + 1))),
+    )
 }
 
 /// Remove a double-quoted name from a homebrew `[ "pkg" ... ]` list.
@@ -332,10 +323,10 @@ fn remove_homebrew_manifest(content: &str, token: &str) -> Result<(String, Optio
     let lines: Vec<&str> = content.lines().collect();
     let remove_idx = find_quoted_line(&lines, bracket_start + 1, bracket_end, token);
 
-    match remove_idx {
-        Some(idx) => Ok((splice_out_line(content, &lines, idx), Some(idx + 1))),
-        None => Ok((content.to_string(), None)),
-    }
+    remove_idx.map_or_else(
+        || Ok((content.to_string(), None)),
+        |idx| Ok((splice_out_line(content, &lines, idx), Some(idx + 1))),
+    )
 }
 
 /// Remove a `"Name" = <id>;` entry from `masApps = { ... }`.

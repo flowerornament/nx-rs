@@ -299,15 +299,14 @@ fn report_deterministic_edit(
 ) -> bool {
     match result {
         Ok(outcome) => {
+            println!();
             if outcome.file_changed {
-                println!();
                 ctx.printer
                     .success(&format!("Added '{}' to {rel_target}", plan.package_token));
                 if let Some(line) = outcome.line_number {
                     show_snippet(&plan.target_file, line, 2, SnippetMode::Add, false);
                 }
             } else {
-                println!();
                 ctx.printer.success(&format!(
                     "'{}' already present in {rel_target}",
                     plan.package_token,
@@ -453,12 +452,13 @@ fn resolve_search_candidates(
                     .and_then(|selected| resolve_platform_candidate(selected, candidates, ctx));
             }
 
-            if let Some(choice) = prompt_source_choice(candidates.len()) {
-                resolve_platform_candidate(&candidates[choice], candidates, ctx)
-            } else {
-                ctx.printer.detail("Cancelled.");
-                Some(SearchResolution::Skipped)
-            }
+            prompt_source_choice(candidates.len()).map_or_else(
+                || {
+                    ctx.printer.detail("Cancelled.");
+                    Some(SearchResolution::Skipped)
+                },
+                |choice| resolve_platform_candidate(&candidates[choice], candidates, ctx),
+            )
         }
         Err(err) => {
             ctx.printer.error(&format!("install lookup failed: {err}"));
@@ -585,7 +585,8 @@ fn prompt_source_choice(count: usize) -> Option<usize> {
     let _ = io::stdout().flush();
 
     let mut line = String::new();
-    match io::stdin().lock().read_line(&mut line) {
+    let read_result = io::stdin().lock().read_line(&mut line);
+    match read_result {
         Ok(0) | Err(_) => Some(0),
         Ok(_) => parse_source_choice(&line, count),
     }

@@ -80,6 +80,6 @@ fn git_repo_root() -> Option<PathBuf> {
     candidate.join("flake.nix").exists().then_some(candidate)
 }
 
-pub(crate) fn dirs_home() -> PathBuf {
+pub fn dirs_home() -> PathBuf {
     env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
 }

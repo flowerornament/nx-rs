@@ -27,6 +27,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     disable_help_subcommand = true,
     arg_required_else_help = true
 )]
+#[allow(clippy::struct_excessive_bools)] // CLI flag surface intentionally mirrors SPEC switches.
 pub struct Cli {
     #[arg(long, global = true)]
     pub plain: bool,
@@ -61,6 +62,7 @@ pub enum CommandKind {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[allow(clippy::struct_excessive_bools)] // Install contract is flag-rich by design.
 pub struct InstallArgs {
     #[arg(value_name = "PACKAGES")]
     pub packages: Vec<String>,
@@ -161,6 +163,7 @@ pub struct PassthroughArgs {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[allow(clippy::struct_excessive_bools)] // Upgrade command intentionally exposes multiple independent toggles.
 pub struct UpgradeArgs {
     #[arg(long, short = 'n')]
     pub dry_run: bool,

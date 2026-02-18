@@ -235,8 +235,16 @@ pub fn search_flake_inputs(name: &str, flake_lock_path: &Path) -> Vec<SourceResu
 pub fn search_homebrew(name: &str, is_cask: bool, allow_fallback: bool) -> Vec<SourceResult> {
     let entry = get_homebrew_info_entry(name, is_cask);
 
-    match entry {
-        Some(entry) => {
+    entry.map_or_else(
+        || {
+            // Try the opposite (cask vs formula) as fallback
+            if allow_fallback && !is_cask {
+                search_homebrew(name, true, false)
+            } else {
+                Vec::new()
+            }
+        },
+        |entry| {
             if is_cask {
                 vec![SourceResult {
                     name: name.to_string(),
@@ -287,16 +295,8 @@ pub fn search_homebrew(name: &str, is_cask: bool, allow_fallback: bool) -> Vec<S
                     flake_url: None,
                 }]
             }
-        }
-        None => {
-            // Try the opposite (cask vs formula) as fallback
-            if allow_fallback && !is_cask {
-                search_homebrew(name, true, false)
-            } else {
-                Vec::new()
-            }
-        }
-    }
+        },
+    )
 }
 
 // --- Platform / Language Validation
@@ -313,10 +313,9 @@ pub fn check_nix_available(attr: &str) -> (bool, Option<String>) {
     let targets = &["nixpkgs"][..];
     let meta_attr = format!("{attr}.meta.platforms");
 
-    match eval_nix_attr(targets, &meta_attr) {
-        Some(platforms) => check_platforms(&platforms, get_current_system()),
-        None => (true, None),
-    }
+    eval_nix_attr(targets, &meta_attr).map_or((true, None), |platforms| {
+        check_platforms(&platforms, get_current_system())
+    })
 }
 
 /// Validate that a language package attr exists and is available on this platform.

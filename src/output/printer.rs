@@ -16,7 +16,7 @@ pub struct Printer {
 
 #[allow(clippy::unused_self)] // methods that don't yet use self will when style-aware output lands
 impl Printer {
-    pub fn new(style: OutputStyle) -> Self {
+    pub const fn new(style: OutputStyle) -> Self {
         Self { style }
     }
 
@@ -66,13 +66,14 @@ impl Printer {
         print!("  {prompt}{suffix}");
         let _ = io::stdout().flush();
         let mut line = String::new();
-        match io::stdin().lock().read_line(&mut line) {
+        let read_result = io::stdin().lock().read_line(&mut line);
+        match read_result {
             Ok(0) | Err(_) => default_yes,
             Ok(_) => parse_confirm_response(&line, default_yes),
         }
     }
 
-    fn glyphs(&self) -> GlyphSet {
+    const fn glyphs(&self) -> GlyphSet {
         match self.style.icon_set {
             IconSet::Unicode => GlyphSet {
                 action: "➜",

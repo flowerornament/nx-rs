@@ -199,9 +199,8 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
         return;
     }
 
-    let pkg_names: Vec<&str> = outdated.iter().map(|(name, _, _)| name.as_str()).collect();
     ctx.printer
-        .action(&format!("Upgrading {} Homebrew packages", pkg_names.len()));
+        .action(&format!("Upgrading {} Homebrew packages", outdated.len()));
     println!();
 
     let code = match run_indented_command("brew", &["upgrade"], None, &ctx.printer, "  ") {
@@ -288,8 +287,9 @@ fn parse_brew_outdated_json(json_str: &str) -> Vec<(String, String, String)> {
 
 /// Build the nix flake update command, optionally wrapped with a ulimit raise.
 fn build_nix_update_command(base_args: &[String], raise_nofile: Option<u32>) -> Vec<String> {
-    match raise_nofile {
-        Some(limit) => {
+    raise_nofile.map_or_else(
+        || base_args.to_vec(),
+        |limit| {
             let nix_cmd = std::iter::once("nix".to_string())
                 .chain(base_args.iter().cloned())
                 .collect::<Vec<_>>()
@@ -298,9 +298,8 @@ fn build_nix_update_command(base_args: &[String], raise_nofile: Option<u32>) -> 
                 "-lc".to_string(),
                 format!("ulimit -n {limit} 2>/dev/null; exec {nix_cmd}"),
             ]
-        }
-        None => base_args.to_vec(),
-    }
+        },
+    )
 }
 
 /// Detect file descriptor exhaustion in command output.

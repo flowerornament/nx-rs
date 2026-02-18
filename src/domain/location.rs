@@ -12,7 +12,7 @@ pub struct PackageLocation {
 }
 
 impl PackageLocation {
-    pub fn new(path: PathBuf, line: Option<usize>) -> Self {
+    pub const fn new(path: PathBuf, line: Option<usize>) -> Self {
         Self { path, line }
     }
 
@@ -29,7 +29,7 @@ impl PackageLocation {
         &self.path
     }
 
-    pub fn line(&self) -> Option<usize> {
+    pub const fn line(&self) -> Option<usize> {
         self.line
     }
 }

@@ -23,7 +23,7 @@ const SOURCE_PRIORITY: &[PackageSource] = &[
 
 /// Maps source to flake.lock input name for revision lookup.
 #[allow(dead_code)]
-fn source_to_input(source: PackageSource) -> &'static str {
+const fn source_to_input(source: PackageSource) -> &'static str {
     match source {
         PackageSource::Nxs => "nxs",
         PackageSource::Nur => "nur",

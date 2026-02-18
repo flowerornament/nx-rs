@@ -56,10 +56,10 @@ fn remove_single_package(package: &str, args: &RemoveArgs, ctx: &AppContext) -> 
         relative_location(&location, &ctx.repo_root)
     ));
 
-    match location.line() {
-        Some(line_num) => remove_with_line(package, location.path(), line_num, args, ctx),
-        None => remove_via_ai(package, location.path(), args, ctx),
-    }
+    location.line().map_or_else(
+        || remove_via_ai(package, location.path(), args, ctx),
+        |line_num| remove_with_line(package, location.path(), line_num, args, ctx),
+    )
 }
 
 /// Direct removal when the finder resolved an exact line number.

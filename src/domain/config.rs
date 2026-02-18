@@ -77,7 +77,7 @@ impl ConfigFiles {
         &self.all_files
     }
 
-    pub fn by_purpose(&self) -> &BTreeMap<String, PathBuf> {
+    pub const fn by_purpose(&self) -> &BTreeMap<String, PathBuf> {
         &self.by_purpose
     }
 

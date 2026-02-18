@@ -52,7 +52,7 @@ pub fn scan_packages(repo_root: &Path) -> anyhow::Result<PackageBuckets> {
 ///
 /// Skips only `common.nix`. Unlike `ConfigFiles::discover`, this intentionally
 /// includes `default.nix` because it may contain launchd service definitions.
-pub(crate) fn collect_nix_files(repo_root: &Path) -> Vec<PathBuf> {
+pub fn collect_nix_files(repo_root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for dir_name in ["home", "system", "hosts", "packages"] {
         let dir_path = repo_root.join(dir_name);

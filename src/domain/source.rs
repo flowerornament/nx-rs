@@ -26,7 +26,7 @@ impl fmt::Display for PackageSource {
 
 impl PackageSource {
     /// Canonical string form used in display, cache keys, and JSON output.
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Nxs => "nxs",
             Self::Nur => "nur",
@@ -52,7 +52,7 @@ impl PackageSource {
     }
 
     /// Whether this source requires a resolved nix attribute.
-    pub fn requires_attr(self) -> bool {
+    pub const fn requires_attr(self) -> bool {
         matches!(self, Self::Nxs | Self::Nur | Self::FlakeInput)
     }
 }
@@ -90,6 +90,7 @@ impl SourceResult {
 /// User preferences for source selection.
 #[derive(Debug, Clone, Default)]
 #[allow(dead_code)] // consumed by infra::sources and install command (.13)
+#[allow(clippy::struct_excessive_bools)] // Source selection is modeled as orthogonal switches.
 pub struct SourcePreferences {
     pub bleeding_edge: bool,
     pub nur: bool,
@@ -214,20 +215,18 @@ pub static OVERLAY_PACKAGES: LazyLock<
 /// Normalize a package name through alias mapping (case-insensitive).
 pub fn normalize_name(name: &str) -> String {
     let lower = name.to_lowercase();
-    match NAME_MAPPINGS.get(lower.as_str()) {
-        Some(mapped) => mapped.to_lowercase(),
-        None => lower,
-    }
+    NAME_MAPPINGS
+        .get(lower.as_str())
+        .map_or(lower, |mapped| mapped.to_lowercase())
 }
 
 /// Resolve common aliases case-insensitively (returns mapped or original).
 #[allow(dead_code)] // consumed by infra::sources
 pub fn mapped_name(name: &str) -> String {
     let lower = name.to_lowercase();
-    match NAME_MAPPINGS.get(lower.as_str()) {
-        Some(mapped) => (*mapped).to_string(),
-        None => name.to_string(),
-    }
+    NAME_MAPPINGS
+        .get(lower.as_str())
+        .map_or_else(|| name.to_string(), |mapped| (*mapped).to_string())
 }
 
 /// Detect if a package is a language-specific package.
@@ -456,7 +455,7 @@ pub fn search_name_variants(name: &str) -> Vec<String> {
 
 /// Return the current Nix system identifier (e.g., `aarch64-darwin`).
 #[allow(dead_code)] // consumed by infra::sources
-pub fn get_current_system() -> &'static str {
+pub const fn get_current_system() -> &'static str {
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     {
         "aarch64-darwin"

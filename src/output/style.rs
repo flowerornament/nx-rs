@@ -11,7 +11,7 @@ pub struct OutputStyle {
 }
 
 impl OutputStyle {
-    pub fn from_flags(plain: bool, unicode: bool, minimal: bool) -> Self {
+    pub const fn from_flags(plain: bool, unicode: bool, minimal: bool) -> Self {
         let icon_set = if minimal || plain {
             IconSet::Minimal
         } else if unicode {

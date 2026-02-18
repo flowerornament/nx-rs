@@ -416,6 +416,7 @@ fn parallel_search(
     name: &str,
     prefs: &SourcePreferences,
     flake_lock_path: Option<&Path>,
+    warn_on_timeout: bool,
 ) -> Vec<SourceResult> {
     let (tx, rx) = mpsc::channel::<Vec<SourceResult>>();
     let mut expected = 0_u32;
@@ -458,9 +459,11 @@ fn parallel_search(
             match rx.recv_timeout(timeout) {
                 Ok(batch) => all_results.extend(batch),
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    eprintln!(
-                        "warning: timed out waiting for one or more search sources for '{name}'; using partial results"
-                    );
+                    if warn_on_timeout {
+                        eprintln!(
+                            "warning: timed out waiting for one or more search sources for '{name}'; using partial results"
+                        );
+                    }
                     break;
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -479,6 +482,26 @@ pub fn search_all_sources(
     prefs: &SourcePreferences,
     flake_lock_path: Option<&Path>,
 ) -> Vec<SourceResult> {
+    search_all_sources_with_timeout_reporting(name, prefs, flake_lock_path, true)
+}
+
+/// Search all enabled sources for a package without timeout warnings.
+///
+/// Used by `info --json` to avoid stderr drift in parity-sensitive read paths.
+pub fn search_all_sources_quiet(
+    name: &str,
+    prefs: &SourcePreferences,
+    flake_lock_path: Option<&Path>,
+) -> Vec<SourceResult> {
+    search_all_sources_with_timeout_reporting(name, prefs, flake_lock_path, false)
+}
+
+fn search_all_sources_with_timeout_reporting(
+    name: &str,
+    prefs: &SourcePreferences,
+    flake_lock_path: Option<&Path>,
+    warn_on_timeout: bool,
+) -> Vec<SourceResult> {
     // 1. Forced source shortcut
     if let Some(results) = search_forced_source(name, prefs) {
         return results;
@@ -495,7 +518,7 @@ pub fn search_all_sources(
     }
 
     // 4. Parallel primary search
-    let mut results = parallel_search(name, prefs, flake_lock_path);
+    let mut results = parallel_search(name, prefs, flake_lock_path, warn_on_timeout);
 
     // 5. Always append homebrew formula + cask alternatives
     results.extend(search_homebrew(name, false, false));

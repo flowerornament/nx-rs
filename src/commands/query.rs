@@ -10,7 +10,7 @@ use crate::domain::source::{SourcePreferences, SourceResult};
 use crate::infra::cache::MultiSourceCache;
 use crate::infra::config_scan::{PackageBuckets, scan_packages};
 use crate::infra::finder::{PackageMatch, find_package, find_package_fuzzy};
-use crate::infra::sources::search_all_sources;
+use crate::infra::sources::search_all_sources_quiet;
 use crate::output::json::to_string_compact;
 use crate::output::printer::Printer;
 
@@ -101,16 +101,10 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
 
     if args.json {
         let mut cache = MultiSourceCache::load(&ctx.repo_root).ok();
-        let sources = collect_info_sources(
-            package,
-            args,
-            &ctx.repo_root,
-            &mut cache,
-            location.is_some(),
-        )
-        .into_iter()
-        .map(InfoSourceJson::from)
-        .collect();
+        let sources = collect_info_sources(package, args, &ctx.repo_root, &mut cache)
+            .into_iter()
+            .map(InfoSourceJson::from)
+            .collect();
 
         let output = InfoJsonOutput {
             name: package.clone(),
@@ -170,16 +164,8 @@ fn collect_info_sources(
     args: &InfoArgs,
     repo_root: &Path,
     cache: &mut Option<MultiSourceCache>,
-    search_on_miss: bool,
 ) -> Vec<SourceResult> {
-    collect_info_sources_with(
-        package,
-        args,
-        repo_root,
-        cache,
-        search_on_miss,
-        search_all_sources,
-    )
+    collect_info_sources_with(package, args, repo_root, cache, search_all_sources_quiet)
 }
 
 fn collect_info_sources_with<F>(
@@ -187,7 +173,6 @@ fn collect_info_sources_with<F>(
     args: &InfoArgs,
     repo_root: &Path,
     cache: &mut Option<MultiSourceCache>,
-    search_on_miss: bool,
     mut search: F,
 ) -> Vec<SourceResult>
 where
@@ -198,9 +183,6 @@ where
         if !cached.is_empty() {
             return cached;
         }
-    }
-    if !search_on_miss {
-        return Vec::new();
     }
 
     let prefs = source_prefs_from_info_args(args);
@@ -589,7 +571,6 @@ mod tests {
             &args,
             root,
             &mut cache,
-            true,
             |_, _, _| {
                 searches.set(searches.get() + 1);
                 Vec::new()
@@ -622,7 +603,6 @@ mod tests {
             &args,
             root,
             &mut cache,
-            true,
             |_, _, _| {
                 search_calls.set(search_calls.get() + 1);
                 vec![searched_result.clone()]
@@ -642,7 +622,7 @@ mod tests {
     }
 
     #[test]
-    fn collect_info_sources_skips_search_when_not_installed() {
+    fn collect_info_sources_searches_on_cache_miss() {
         let tmp = TempDir::new().expect("temp dir should be created");
         let root = tmp.path();
         write_flake_lock(root);
@@ -660,7 +640,6 @@ mod tests {
             &args,
             root,
             &mut cache,
-            false,
             |_, _, _| {
                 searches.set(searches.get() + 1);
                 vec![source_result(
@@ -672,8 +651,8 @@ mod tests {
             },
         );
 
-        assert!(results.is_empty());
-        assert_eq!(searches.get(), 0);
+        assert_eq!(results.len(), 1);
+        assert_eq!(searches.get(), 1);
     }
 
     #[test]

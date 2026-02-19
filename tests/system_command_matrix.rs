@@ -1,7 +1,7 @@
 mod support;
 
 use std::cmp::Reverse;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error::Error;
 use std::fs;
@@ -42,6 +42,14 @@ const INFO_JSON_FOUND_ARGS: &[&str] = &["info", "ripgrep", "--json"];
 const INFO_BLEEDING_EDGE_ARGS: &[&str] = &["info", "ripgrep", "--bleeding-edge"];
 const INFO_JSON_HM_MODULE_ARGS: &[&str] = &["info", "git", "--json"];
 const INFO_JSON_DARWIN_SERVICE_ARGS: &[&str] = &["info", "yabai", "--json"];
+const UPGRADE_COMMIT_ARGS: &[&str] = &["upgrade", "--skip-brew", "--skip-rebuild", "--no-ai"];
+const UPGRADE_SKIP_COMMIT_ARGS: &[&str] = &[
+    "upgrade",
+    "--skip-brew",
+    "--skip-rebuild",
+    "--skip-commit",
+    "--no-ai",
+];
 
 const INFO_FOUND_STDOUT: &[&str] = &[
     "ripgrep (installed (nxs))",
@@ -65,6 +73,46 @@ const INFO_JSON_DARWIN_SERVICE_STDOUT: &[&str] = &[
     "\"enabled\": false",
 ];
 
+const UPGRADE_FLAKE_LOCK_OLD: &str = r#"{
+  "nodes": {
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1700000000,
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "type": "github"
+      }
+    }
+  }
+}
+"#;
+
+const UPGRADE_FLAKE_LOCK_NEW: &str = r#"{
+  "nodes": {
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1700000001,
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "type": "github"
+      }
+    }
+  }
+}
+"#;
+
 #[derive(Debug, Clone, Copy)]
 enum StubMode {
     Success,
@@ -76,6 +124,7 @@ enum StubMode {
     GitPreflightFail,
     PreflightUntracked,
     DarwinRebuildFail,
+    UpgradeFlakeChanged,
 }
 
 impl StubMode {
@@ -90,6 +139,14 @@ impl StubMode {
             Self::GitPreflightFail => "git_preflight_fail",
             Self::PreflightUntracked => "preflight_untracked",
             Self::DarwinRebuildFail => "darwin_rebuild_fail",
+            Self::UpgradeFlakeChanged => "upgrade_flake_changed",
+        }
+    }
+
+    const fn expected_mutated_paths(self) -> &'static [&'static str] {
+        match self {
+            Self::UpgradeFlakeChanged => &["flake.lock"],
+            _ => &[],
         }
     }
 }
@@ -214,6 +271,32 @@ const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
     ),
 ];
 
+const UPGRADE_COMMIT_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
+    ExpectedCall::new(
+        "git",
+        ExpectedCwd::RepoRoot,
+        &["-C", REPO_ROOT_TOKEN, "add", "flake.lock"],
+    ),
+    ExpectedCall::new(
+        "git",
+        ExpectedCwd::RepoRoot,
+        &[
+            "-C",
+            REPO_ROOT_TOKEN,
+            "commit",
+            "-m",
+            "chore: update flake.lock",
+        ],
+    ),
+];
+
+const UPGRADE_SKIP_COMMIT_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
+    "nix",
+    ExpectedCwd::RepoRoot,
+    &["flake", "update"],
+)];
+
 const MATRIX_CASES: &[MatrixCase] = &[
     MatrixCase {
         id: "update_success_passthrough",
@@ -304,6 +387,22 @@ const MATRIX_CASES: &[MatrixCase] = &[
         stdout_contains: &[],
     },
     MatrixCase {
+        id: "upgrade_flake_changed_commits_lockfile",
+        cli_args: UPGRADE_COMMIT_ARGS,
+        mode: StubMode::UpgradeFlakeChanged,
+        expected_exit: 0,
+        expected_calls: Some(UPGRADE_COMMIT_CALLS),
+        stdout_contains: &["Committed flake.lock"],
+    },
+    MatrixCase {
+        id: "upgrade_flake_changed_skip_commit_gate",
+        cli_args: UPGRADE_SKIP_COMMIT_ARGS,
+        mode: StubMode::UpgradeFlakeChanged,
+        expected_exit: 0,
+        expected_calls: Some(UPGRADE_SKIP_COMMIT_CALLS),
+        stdout_contains: &[],
+    },
+    MatrixCase {
         id: "info_found_installed_plain",
         cli_args: INFO_FOUND_ARGS,
         mode: StubMode::Success,
@@ -375,6 +474,7 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &MatrixCase) -> Result<(), Bo
     let repo_root = TempDir::new()?;
     support::copy_tree(repo_base, repo_root.path())?;
     ensure_test_layout(repo_root.path())?;
+    seed_flake_lock_if_needed(repo_root.path(), case.mode)?;
 
     let stub_dir = repo_root.path().join(STUB_DIR_NAME);
     fs::create_dir_all(&stub_dir)?;
@@ -396,6 +496,7 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &MatrixCase) -> Result<(), Bo
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("NX_SYSTEM_IT_LOG", &log_path)
         .env("NX_SYSTEM_IT_MODE", case.mode.as_env())
+        .env("NX_SYSTEM_IT_UPGRADE_NEW_LOCK", UPGRADE_FLAKE_LOCK_NEW)
         .env(
             "NX_SYSTEM_IT_DARWIN_REBUILD",
             stub_dir.join("darwin-rebuild"),
@@ -429,11 +530,7 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &MatrixCase) -> Result<(), Bo
         );
     }
 
-    assert_eq!(
-        before, after,
-        "case {} mutated repository files\nstdout:\n{}\nstderr:\n{}",
-        case.id, stdout, stderr
-    );
+    assert_repo_state(case, &before, &after, &stdout, &stderr);
 
     Ok(())
 }
@@ -544,6 +641,13 @@ fn ensure_test_layout(repo_root: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn seed_flake_lock_if_needed(repo_root: &Path, mode: StubMode) -> Result<(), Box<dyn Error>> {
+    if matches!(mode, StubMode::UpgradeFlakeChanged) {
+        fs::write(repo_root.join("flake.lock"), UPGRADE_FLAKE_LOCK_OLD)?;
+    }
+    Ok(())
+}
+
 fn install_stubs(stub_dir: &Path) -> Result<(), Box<dyn Error>> {
     for program in [
         "git",
@@ -562,6 +666,64 @@ fn install_stubs(stub_dir: &Path) -> Result<(), Box<dyn Error>> {
 
 fn snapshot_repo_files(repo_root: &Path) -> Result<BTreeMap<String, String>, Box<dyn Error>> {
     support::snapshot_repo_files(repo_root, &|rel| should_ignore_snapshot_path(rel))
+}
+
+fn assert_repo_state(
+    case: &MatrixCase,
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+    stdout: &str,
+    stderr: &str,
+) {
+    let expected_paths = case.mode.expected_mutated_paths();
+    if expected_paths.is_empty() {
+        assert_eq!(
+            before, after,
+            "case {} mutated repository files\nstdout:\n{}\nstderr:\n{}",
+            case.id, stdout, stderr
+        );
+        return;
+    }
+
+    let actual_paths = changed_paths(before, after);
+    let expected = expected_paths
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        actual_paths, expected,
+        "case {} mutated unexpected repository files\nstdout:\n{}\nstderr:\n{}",
+        case.id, stdout, stderr
+    );
+}
+
+fn changed_paths(
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let mut changed = BTreeSet::new();
+
+    for (path, before_content) in before {
+        match after.get(path) {
+            Some(after_content) => {
+                if after_content != before_content {
+                    changed.insert(path.clone());
+                }
+            }
+            None => {
+                changed.insert(path.clone());
+            }
+        }
+    }
+
+    for path in after.keys() {
+        if !before.contains_key(path) {
+            changed.insert(path.clone());
+        }
+    }
+
+    changed.into_iter().collect()
 }
 
 fn should_ignore_snapshot_path(rel_path: &str) -> bool {
@@ -658,6 +820,9 @@ case "$program" in
       if [ "$mode" = "update_fail" ]; then
         echo "stub nix flake update failed"
         exit 1
+      fi
+      if [ "$mode" = "upgrade_flake_changed" ]; then
+        printf '%s' "${NX_SYSTEM_IT_UPGRADE_NEW_LOCK:?NX_SYSTEM_IT_UPGRADE_NEW_LOCK must be set}" > flake.lock
       fi
       echo "stub nix flake update ok"
       exit 0

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::cli::{PassthroughArgs, UpgradeArgs};
@@ -178,7 +179,7 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<bool, i32> {
 fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
     ctx.printer.action("Checking Homebrew updates");
 
-    let outdated = brew_outdated();
+    let outdated = enrich_brew_outdated(brew_outdated());
 
     if outdated.is_empty() {
         ctx.printer.success("All Homebrew packages up to date");
@@ -191,8 +192,17 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
         if outdated.len() == 1 { "" } else { "s" }
     ));
 
-    for (name, installed, current) in &outdated {
-        println!("  {name}: {installed} \u{2192} {current}");
+    for package in &outdated {
+        println!(
+            "  {}: {} \u{2192} {}",
+            package.name, package.installed_version, package.current_version
+        );
+
+        if let Some(changelog_url) = &package.changelog_url {
+            println!("    changelog: {changelog_url}");
+        } else if let Some(homepage) = &package.homepage {
+            println!("    homepage: {homepage}");
+        }
     }
 
     if args.dry_run {
@@ -203,7 +213,9 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
         .action(&format!("Upgrading {} Homebrew packages", outdated.len()));
     println!();
 
-    let code = match run_indented_command("brew", &["upgrade"], None, &ctx.printer, "  ") {
+    let mut upgrade_args = vec!["upgrade"];
+    upgrade_args.extend(outdated.iter().map(|package| package.name.as_str()));
+    let code = match run_indented_command("brew", &upgrade_args, None, &ctx.printer, "  ") {
         Ok(code) => code,
         Err(err) => {
             ctx.printer.error(&format!("{err:#}"));
@@ -220,7 +232,7 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
 }
 
 /// Fetch outdated brew packages via `brew outdated --json`.
-fn brew_outdated() -> Vec<(String, String, String)> {
+fn brew_outdated() -> Vec<BrewOutdatedPackage> {
     let output = match run_captured_command("brew", &["outdated", "--json"], None) {
         Ok(cmd) if cmd.code == 0 => cmd.stdout,
         _ => return Vec::new(),
@@ -228,8 +240,25 @@ fn brew_outdated() -> Vec<(String, String, String)> {
     parse_brew_outdated_json(&output)
 }
 
-/// Parse brew outdated JSON into (name, installed, current) version tuples.
-fn parse_brew_outdated_json(json_str: &str) -> Vec<(String, String, String)> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BrewOutdatedPackage {
+    name: String,
+    installed_version: String,
+    current_version: String,
+    is_cask: bool,
+    homepage: Option<String>,
+    description: Option<String>,
+    changelog_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BrewPackageMetadata {
+    homepage: Option<String>,
+    description: Option<String>,
+}
+
+/// Parse brew outdated JSON into package version tuples with source kind.
+fn parse_brew_outdated_json(json_str: &str) -> Vec<BrewOutdatedPackage> {
     let data: serde_json::Value = match serde_json::from_str(json_str) {
         Ok(v) => v,
         Err(_) => return Vec::new(),
@@ -255,7 +284,15 @@ fn parse_brew_outdated_json(json_str: &str) -> Vec<(String, String, String)> {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default();
             if !name.is_empty() && !installed.is_empty() && !current.is_empty() {
-                results.push((name.to_string(), installed.to_string(), current.to_string()));
+                results.push(BrewOutdatedPackage {
+                    name: name.to_string(),
+                    installed_version: installed.to_string(),
+                    current_version: current.to_string(),
+                    is_cask: false,
+                    homepage: None,
+                    description: None,
+                    changelog_url: None,
+                });
             }
         }
     }
@@ -276,13 +313,177 @@ fn parse_brew_outdated_json(json_str: &str) -> Vec<(String, String, String)> {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default();
             if !name.is_empty() && !installed.is_empty() && !current.is_empty() {
-                results.push((name.to_string(), installed.to_string(), current.to_string()));
+                results.push(BrewOutdatedPackage {
+                    name: name.to_string(),
+                    installed_version: installed.to_string(),
+                    current_version: current.to_string(),
+                    is_cask: true,
+                    homepage: None,
+                    description: None,
+                    changelog_url: None,
+                });
             }
         }
     }
 
-    results.sort_by(|a, b| a.0.cmp(&b.0));
+    results.sort_by(|a, b| a.name.cmp(&b.name));
     results
+}
+
+/// Enrich outdated packages with homepage/description and changelog URL hints.
+fn enrich_brew_outdated(packages: Vec<BrewOutdatedPackage>) -> Vec<BrewOutdatedPackage> {
+    if packages.is_empty() {
+        return packages;
+    }
+
+    let formulae = packages
+        .iter()
+        .filter(|package| !package.is_cask)
+        .map(|package| package.name.as_str())
+        .collect::<Vec<_>>();
+    let casks = packages
+        .iter()
+        .filter(|package| package.is_cask)
+        .map(|package| package.name.as_str())
+        .collect::<Vec<_>>();
+
+    let formula_metadata = brew_info_metadata(&formulae, false);
+    let cask_metadata = brew_info_metadata(&casks, true);
+
+    packages
+        .into_iter()
+        .map(|mut package| {
+            let metadata = if package.is_cask {
+                cask_metadata.get(&package.name)
+            } else {
+                formula_metadata.get(&package.name)
+            };
+
+            if let Some(metadata) = metadata {
+                package.homepage = metadata.homepage.clone();
+                package.description = metadata.description.clone();
+            }
+
+            package.changelog_url = brew_compare_url(
+                package.homepage.as_deref(),
+                &package.installed_version,
+                &package.current_version,
+            );
+            package
+        })
+        .collect()
+}
+
+fn brew_info_metadata(
+    package_names: &[&str],
+    is_cask: bool,
+) -> HashMap<String, BrewPackageMetadata> {
+    if package_names.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut args = vec!["info", "--json=v2"];
+    if is_cask {
+        args.push("--cask");
+    }
+    args.extend(package_names.iter().copied());
+
+    let output = match run_captured_command("brew", &args, None) {
+        Ok(cmd) if cmd.code == 0 => cmd.stdout,
+        _ => return HashMap::new(),
+    };
+
+    parse_brew_info_json(&output, is_cask)
+}
+
+fn parse_brew_info_json(json_str: &str, is_cask: bool) -> HashMap<String, BrewPackageMetadata> {
+    let data: serde_json::Value = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return HashMap::new(),
+    };
+
+    let entries_key = if is_cask { "casks" } else { "formulae" };
+    let name_key = if is_cask { "token" } else { "name" };
+
+    data.get(entries_key)
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.get(name_key).and_then(serde_json::Value::as_str)?;
+            if name.is_empty() {
+                return None;
+            }
+
+            Some((
+                name.to_string(),
+                BrewPackageMetadata {
+                    homepage: entry
+                        .get("homepage")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    description: entry
+                        .get("desc")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                },
+            ))
+        })
+        .collect()
+}
+
+fn brew_compare_url(
+    homepage: Option<&str>,
+    installed_version: &str,
+    current_version: &str,
+) -> Option<String> {
+    let homepage = homepage?;
+    let (owner, repo) = github_owner_repo(homepage)?;
+    let old = normalize_version(installed_version);
+    let new = normalize_version(current_version);
+
+    if old.is_empty() || new.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "https://github.com/{owner}/{repo}/compare/{old}...{new}"
+    ))
+}
+
+fn github_owner_repo(url: &str) -> Option<(String, String)> {
+    let trimmed = url.trim().trim_end_matches('/');
+    let without_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))?;
+    let path = without_scheme.strip_prefix("github.com/")?;
+
+    let mut parts = path.split('/');
+    let owner = parts.next()?.trim();
+    let repo_part = parts.next()?.trim();
+
+    if owner.is_empty() || repo_part.is_empty() {
+        return None;
+    }
+
+    let repo = repo_part
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(".git")
+        .trim()
+        .to_string();
+
+    if repo.is_empty() {
+        return None;
+    }
+
+    Some((owner.to_string(), repo))
+}
+
+fn normalize_version(version: &str) -> &str {
+    let trimmed = version.trim();
+    trimmed.strip_prefix('v').unwrap_or(trimmed)
 }
 
 /// Build the nix flake update command, optionally wrapped with a ulimit raise.
@@ -803,8 +1004,14 @@ mod tests {
 
         let result = parse_brew_outdated_json(json);
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0], ("git".into(), "2.43.0".into(), "2.44.0".into()));
-        assert_eq!(result[1], ("jq".into(), "1.6".into(), "1.7.1".into()));
+        assert_eq!(result[0].name, "git");
+        assert_eq!(result[0].installed_version, "2.43.0");
+        assert_eq!(result[0].current_version, "2.44.0");
+        assert!(!result[0].is_cask);
+        assert_eq!(result[1].name, "jq");
+        assert_eq!(result[1].installed_version, "1.6");
+        assert_eq!(result[1].current_version, "1.7.1");
+        assert!(!result[1].is_cask);
     }
 
     #[test]
@@ -822,10 +1029,10 @@ mod tests {
 
         let result = parse_brew_outdated_json(json);
         assert_eq!(result.len(), 1);
-        assert_eq!(
-            result[0],
-            ("firefox".into(), "120.0".into(), "121.0".into())
-        );
+        assert_eq!(result[0].name, "firefox");
+        assert_eq!(result[0].installed_version, "120.0");
+        assert_eq!(result[0].current_version, "121.0");
+        assert!(result[0].is_cask);
     }
 
     #[test]
@@ -850,8 +1057,10 @@ mod tests {
         let result = parse_brew_outdated_json(json);
         assert_eq!(result.len(), 2);
         // Sorted by name: alacritty < zsh
-        assert_eq!(result[0].0, "alacritty");
-        assert_eq!(result[1].0, "zsh");
+        assert_eq!(result[0].name, "alacritty");
+        assert!(result[0].is_cask);
+        assert_eq!(result[1].name, "zsh");
+        assert!(!result[1].is_cask);
     }
 
     #[test]
@@ -874,7 +1083,7 @@ mod tests {
 
         let result = parse_brew_outdated_json(json);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].0, "valid");
+        assert_eq!(result[0].name, "valid");
     }
 
     #[test]
@@ -894,6 +1103,100 @@ mod tests {
         let json = r#"{"formulae": [], "casks": []}"#;
         let result = parse_brew_outdated_json(json);
         assert!(result.is_empty());
+    }
+
+    // --- parse_brew_info_json ---
+
+    #[test]
+    fn brew_info_parse_extracts_formula_metadata() {
+        let json = r#"{
+            "formulae": [
+                {
+                    "name": "git",
+                    "homepage": "https://github.com/git/git",
+                    "desc": "Distributed revision control system"
+                }
+            ]
+        }"#;
+
+        let result = parse_brew_info_json(json, false);
+        let metadata = result.get("git").expect("git metadata should exist");
+        assert_eq!(
+            metadata.homepage.as_deref(),
+            Some("https://github.com/git/git")
+        );
+        assert_eq!(
+            metadata.description.as_deref(),
+            Some("Distributed revision control system")
+        );
+    }
+
+    #[test]
+    fn brew_info_parse_extracts_cask_metadata() {
+        let json = r#"{
+            "casks": [
+                {
+                    "token": "firefox",
+                    "homepage": "https://www.mozilla.org/firefox/",
+                    "desc": "Web browser"
+                }
+            ]
+        }"#;
+
+        let result = parse_brew_info_json(json, true);
+        let metadata = result
+            .get("firefox")
+            .expect("firefox metadata should exist");
+        assert_eq!(
+            metadata.homepage.as_deref(),
+            Some("https://www.mozilla.org/firefox/")
+        );
+        assert_eq!(metadata.description.as_deref(), Some("Web browser"));
+    }
+
+    #[test]
+    fn brew_info_parse_invalid_json_returns_empty() {
+        let result = parse_brew_info_json("oops", false);
+        assert!(result.is_empty());
+    }
+
+    // --- changelog URL derivation ---
+
+    #[test]
+    fn github_owner_repo_extracts_standard_url() {
+        let result = github_owner_repo("https://github.com/BurntSushi/ripgrep");
+        assert_eq!(
+            result,
+            Some(("BurntSushi".to_string(), "ripgrep".to_string()))
+        );
+    }
+
+    #[test]
+    fn github_owner_repo_handles_git_suffix() {
+        let result = github_owner_repo("https://github.com/nix-community/nixvim.git");
+        assert_eq!(
+            result,
+            Some(("nix-community".to_string(), "nixvim".to_string()))
+        );
+    }
+
+    #[test]
+    fn brew_compare_url_for_github_homepage() {
+        let url = brew_compare_url(
+            Some("https://github.com/BurntSushi/ripgrep"),
+            "v14.1.0",
+            "14.1.1",
+        );
+        assert_eq!(
+            url.as_deref(),
+            Some("https://github.com/BurntSushi/ripgrep/compare/14.1.0...14.1.1")
+        );
+    }
+
+    #[test]
+    fn brew_compare_url_non_github_returns_none() {
+        let url = brew_compare_url(Some("https://example.com/project"), "1.0.0", "1.1.0");
+        assert!(url.is_none());
     }
 
     // --- is_fd_exhaustion ---

@@ -124,8 +124,7 @@
     "id": "info_json_found",
     "args": ["info", "ripgrep", "--json"],
     "setup": "stub_info_sources",
-    "rust_parity": false,
-    "rust_parity_reason": "Rust info output diverges from Python parity format; covered by system_command_matrix info cases."
+    "rust_parity": true
   },
   {
     "id": "info_bleeding_edge_stubbed",
@@ -138,8 +137,7 @@
     "id": "info_json_sources_not_installed",
     "args": ["info", "python3Packages.requests", "--json"],
     "setup": "stub_info_sources",
-    "rust_parity": false,
-    "rust_parity_reason": "Rust info output diverges from Python parity format; covered by system_command_matrix info cases."
+    "rust_parity": true
   },
   {
     "id": "install_dry_run_installed",

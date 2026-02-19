@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::process::Command;
 
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -6,7 +7,7 @@ use serde_json::{Map, Value};
 use crate::cli::{InfoArgs, InstalledArgs, ListArgs, WhereArgs};
 use crate::commands::context::AppContext;
 use crate::commands::shared::{SnippetMode, relative_location, show_snippet};
-use crate::domain::source::{SourcePreferences, SourceResult};
+use crate::domain::source::{PackageSource, SourcePreferences, SourceResult};
 use crate::infra::cache::MultiSourceCache;
 use crate::infra::config_scan::{PackageBuckets, scan_packages};
 use crate::infra::finder::{PackageMatch, find_package, find_package_fuzzy};
@@ -106,7 +107,7 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
         let mut cache = MultiSourceCache::load(&ctx.repo_root).ok();
         let sources = collect_info_sources(package, args, &ctx.repo_root, &mut cache)
             .into_iter()
-            .map(InfoSourceJson::from)
+            .map(info_source_json_from_result)
             .collect();
 
         let output = InfoJsonOutput {
@@ -477,22 +478,338 @@ struct InfoJsonOutput {
 #[derive(Serialize)]
 struct InfoSourceJson {
     source: String,
-    name: String,
     version: Option<String>,
-    confidence: f64,
-    description: String,
+    description: Option<String>,
+    homepage: Option<String>,
+    license: Option<String>,
+    dependencies: Option<Vec<String>>,
+    build_dependencies: Option<Vec<String>>,
+    caveats: Option<String>,
+    artifacts: Option<Vec<String>>,
+    broken: bool,
+    insecure: bool,
+    head_available: bool,
 }
 
-impl From<SourceResult> for InfoSourceJson {
-    fn from(value: SourceResult) -> Self {
+fn info_source_json_from_result(value: SourceResult) -> InfoSourceJson {
+    let seed = InfoSourceSeed::new(value);
+    match seed.source {
+        PackageSource::Nxs | PackageSource::Nur | PackageSource::FlakeInput => {
+            info_source_json_nix(seed)
+        }
+        PackageSource::Homebrew => info_source_json_homebrew(seed),
+        PackageSource::Cask => info_source_json_cask(seed),
+        PackageSource::Mas => info_source_json_mas(seed),
+    }
+}
+
+struct InfoSourceSeed {
+    source: PackageSource,
+    source_name: String,
+    lookup_name: String,
+    version: Option<String>,
+    fallback_description: Option<String>,
+}
+
+impl InfoSourceSeed {
+    fn new(value: SourceResult) -> Self {
+        let lookup_name = value.attr.clone().unwrap_or_else(|| value.name.clone());
         Self {
-            source: value.source.to_string(),
-            name: value.name,
+            source: value.source,
+            source_name: value.source.to_string(),
+            lookup_name,
             version: value.version,
-            confidence: value.confidence,
-            description: value.description,
+            fallback_description: (!value.description.is_empty()).then_some(value.description),
         }
     }
+}
+
+fn info_source_json_nix(seed: InfoSourceSeed) -> InfoSourceJson {
+    let metadata = nix_info_metadata(&seed.lookup_name);
+    InfoSourceJson {
+        source: seed.source_name,
+        version: seed
+            .version
+            .or_else(|| metadata.as_ref().and_then(|meta| meta.version.clone())),
+        description: metadata
+            .as_ref()
+            .and_then(|meta| meta.description.clone())
+            .or(seed.fallback_description),
+        homepage: metadata.as_ref().and_then(|meta| meta.homepage.clone()),
+        license: metadata.as_ref().and_then(|meta| meta.license.clone()),
+        dependencies: None,
+        build_dependencies: None,
+        caveats: None,
+        artifacts: None,
+        broken: metadata.as_ref().is_some_and(|meta| meta.broken),
+        insecure: metadata.as_ref().is_some_and(|meta| meta.insecure),
+        head_available: false,
+    }
+}
+
+fn info_source_json_homebrew(seed: InfoSourceSeed) -> InfoSourceJson {
+    let metadata = brew_formula_metadata(&seed.lookup_name);
+    let (
+        metadata_version,
+        metadata_description,
+        metadata_homepage,
+        metadata_license,
+        dependencies,
+        build_dependencies,
+        caveats,
+        head_available,
+    ) = metadata.map_or((None, None, None, None, None, None, None, false), |meta| {
+        (
+            meta.version,
+            meta.description,
+            meta.homepage,
+            meta.license,
+            meta.dependencies,
+            meta.build_dependencies,
+            meta.caveats,
+            meta.head_available,
+        )
+    });
+    InfoSourceJson {
+        source: seed.source_name,
+        version: seed.version.or(metadata_version),
+        description: metadata_description.or(seed.fallback_description),
+        homepage: metadata_homepage,
+        license: metadata_license,
+        dependencies,
+        build_dependencies,
+        caveats,
+        artifacts: None,
+        broken: false,
+        insecure: false,
+        head_available,
+    }
+}
+
+fn info_source_json_cask(seed: InfoSourceSeed) -> InfoSourceJson {
+    let metadata = brew_cask_metadata(&seed.lookup_name);
+    let (metadata_version, metadata_description, metadata_homepage, artifacts) =
+        metadata.map_or((None, None, None, None), |meta| {
+            (
+                meta.version,
+                meta.description,
+                meta.homepage,
+                meta.artifacts,
+            )
+        });
+    InfoSourceJson {
+        source: seed.source_name,
+        version: seed.version.or(metadata_version),
+        description: metadata_description.or(seed.fallback_description),
+        homepage: metadata_homepage,
+        license: None,
+        dependencies: None,
+        build_dependencies: None,
+        caveats: None,
+        artifacts,
+        broken: false,
+        insecure: false,
+        head_available: false,
+    }
+}
+
+fn info_source_json_mas(seed: InfoSourceSeed) -> InfoSourceJson {
+    InfoSourceJson {
+        source: seed.source_name,
+        version: seed.version,
+        description: seed.fallback_description,
+        homepage: None,
+        license: None,
+        dependencies: None,
+        build_dependencies: None,
+        caveats: None,
+        artifacts: None,
+        broken: false,
+        insecure: false,
+        head_available: false,
+    }
+}
+
+#[derive(Default)]
+struct NixInfoMetadata {
+    version: Option<String>,
+    description: Option<String>,
+    homepage: Option<String>,
+    license: Option<String>,
+    broken: bool,
+    insecure: bool,
+}
+
+#[derive(Default)]
+struct BrewFormulaMetadata {
+    version: Option<String>,
+    description: Option<String>,
+    homepage: Option<String>,
+    license: Option<String>,
+    dependencies: Option<Vec<String>>,
+    build_dependencies: Option<Vec<String>>,
+    caveats: Option<String>,
+    head_available: bool,
+}
+
+#[derive(Default)]
+struct BrewCaskMetadata {
+    version: Option<String>,
+    description: Option<String>,
+    homepage: Option<String>,
+    artifacts: Option<Vec<String>>,
+}
+
+fn nix_info_metadata(attr: &str) -> Option<NixInfoMetadata> {
+    let mut meta = NixInfoMetadata {
+        version: eval_nix_attr(attr, "version").and_then(|value| json_to_string(&value)),
+        ..NixInfoMetadata::default()
+    };
+
+    let meta_json = eval_nix_attr(attr, "meta")?;
+    meta.description = json_field_string(&meta_json, "description");
+    meta.homepage = json_field_string(&meta_json, "homepage");
+    meta.license = json_field_license(&meta_json);
+    meta.broken = json_field_bool(&meta_json, "broken");
+    meta.insecure = json_field_bool(&meta_json, "insecure");
+    Some(meta)
+}
+
+fn brew_formula_metadata(name: &str) -> Option<BrewFormulaMetadata> {
+    let entry = brew_info_entry(name, false)?;
+    let versions = entry.get("versions");
+    Some(BrewFormulaMetadata {
+        version: versions
+            .and_then(|value| value.get("stable"))
+            .and_then(json_to_string),
+        description: json_field_string(&entry, "desc"),
+        homepage: json_field_string(&entry, "homepage"),
+        license: json_field_string(&entry, "license"),
+        dependencies: json_field_string_list(&entry, "dependencies"),
+        build_dependencies: json_field_string_list(&entry, "build_dependencies"),
+        caveats: json_field_string(&entry, "caveats"),
+        head_available: versions
+            .and_then(|value| value.get("head"))
+            .is_some_and(|value| !value.is_null()),
+    })
+}
+
+fn brew_cask_metadata(name: &str) -> Option<BrewCaskMetadata> {
+    let entry = brew_info_entry(name, true)?;
+    Some(BrewCaskMetadata {
+        version: json_field_string(&entry, "version"),
+        description: json_field_string(&entry, "desc"),
+        homepage: json_field_string(&entry, "homepage"),
+        artifacts: parse_cask_artifacts(entry.get("artifacts")),
+    })
+}
+
+fn eval_nix_attr(attr: &str, suffix: &str) -> Option<Value> {
+    for target in ["nxs", "nixpkgs", "github:nixos/nixpkgs/nixos-unstable"] {
+        let query = format!("{target}#{attr}.{suffix}");
+        if let Some(value) = run_json_command("nix", &["eval", "--json", &query]) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn brew_info_entry(name: &str, is_cask: bool) -> Option<Value> {
+    let mut args = vec!["info", "--json=v2"];
+    if is_cask {
+        args.push("--cask");
+    }
+    args.push(name);
+    let key = if is_cask { "casks" } else { "formulae" };
+    let data = run_json_command("brew", &args)?;
+    data.get(key)
+        .and_then(Value::as_array)
+        .and_then(|entries| entries.first().cloned())
+}
+
+fn run_json_command(program: &str, args: &[&str]) -> Option<Value> {
+    let output = Command::new(program)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+fn json_field_string(value: &Value, key: &str) -> Option<String> {
+    value.get(key).and_then(json_to_string)
+}
+
+fn json_field_bool(value: &Value, key: &str) -> bool {
+    value.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn json_field_string_list(value: &Value, key: &str) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    for item in value.get(key).and_then(Value::as_array)? {
+        let Some(text) = item.as_str() else {
+            continue;
+        };
+        out.push(text.to_string());
+    }
+    Some(out)
+}
+
+fn json_field_license(meta: &Value) -> Option<String> {
+    let license = meta.get("license")?;
+    match license {
+        Value::String(text) => Some(text.clone()),
+        Value::Object(map) => map
+            .get("spdxId")
+            .and_then(json_to_string)
+            .or_else(|| map.get("fullName").and_then(json_to_string)),
+        Value::Array(items) => items.first().and_then(|first| match first {
+            Value::Object(map) => map
+                .get("spdxId")
+                .and_then(json_to_string)
+                .or_else(|| map.get("fullName").and_then(json_to_string)),
+            Value::String(text) => Some(text.clone()),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+fn json_to_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.clone()),
+        _ => None,
+    }
+}
+
+fn parse_cask_artifacts(raw: Option<&Value>) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    for artifact in raw.and_then(Value::as_array)? {
+        let Some(map) = artifact.as_object() else {
+            continue;
+        };
+        for key in ["app", "binary", "pkg"] {
+            let Some(value) = map.get(key) else {
+                continue;
+            };
+            match value {
+                Value::String(item) => out.push(item.clone()),
+                Value::Array(items) => {
+                    for item in items {
+                        if let Some(text) = item.as_str() {
+                            out.push(text.to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 impl<'a> From<&'a PackageBuckets> for ListJsonOutput<'a> {
@@ -673,18 +990,28 @@ mod tests {
 
     #[test]
     fn info_source_json_serializes_required_metadata() {
-        let source = source_result("ripgrep", PackageSource::Nxs, Some("ripgrep"), 0.87);
-        let entry = InfoSourceJson::from(source);
+        let source = source_result("mas-app", PackageSource::Mas, Some("mas-app"), 0.87);
+        let entry = info_source_json_from_result(source);
         let value = serde_json::to_value(entry).expect("source json should serialize");
 
-        assert_eq!(value.get("source").and_then(Value::as_str), Some("nxs"));
-        assert_eq!(value.get("name").and_then(Value::as_str), Some("ripgrep"));
+        assert_eq!(value.get("source").and_then(Value::as_str), Some("mas"));
         assert_eq!(value.get("version").and_then(Value::as_str), Some("1.2.3"));
         assert_eq!(
             value.get("description").and_then(Value::as_str),
             Some("desc")
         );
-        assert_eq!(value.get("confidence").and_then(Value::as_f64), Some(0.87));
+        assert!(value.get("homepage").is_some_and(Value::is_null));
+        assert!(value.get("license").is_some_and(Value::is_null));
+        assert!(value.get("dependencies").is_some_and(Value::is_null));
+        assert!(value.get("build_dependencies").is_some_and(Value::is_null));
+        assert!(value.get("caveats").is_some_and(Value::is_null));
+        assert!(value.get("artifacts").is_some_and(Value::is_null));
+        assert_eq!(value.get("broken").and_then(Value::as_bool), Some(false));
+        assert_eq!(value.get("insecure").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            value.get("head_available").and_then(Value::as_bool),
+            Some(false)
+        );
     }
 
     #[test]

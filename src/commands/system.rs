@@ -279,22 +279,21 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
         return;
     }
 
-    ctx.printer.detail(&format!(
-        "{} outdated package{}",
-        outdated.len(),
-        if outdated.len() == 1 { "" } else { "s" }
-    ));
+    println!();
+    println!("  Homebrew Outdated ({})", outdated.len());
 
     for package in &outdated {
+        println!();
+        println!("  {}", package.name);
         println!(
-            "  {}: {} \u{2192} {}",
-            package.name, package.installed_version, package.current_version
+            "    {} \u{2192} {}",
+            package.installed_version, package.current_version
         );
 
         if let Some(changelog_url) = &package.changelog_url {
-            println!("    changelog: {changelog_url}");
+            println!("    {changelog_url}");
         } else if let Some(homepage) = &package.homepage {
-            println!("    homepage: {homepage}");
+            println!("    {homepage}");
         }
     }
 

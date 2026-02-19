@@ -276,6 +276,24 @@
     "rust_parity": true
   },
   {
+    "id": "upgrade_brew_stubbed_with_updates",
+    "args": ["upgrade", "--skip-commit", "--no-ai"],
+    "setup": "stub_upgrade_brew_outdated",
+    "rust_parity": true
+  },
+  {
+    "id": "upgrade_brew_stubbed_with_updates_dry_run",
+    "args": ["upgrade", "--dry-run", "--no-ai"],
+    "setup": "stub_upgrade_brew_outdated",
+    "rust_parity": true
+  },
+  {
+    "id": "upgrade_brew_stubbed_with_updates_skip_rebuild",
+    "args": ["upgrade", "--skip-rebuild", "--skip-commit", "--no-ai"],
+    "setup": "stub_upgrade_brew_outdated",
+    "rust_parity": true
+  },
+  {
     "id": "upgrade_dry_run_skip_brew",
     "args": ["upgrade", "--dry-run", "--skip-brew"],
     "rust_parity": true

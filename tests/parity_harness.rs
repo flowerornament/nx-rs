@@ -53,6 +53,7 @@ enum CaseSetup {
     StubInfoSourcesBleedingEdge,
     StubInstallSources,
     StubInstallSourcesCacheHit,
+    StubUpgradeBrewOutdated,
     ModifiedTrackedFile,
 }
 
@@ -380,7 +381,8 @@ fn apply_setup(repo_root: &Path, setup: CaseSetup) -> Result<(), Box<dyn Error>>
         | CaseSetup::StubInfoSources
         | CaseSetup::StubInfoSourcesBleedingEdge
         | CaseSetup::StubInstallSources
-        | CaseSetup::StubInstallSourcesCacheHit => {
+        | CaseSetup::StubInstallSourcesCacheHit
+        | CaseSetup::StubUpgradeBrewOutdated => {
             install_system_stubs(repo_root)?;
             materialize_test_layout(repo_root, TestLayout::None)?;
             Ok(())
@@ -595,6 +597,27 @@ fn write_brew_stub(stub_bin: &Path) -> Result<(), Box<dyn Error>> {
 mode="${NX_PARITY_MODE:-stub_system_success}"
 
 if [ "$1" = "outdated" ] && [ "$2" = "--json" ]; then
+  if [ "$mode" = "stub_upgrade_brew_outdated" ]; then
+    cat <<'JSON'
+{
+  "formulae": [
+    {
+      "name": "fd",
+      "installed_versions": ["9.0.0"],
+      "current_version": "10.0.0"
+    }
+  ],
+  "casks": [
+    {
+      "name": "ghostty",
+      "installed_versions": "1.0.0",
+      "current_version": "1.1.0"
+    }
+  ]
+}
+JSON
+    exit 0
+  fi
   echo '{"formulae":[],"casks":[]}'
   exit 0
 fi
@@ -622,6 +645,15 @@ if [ "$1" = "info" ] && [ "$2" = "--json=v2" ]; then
       exit 0
     fi
     echo '{"formulae":[]}'
+    exit 0
+  fi
+
+  if [ "$mode" = "stub_upgrade_brew_outdated" ]; then
+    if [ "$3" = "--cask" ]; then
+      echo '{"casks":[{"token":"ghostty","homepage":"https://ghostty.example.test","desc":"Stub Ghostty cask"}]}'
+      exit 0
+    fi
+    echo '{"formulae":[{"name":"fd","homepage":"https://fd.example.test","desc":"Stub fd formula"}]}'
     exit 0
   fi
 
@@ -805,6 +837,7 @@ fn uses_system_stubs(setup: CaseSetup) -> bool {
             | CaseSetup::StubInfoSourcesBleedingEdge
             | CaseSetup::StubInstallSources
             | CaseSetup::StubInstallSourcesCacheHit
+            | CaseSetup::StubUpgradeBrewOutdated
     )
 }
 
@@ -821,6 +854,7 @@ fn setup_mode(setup: CaseSetup) -> Option<&'static str> {
         CaseSetup::StubInfoSourcesBleedingEdge => Some("stub_info_sources_bleeding_edge"),
         CaseSetup::StubInstallSources => Some("stub_install_sources"),
         CaseSetup::StubInstallSourcesCacheHit => Some("stub_install_sources_cache_hit"),
+        CaseSetup::StubUpgradeBrewOutdated => Some("stub_upgrade_brew_outdated"),
         CaseSetup::None
         | CaseSetup::UntrackedNix
         | CaseSetup::DefaultLaunchdService

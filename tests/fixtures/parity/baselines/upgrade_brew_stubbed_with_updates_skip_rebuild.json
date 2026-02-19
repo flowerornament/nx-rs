@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "stdout": "\n> Updating flake inputs\n  stub nix flake update ok\n+ All flake inputs up to date\n\n> Checking Homebrew updates\n\n  Homebrew Outdated (2)\n\n  fd\n    9.0.0 → 10.0.0\n    https://fd.example.test\n\n  ghostty\n    1.0.0 → 1.1.0\n    https://ghostty.example.test\n\n> Upgrading 2 Homebrew packages\n\n  stub brew upgrade ok\n\n+ Homebrew packages upgraded",
+  "stderr": "",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

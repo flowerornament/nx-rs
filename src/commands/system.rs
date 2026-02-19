@@ -4,6 +4,7 @@ use std::path::Path;
 use crate::cli::{PassthroughArgs, UpgradeArgs};
 use crate::commands::context::AppContext;
 use crate::domain::upgrade::{InputChange, diff_locks, load_flake_lock, short_rev};
+use crate::infra::ai_engine::DEFAULT_CODEX_MODEL;
 use crate::infra::shell::{
     CapturedCommand, run_captured_command, run_indented_command, run_indented_command_collecting,
 };
@@ -320,7 +321,7 @@ fn summarize_with_codex(
     let prompt = build_codex_summary_prompt(target, commits);
     run_ai_summary(
         "codex",
-        &["exec", "-m", "o4-mini", "--full-auto", &prompt],
+        &["exec", "-m", DEFAULT_CODEX_MODEL, "--full-auto", &prompt],
         max_lines,
         max_chars,
     )

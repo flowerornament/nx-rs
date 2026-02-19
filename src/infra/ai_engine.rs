@@ -7,6 +7,8 @@ use crate::domain::plan::InstallPlan;
 use crate::domain::source::PackageSource;
 use crate::infra::shell::{CapturedCommand, run_captured_command};
 
+pub const DEFAULT_CODEX_MODEL: &str = "gpt-5-codex-mini";
+
 // --- Types
 
 /// AI engine routing decision: which file to target and any warnings.
@@ -75,7 +77,7 @@ pub struct CodexEngine {
 impl CodexEngine {
     pub fn new(model: Option<&str>) -> Self {
         Self {
-            model: model.unwrap_or("o4-mini").to_string(),
+            model: model.unwrap_or(DEFAULT_CODEX_MODEL).to_string(),
         }
     }
 }
@@ -833,6 +835,12 @@ mod tests {
         let engine = CodexEngine::new(None);
         assert!(!engine.supports_flake_input());
         assert_eq!(engine.name(), "codex");
+    }
+
+    #[test]
+    fn codex_engine_uses_default_model() {
+        let engine = CodexEngine::new(None);
+        assert_eq!(engine.model, DEFAULT_CODEX_MODEL);
     }
 
     #[test]

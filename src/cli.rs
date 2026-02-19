@@ -47,21 +47,35 @@ pub struct Cli {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum CommandKind {
+    #[command(about = "Install package(s) into nix config")]
     Install(InstallArgs),
     #[command(alias = "rm", alias = "uninstall")]
+    #[command(about = "Remove package(s) from nix config")]
     Remove(RemoveArgs),
     #[command(alias = "secrets")]
+    #[command(about = "Manage encrypted secrets via sops")]
     Secret(SecretArgs),
+    #[command(about = "Search package sources without installing")]
     Search(SearchArgs),
+    #[command(about = "Show where a package is declared")]
     Where(WhereArgs),
+    #[command(about = "List installed packages by source")]
     List(ListArgs),
+    #[command(about = "Show package metadata and source candidates")]
     Info(InfoArgs),
+    #[command(about = "Show package distribution summary")]
     Status,
+    #[command(about = "Check whether package(s) are installed")]
     Installed(InstalledArgs),
+    #[command(about = "Revert modified tracked files via git checkout")]
     Undo,
+    #[command(about = "Run nix flake update")]
     Update(PassthroughArgs),
+    #[command(about = "Run repo quality checks")]
     Test,
+    #[command(about = "Run darwin-rebuild switch with preflight checks")]
     Rebuild(PassthroughArgs),
+    #[command(about = "Run full upgrade flow (flake, brew, rebuild, commit)")]
     Upgrade(UpgradeArgs),
 }
 
@@ -121,6 +135,7 @@ pub struct RemoveArgs {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(about = "Manage encrypted secrets via sops")]
 pub struct SecretArgs {
     #[command(subcommand)]
     pub command: SecretCommand,
@@ -128,21 +143,31 @@ pub struct SecretArgs {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum SecretCommand {
+    #[command(about = "Add or update a secret key/value")]
     Add(SecretAddArgs),
 }
 
 #[derive(Debug, Clone, Parser)]
 pub struct SecretAddArgs {
-    #[arg(value_name = "KEY")]
+    #[arg(
+        value_name = "KEY",
+        help = "Secret key name (lowercase letters, digits, underscores)"
+    )]
     pub key: String,
     #[arg(
         long,
         value_name = "VALUE",
+        help = "Secret value passed directly as an argument (prefer --value-stdin)",
         required_unless_present = "value_stdin",
         conflicts_with = "value_stdin"
     )]
     pub value: Option<String>,
-    #[arg(long, required_unless_present = "value", conflicts_with = "value")]
+    #[arg(
+        long,
+        help = "Read secret value from stdin",
+        required_unless_present = "value",
+        conflicts_with = "value"
+    )]
     pub value_stdin: bool,
 }
 

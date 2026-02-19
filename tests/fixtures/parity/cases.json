@@ -295,6 +295,13 @@
     "rust_parity": true
   },
   {
+    "id": "undo_dirty_confirmed",
+    "args": ["undo"],
+    "stdin": "y\n",
+    "setup": "modified_tracked_file",
+    "rust_parity": true
+  },
+  {
     "id": "upgrade_brew_stubbed_no_updates",
     "args": ["upgrade", "--skip-rebuild", "--skip-commit", "--no-ai"],
     "setup": "stub_system_success",

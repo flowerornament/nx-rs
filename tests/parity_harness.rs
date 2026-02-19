@@ -7,7 +7,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 use regex::Regex;
@@ -23,6 +23,8 @@ const PARITY_RUST_BIN_ENV: &str = "NX_RUST_PARITY_BIN";
 struct CaseSpec {
     id: String,
     args: Vec<String>,
+    #[serde(default)]
+    stdin: Option<String>,
     #[serde(default)]
     setup: CaseSetup,
     #[serde(default = "default_true")]
@@ -804,7 +806,7 @@ fn run_target_case(
         command.env("no_proxy", "");
     }
 
-    let output = command.output()?;
+    let output = run_command_with_optional_stdin(&mut command, case.stdin.as_deref())?;
     let after = snapshot_repo_files(repo_root)?;
 
     Ok(ParityOutcome {
@@ -821,6 +823,24 @@ fn run_target_case(
         ),
         file_diff: diff_snapshots(&before, &after),
     })
+}
+
+fn run_command_with_optional_stdin(
+    command: &mut Command,
+    stdin: Option<&str>,
+) -> Result<std::process::Output, Box<dyn Error>> {
+    if let Some(input) = stdin {
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn()?;
+        if let Some(mut child_stdin) = child.stdin.take() {
+            child_stdin.write_all(input.as_bytes())?;
+        }
+        return Ok(child.wait_with_output()?);
+    }
+    Ok(command.output()?)
 }
 
 fn uses_system_stubs(setup: CaseSetup) -> bool {
@@ -949,6 +969,7 @@ fn normalize_text(input: &str, repo_root: &Path, workspace_root: &Path) -> Strin
     normalized = replace_path_tokens(normalized, workspace_root, "<WORKSPACE_ROOT>");
     normalized = normalize_unittest_timing(&normalized);
     normalized = normalize_rebuild_ulimit_wrapper(&normalized);
+    normalized = normalize_confirm_prompt_newline(&normalized);
     normalized
         .lines()
         .map(str::trim_end)
@@ -972,6 +993,12 @@ fn normalize_rebuild_ulimit_wrapper(input: &str) -> String {
             input,
             "stub sudo /run/current-system/sw/bin/darwin-rebuild switch --flake",
         )
+        .into_owned()
+}
+
+fn normalize_confirm_prompt_newline(input: &str) -> String {
+    confirm_prompt_newline_regex()
+        .replace_all(input, "$1 + ")
         .into_owned()
 }
 
@@ -1003,6 +1030,14 @@ fn rebuild_ulimit_wrapper_regex() -> &'static Regex {
             r"stub sudo bash -lc ulimit -n \d+ 2>/dev/null; exec\s*\n\s*/run/current-system/sw/bin/darwin-rebuild switch --flake",
         )
         .expect("invalid rebuild ulimit wrapper regex")
+    })
+}
+
+fn confirm_prompt_newline_regex() -> &'static Regex {
+    static CONFIRM_PROMPT_NEWLINE_REGEX: OnceLock<Regex> = OnceLock::new();
+    CONFIRM_PROMPT_NEWLINE_REGEX.get_or_init(|| {
+        Regex::new(r"(\?\s\[[Yy]/[Nn]\]:)\s*\n\s*\+\s")
+            .expect("invalid confirm prompt newline regex")
     })
 }
 
@@ -1051,4 +1086,18 @@ fn normalize_rebuild_ulimit_wrapper_leaves_other_commands_unchanged() {
     let input = "stub sudo /run/current-system/sw/bin/darwin-rebuild switch --flake";
     let output = normalize_rebuild_ulimit_wrapper(input);
     assert_eq!(output, input);
+}
+
+#[test]
+fn normalize_confirm_prompt_newline_collapses_multiline_success() {
+    let input = "Revert all changes? [y/N]:\n+ Reverted 1 files";
+    let output = normalize_confirm_prompt_newline(input);
+    assert_eq!(output, "Revert all changes? [y/N]: + Reverted 1 files");
+}
+
+#[test]
+fn normalize_confirm_prompt_newline_handles_space_before_linebreak() {
+    let input = "Revert all changes? [y/N]: \n  + Reverted 1 files";
+    let output = normalize_confirm_prompt_newline(input);
+    assert_eq!(output, "Revert all changes? [y/N]: + Reverted 1 files");
 }

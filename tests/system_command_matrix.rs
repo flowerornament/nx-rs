@@ -5,9 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use tempfile::TempDir;
 
@@ -37,6 +37,7 @@ const UPDATE_BASE_ARGS: &[&str] = &["update"];
 const TEST_BASE_ARGS: &[&str] = &["test"];
 const REBUILD_PASSTHROUGH_ARGS: &[&str] = &["rebuild", "--", "--show-trace", "foo"];
 const REBUILD_BASE_ARGS: &[&str] = &["rebuild"];
+const UNDO_BASE_ARGS: &[&str] = &["undo"];
 const INSTALL_MISSING_ARGS: &[&str] = &["install"];
 const REMOVE_MISSING_ARGS: &[&str] = &["remove"];
 const WHERE_MISSING_ARGS: &[&str] = &["where"];
@@ -130,6 +131,7 @@ enum StubMode {
     PreflightUntracked,
     DarwinRebuildFail,
     UpgradeFlakeChanged,
+    UndoDirty,
 }
 
 impl StubMode {
@@ -145,6 +147,7 @@ impl StubMode {
             Self::PreflightUntracked => "preflight_untracked",
             Self::DarwinRebuildFail => "darwin_rebuild_fail",
             Self::UpgradeFlakeChanged => "upgrade_flake_changed",
+            Self::UndoDirty => "undo_dirty",
         }
     }
 
@@ -276,6 +279,26 @@ const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
     ),
 ];
 
+const UNDO_CLEAN_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
+    "git",
+    ExpectedCwd::RepoRoot,
+    &["status", "--porcelain"],
+)];
+
+const UNDO_CONFIRMED_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", ExpectedCwd::RepoRoot, &["status", "--porcelain"]),
+    ExpectedCall::new(
+        "git",
+        ExpectedCwd::RepoRoot,
+        &["diff", "--stat", "packages/nix/cli.nix"],
+    ),
+    ExpectedCall::new(
+        "git",
+        ExpectedCwd::RepoRoot,
+        &["checkout", "--", "packages/nix/cli.nix"],
+    ),
+];
+
 const NO_CALLS: &[ExpectedCall] = &[];
 
 const UPGRADE_COMMIT_CALLS: &[ExpectedCall] = &[
@@ -344,6 +367,22 @@ const MATRIX_CASES: &[MatrixCase] = &[
         expected_exit: 2,
         expected_calls: Some(NO_CALLS),
         stdout_contains: &[],
+    },
+    MatrixCase {
+        id: "undo_clean_noop",
+        cli_args: UNDO_BASE_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 0,
+        expected_calls: Some(UNDO_CLEAN_CALLS),
+        stdout_contains: &["Nothing to undo."],
+    },
+    MatrixCase {
+        id: "undo_dirty_confirmed_reverts",
+        cli_args: UNDO_BASE_ARGS,
+        mode: StubMode::UndoDirty,
+        expected_exit: 0,
+        expected_calls: Some(UNDO_CONFIRMED_CALLS),
+        stdout_contains: &["Undo Changes (1 files)", "Reverted 1 files"],
     },
     MatrixCase {
         id: "update_success_passthrough",
@@ -550,7 +589,7 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &MatrixCase) -> Result<(), Bo
         )
         .env("PATH", prepend_path(&stub_dir));
 
-    let output = command.output()?;
+    let output = run_command_with_optional_stdin(&mut command, case_stdin(case.id))?;
     let after = snapshot_repo_files(repo_root.path())?;
     let invocations = read_invocations(&log_path)?;
     let exit_code = output.status.code().unwrap_or(-1);
@@ -580,6 +619,31 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &MatrixCase) -> Result<(), Bo
     assert_repo_state(case, &before, &after, &stdout, &stderr);
 
     Ok(())
+}
+
+fn case_stdin(case_id: &str) -> Option<&'static str> {
+    match case_id {
+        "undo_dirty_confirmed_reverts" => Some("y\n"),
+        _ => None,
+    }
+}
+
+fn run_command_with_optional_stdin(
+    command: &mut Command,
+    stdin: Option<&str>,
+) -> Result<std::process::Output, Box<dyn Error>> {
+    if let Some(input) = stdin {
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn()?;
+        if let Some(mut child_stdin) = child.stdin.take() {
+            child_stdin.write_all(input.as_bytes())?;
+        }
+        return Ok(child.wait_with_output()?);
+    }
+    Ok(command.output()?)
 }
 
 fn prepend_path(stub_dir: &Path) -> String {
@@ -857,6 +921,24 @@ case "$program" in
 
     if [ "${1:-}" = "rev-parse" ] && [ "${2:-}" = "--show-toplevel" ]; then
       pwd
+      exit 0
+    fi
+
+    if [ "${1:-}" = "status" ] && [ "${2:-}" = "--porcelain" ]; then
+      if [ "$mode" = "undo_dirty" ]; then
+        echo " M packages/nix/cli.nix"
+      fi
+      exit 0
+    fi
+
+    if [ "${1:-}" = "diff" ] && [ "${2:-}" = "--stat" ]; then
+      if [ "$mode" = "undo_dirty" ]; then
+        echo " 1 file changed, 1 insertion(+)"
+      fi
+      exit 0
+    fi
+
+    if [ "${1:-}" = "checkout" ] && [ "${2:-}" = "--" ]; then
       exit 0
     fi
 

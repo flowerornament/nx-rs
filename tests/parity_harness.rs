@@ -748,6 +748,7 @@ fn normalize_text(input: &str, repo_root: &Path, workspace_root: &Path) -> Strin
     normalized = replace_path_tokens(normalized, repo_root, "<REPO_ROOT>");
     normalized = replace_path_tokens(normalized, workspace_root, "<WORKSPACE_ROOT>");
     normalized = normalize_unittest_timing(&normalized);
+    normalized = normalize_rebuild_ulimit_wrapper(&normalized);
     normalized
         .lines()
         .map(str::trim_end)
@@ -762,6 +763,15 @@ fn normalize_unittest_timing(input: &str) -> String {
         .replace_all(input, |caps: &regex::Captures<'_>| {
             format!("{}0.000{}", &caps[1], &caps[2])
         })
+        .into_owned()
+}
+
+fn normalize_rebuild_ulimit_wrapper(input: &str) -> String {
+    rebuild_ulimit_wrapper_regex()
+        .replace_all(
+            input,
+            "stub sudo /run/current-system/sw/bin/darwin-rebuild switch --flake",
+        )
         .into_owned()
 }
 
@@ -783,6 +793,16 @@ fn unittest_timing_regex() -> &'static Regex {
     UNITTEST_TIMING_REGEX.get_or_init(|| {
         Regex::new(r"(Ran\s+\d+\s+tests?\s+in\s+)\d+\.\d+(s)")
             .expect("invalid unittest timing regex")
+    })
+}
+
+fn rebuild_ulimit_wrapper_regex() -> &'static Regex {
+    static REBUILD_ULIMIT_WRAPPER_REGEX: OnceLock<Regex> = OnceLock::new();
+    REBUILD_ULIMIT_WRAPPER_REGEX.get_or_init(|| {
+        Regex::new(
+            r"stub sudo bash -lc ulimit -n \d+ 2>/dev/null; exec\s*\n\s*/run/current-system/sw/bin/darwin-rebuild switch --flake",
+        )
+        .expect("invalid rebuild ulimit wrapper regex")
     })
 }
 
@@ -813,5 +833,22 @@ Ran 12 tests in 0.000s"
 fn normalize_unittest_timing_leaves_other_lines_unchanged() {
     let input = "running 1 test\npass";
     let output = normalize_unittest_timing(input);
+    assert_eq!(output, input);
+}
+
+#[test]
+fn normalize_rebuild_ulimit_wrapper_collapses_to_direct_stub_command() {
+    let input = "stub sudo bash -lc ulimit -n 8192 2>/dev/null; exec\n  /run/current-system/sw/bin/darwin-rebuild switch --flake";
+    let output = normalize_rebuild_ulimit_wrapper(input);
+    assert_eq!(
+        output,
+        "stub sudo /run/current-system/sw/bin/darwin-rebuild switch --flake"
+    );
+}
+
+#[test]
+fn normalize_rebuild_ulimit_wrapper_leaves_other_commands_unchanged() {
+    let input = "stub sudo /run/current-system/sw/bin/darwin-rebuild switch --flake";
+    let output = normalize_rebuild_ulimit_wrapper(input);
     assert_eq!(output, input);
 }

@@ -11,8 +11,8 @@ use crate::domain::plan::{
 };
 use crate::domain::source::{SourcePreferences, SourceResult, detect_language_package};
 use crate::infra::ai_engine::{
-    AiEngine, CommandOutcome, build_edit_prompt, build_routing_context, run_edit_with_callback,
-    select_engine,
+    AiEngine, ClaudeEngine, CommandOutcome, build_edit_prompt, build_routing_context,
+    run_edit_with_callback, select_engine,
 };
 use crate::infra::cache::MultiSourceCache;
 use crate::infra::file_edit::{EditOutcome, apply_edit};
@@ -154,10 +154,15 @@ fn install_one(
             "[DRY RUN] Would add '{}' to {rel_target}",
             plan.package_token
         ));
+        maybe_setup_service(&sr.name, args, ctx);
         return true;
     }
 
-    execute_edit(&plan, &rel_target, ctx, engine)
+    let installed = execute_edit(&plan, &rel_target, ctx, engine);
+    if installed {
+        maybe_setup_service(&sr.name, args, ctx);
+    }
+    installed
 }
 
 /// Refine routing for general nix packages via AI engine.
@@ -320,6 +325,65 @@ fn report_deterministic_edit(
             false
         }
     }
+}
+
+fn maybe_setup_service(package_name: &str, args: &InstallArgs, ctx: &AppContext) {
+    maybe_setup_service_with(package_name, args, ctx, |prompt| {
+        let service_engine = ClaudeEngine::new(args.model.as_deref());
+        service_engine.run_edit(prompt, &ctx.repo_root)
+    });
+}
+
+fn maybe_setup_service_with<F>(
+    package_name: &str,
+    args: &InstallArgs,
+    ctx: &AppContext,
+    mut run_service_edit: F,
+) where
+    F: FnMut(&str) -> CommandOutcome,
+{
+    if !args.service {
+        return;
+    }
+
+    if args.dry_run {
+        ctx.printer.detail(&format!(
+            "[DRY RUN] Would add launchd.agents.{package_name}"
+        ));
+        return;
+    }
+
+    let services_path = ctx.config_files.services();
+    let services_target = services_path
+        .strip_prefix(&ctx.repo_root)
+        .unwrap_or(services_path.as_path())
+        .display()
+        .to_string();
+    let prompt = build_service_prompt(package_name, &services_target);
+    let outcome = run_service_edit(&prompt);
+
+    if outcome.success {
+        ctx.printer
+            .success(&format!("launchd.agents.{package_name} added"));
+        return;
+    }
+
+    let message = outcome.output.trim();
+    if message.is_empty() {
+        ctx.printer.warn("Service setup failed: unknown error");
+    } else {
+        ctx.printer
+            .warn(&format!("Service setup failed: {message}"));
+    }
+}
+
+fn build_service_prompt(name: &str, services_file: &str) -> String {
+    format!(
+        "Add a launchd agent for {name} to {services_file}.\n\n\
+         Read the existing file to understand the pattern, then create a service configuration.\n\
+         The binary is likely at /opt/homebrew/opt/{name}/bin/{name} or in the nix store.\n\n\
+         Use the Edit tool to add the configuration."
+    )
 }
 
 fn git_diff(cwd: &Path) -> String {
@@ -661,6 +725,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::domain::config::ConfigFiles;
@@ -967,6 +1032,74 @@ mod tests {
         });
 
         assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn service_setup_skips_when_flag_disabled() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_nix(root, "home/services.nix", "# nx: services\n{}\n");
+        let ctx = test_context(root);
+        let args = install_args_template();
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        maybe_setup_service_with("ripgrep", &args, &ctx, |_prompt| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            CommandOutcome {
+                success: true,
+                output: String::new(),
+            }
+        });
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn service_setup_dry_run_reports_without_edit_call() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_nix(root, "home/services.nix", "# nx: services\n{}\n");
+        let ctx = test_context(root);
+        let mut args = install_args_template();
+        args.service = true;
+        args.dry_run = true;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        maybe_setup_service_with("ripgrep", &args, &ctx, |_prompt| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            CommandOutcome {
+                success: true,
+                output: String::new(),
+            }
+        });
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn service_setup_calls_editor_with_services_target() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_nix(root, "home/services.nix", "# nx: services\n{}\n");
+        let ctx = test_context(root);
+        let mut args = install_args_template();
+        args.service = true;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let prompt = Arc::new(Mutex::new(String::new()));
+        maybe_setup_service_with("ripgrep", &args, &ctx, |edit_prompt| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            *prompt.lock().expect("prompt lock should succeed") = edit_prompt.to_string();
+            CommandOutcome {
+                success: true,
+                output: String::new(),
+            }
+        });
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let captured = prompt.lock().expect("prompt lock should succeed");
+        assert!(captured.contains("launchd agent for ripgrep"));
+        assert!(captured.contains("home/services.nix"));
     }
 
     #[test]

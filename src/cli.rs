@@ -7,6 +7,8 @@ const KNOWN_COMMANDS: &[&str] = &[
     "remove",
     "rm",
     "uninstall",
+    "secret",
+    "secrets",
     "search",
     "where",
     "list",
@@ -48,6 +50,8 @@ pub enum CommandKind {
     Install(InstallArgs),
     #[command(alias = "rm", alias = "uninstall")]
     Remove(RemoveArgs),
+    #[command(alias = "secrets")]
+    Secret(SecretArgs),
     Search(SearchArgs),
     Where(WhereArgs),
     List(ListArgs),
@@ -114,6 +118,32 @@ pub struct RemoveArgs {
     pub dry_run: bool,
     #[arg(long)]
     pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct SecretArgs {
+    #[command(subcommand)]
+    pub command: SecretCommand,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum SecretCommand {
+    Add(SecretAddArgs),
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct SecretAddArgs {
+    #[arg(value_name = "KEY")]
+    pub key: String,
+    #[arg(
+        long,
+        value_name = "VALUE",
+        required_unless_present = "value_stdin",
+        conflicts_with = "value_stdin"
+    )]
+    pub value: Option<String>,
+    #[arg(long, required_unless_present = "value", conflicts_with = "value")]
+    pub value_stdin: bool,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -313,6 +343,13 @@ mod tests {
     fn preprocess_args_known_command_passes_through() {
         let result = preprocess_args(["nx", "rebuild"]).unwrap();
         assert_eq!(result[1], OsString::from("rebuild"));
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn preprocess_args_secret_alias_passes_through() {
+        let result = preprocess_args(["nx", "secrets"]).unwrap();
+        assert_eq!(result[1], OsString::from("secrets"));
         assert_eq!(result.len(), 2);
     }
 

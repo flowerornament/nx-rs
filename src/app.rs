@@ -10,6 +10,7 @@ use crate::commands::install::cmd_install;
 use crate::commands::query::{cmd_info, cmd_installed, cmd_list, cmd_status, cmd_where};
 use crate::commands::remove::cmd_remove;
 use crate::commands::search::cmd_search;
+use crate::commands::secret::cmd_secret;
 use crate::commands::system::{cmd_rebuild, cmd_test, cmd_undo, cmd_update, cmd_upgrade};
 use crate::domain::config::ConfigFiles;
 use crate::output::printer::Printer;
@@ -33,6 +34,7 @@ pub fn execute(cli: Cli) -> i32 {
     match cli.command {
         CommandKind::Install(args) => cmd_install(&args, &ctx),
         CommandKind::Remove(args) => cmd_remove(&args, &ctx),
+        CommandKind::Secret(args) => cmd_secret(&args, &ctx),
         CommandKind::Search(args) => cmd_search(&args, &ctx),
         CommandKind::Where(args) => cmd_where(&args, &ctx),
         CommandKind::List(args) => cmd_list(&args, &ctx),

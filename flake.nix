@@ -16,7 +16,7 @@
       packages = forAllSystems ({ pkgs }: {
         default = pkgs.rustPlatform.buildRustPackage {
           pname = "nx";
-          version = "0.1.0";
+          version = "0.1.1";
 
           src = ./.;
 

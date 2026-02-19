@@ -112,6 +112,7 @@ bd sync               # sync state (run at session end)
 3. **Update issue status** - Close finished work, update in-progress items
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
+   # If shipping a release change, bump version first (Cargo.toml + flake.nix).
    git pull --rebase
    bd sync
    git push

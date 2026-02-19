@@ -800,6 +800,18 @@ fn is_fd_exhaustion(output: &str) -> bool {
     output.contains("Too many open files") || output.contains("too many open files")
 }
 
+/// Detect known nix fetcher-cache corruption signatures.
+fn is_cache_corruption(output: &str) -> bool {
+    const INDICATORS: [&str; 2] = [
+        "failed to insert entry: invalid object specified",
+        "error: adding a file to a tree builder",
+    ];
+
+    INDICATORS
+        .iter()
+        .any(|indicator| output.contains(indicator))
+}
+
 /// Execute `nix flake update` with GitHub token, ulimit raising, and retry.
 fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext) -> bool {
     let token = gh_auth_token();
@@ -816,6 +828,7 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext) -> bool {
 
     // Proactively raise FD limit to avoid "Too many open files" from libgit2.
     let mut raise_nofile: Option<u32> = Some(8192);
+    let mut retried_cache_corruption = false;
 
     for attempt in 0..3 {
         if attempt == 0 {
@@ -863,10 +876,12 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext) -> bool {
             continue;
         }
 
-        // Cache corruption: clear and retry
-        if clear_fetcher_cache() {
+        // Cache corruption: clear fetcher cache and retry once.
+        if !retried_cache_corruption && is_cache_corruption(&output) {
+            retried_cache_corruption = true;
+            let _ = clear_fetcher_cache();
             ctx.printer
-                .warn("Nix cache corruption detected, clearing cache");
+                .warn("Nix cache corruption detected, clearing cache and retrying");
             continue;
         }
 
@@ -1604,6 +1619,24 @@ mod tests {
     fn fd_exhaustion_not_detected_for_other_errors() {
         assert!(!is_fd_exhaustion("error: attribute not found"));
         assert!(!is_fd_exhaustion(""));
+    }
+
+    // --- is_cache_corruption ---
+
+    #[test]
+    fn cache_corruption_detected() {
+        assert!(is_cache_corruption(
+            "error: failed to insert entry: invalid object specified"
+        ));
+        assert!(is_cache_corruption(
+            "error: adding a file to a tree builder during nix fetch"
+        ));
+    }
+
+    #[test]
+    fn cache_corruption_not_detected_for_other_errors() {
+        assert!(!is_cache_corruption("error: something unrelated"));
+        assert!(!is_cache_corruption(""));
     }
 
     // --- build_nix_update_command ---

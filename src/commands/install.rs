@@ -17,6 +17,7 @@ use crate::infra::ai_engine::{
 use crate::infra::cache::MultiSourceCache;
 use crate::infra::file_edit::{EditOutcome, apply_edit};
 use crate::infra::finder::find_package;
+use crate::infra::flake_input::{FlakeInputEdit, add_flake_input};
 use crate::infra::shell::run_captured_command;
 use crate::infra::sources::{check_nix_available, search_all_sources};
 
@@ -222,16 +223,44 @@ fn gate_flake_input(
         ));
         return false;
     }
+
+    ctx.printer
+        .warn(&format!("{package} requires flake.nix modification"));
+    let Some(flake_url) = plan.source_result.flake_url.as_deref() else {
+        ctx.printer.error(&format!(
+            "Failed to add flake input: missing flake URL for {package}"
+        ));
+        return false;
+    };
+    ctx.printer.detail(&format!("URL: {flake_url}"));
+
     if args.dry_run {
         ctx.printer
             .detail(&format!("[DRY RUN] Would add flake input for {package}"));
         return true; // counted as success in dry-run
     }
-    if !args.yes && !ctx.printer.confirm("Add flake input?", false) {
-        ctx.printer.detail("Skipped");
+    if !args.yes && !ctx.printer.confirm("Add flake input?", true) {
+        ctx.printer.warn(&format!("Skipping {package}"));
         return false;
     }
-    true
+
+    let flake_path = ctx.repo_root.join("flake.nix");
+    match add_flake_input(&flake_path, flake_url, None) {
+        Ok(FlakeInputEdit::Added { input_name }) => {
+            ctx.printer.detail(&format!("added input '{input_name}'"));
+            true
+        }
+        Ok(FlakeInputEdit::AlreadyExists { input_name }) => {
+            ctx.printer
+                .detail(&format!("input '{input_name}' already exists"));
+            true
+        }
+        Err(err) => {
+            ctx.printer
+                .error(&format!("Failed to add flake input: {err}"));
+            false
+        }
+    }
 }
 
 /// Execute install edits per engine semantics (SPEC 7.7).
@@ -1140,12 +1169,18 @@ mod tests {
             "packages/nix/cli.nix",
             "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    bat\n  ];\n}\n",
         );
+        write_nix(
+            root,
+            "flake.nix",
+            "{\n  inputs = {\n    nixpkgs.url = \"github:NixOS/nixpkgs\";\n  };\n}\n",
+        );
         let ctx = test_context(root);
         let mut args = install_args_template();
         args.yes = true;
 
         let mut plan = test_plan(root, "ripgrep");
         plan.source_result.requires_flake_mod = true;
+        plan.source_result.flake_url = Some("github:nix-community/NUR".to_string());
 
         let engine = StubEngine {
             engine_name: "claude",
@@ -1158,6 +1193,10 @@ mod tests {
         };
 
         assert!(gate_flake_input("ripgrep", &plan, &args, &ctx, &engine));
+
+        let flake_content =
+            fs::read_to_string(root.join("flake.nix")).expect("flake should be readable");
+        assert!(flake_content.contains("nur.url = \"github:nix-community/NUR\";"));
     }
 
     #[test]
@@ -1175,6 +1214,7 @@ mod tests {
 
         let mut plan = test_plan(root, "ripgrep");
         plan.source_result.requires_flake_mod = true;
+        plan.source_result.flake_url = Some("github:nix-community/NUR".to_string());
 
         let engine = StubEngine {
             engine_name: "claude",
@@ -1187,6 +1227,36 @@ mod tests {
         };
 
         assert!(gate_flake_input("ripgrep", &plan, &args, &ctx, &engine));
+    }
+
+    #[test]
+    fn gate_flake_input_errors_when_url_missing() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_nix(
+            root,
+            "packages/nix/cli.nix",
+            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    bat\n  ];\n}\n",
+        );
+        let ctx = test_context(root);
+        let mut args = install_args_template();
+        args.yes = true;
+
+        let mut plan = test_plan(root, "ripgrep");
+        plan.source_result.requires_flake_mod = true;
+        plan.source_result.flake_url = None;
+
+        let engine = StubEngine {
+            engine_name: "claude",
+            supports_flake: true,
+            run_edit_calls: Arc::new(AtomicUsize::new(0)),
+            run_edit_outcome: CommandOutcome {
+                success: true,
+                output: String::new(),
+            },
+        };
+
+        assert!(!gate_flake_input("ripgrep", &plan, &args, &ctx, &engine));
     }
 
     #[test]

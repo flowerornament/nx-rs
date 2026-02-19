@@ -594,6 +594,16 @@ fn write_brew_stub(stub_bin: &Path) -> Result<(), Box<dyn Error>> {
         r#"#!/bin/sh
 mode="${NX_PARITY_MODE:-stub_system_success}"
 
+if [ "$1" = "outdated" ] && [ "$2" = "--json" ]; then
+  echo '{"formulae":[],"casks":[]}'
+  exit 0
+fi
+
+if [ "$1" = "upgrade" ]; then
+  echo "stub brew upgrade ok"
+  exit 0
+fi
+
 if [ "$1" = "info" ] && [ "$2" = "--json=v2" ]; then
   if [ "$mode" = "stub_install_sources" ] || [ "$mode" = "stub_install_sources_cache_hit" ]; then
     if [ "$3" = "--cask" ]; then

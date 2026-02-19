@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "stdout": "\n> Updating flake inputs\n  stub nix flake update ok\n+ All flake inputs up to date\n\n> Checking Homebrew updates\n+ All Homebrew packages up to date",
+  "stderr": "",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

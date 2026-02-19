@@ -7,7 +7,9 @@ use serde_json::{Map, Value};
 
 use crate::cli::{InfoArgs, InstalledArgs, ListArgs, WhereArgs};
 use crate::commands::context::AppContext;
-use crate::commands::shared::{SnippetMode, relative_location, show_snippet};
+use crate::commands::shared::{
+    SnippetMode, missing_argument_error, relative_location, show_snippet,
+};
 use crate::domain::location::PackageLocation;
 use crate::domain::source::{
     OVERLAY_PACKAGES, PackageSource, SourcePreferences, SourceResult, normalize_name,
@@ -27,8 +29,7 @@ const VALID_SOURCES_TEXT: &str =
 
 pub fn cmd_where(args: &WhereArgs, ctx: &AppContext) -> i32 {
     let Some(package) = &args.package else {
-        ctx.printer.error("No package specified");
-        return 1;
+        return missing_argument_error("where", "PACKAGE");
     };
 
     match find_package(package, &ctx.repo_root) {
@@ -94,9 +95,7 @@ pub fn cmd_list(args: &ListArgs, ctx: &AppContext) -> i32 {
 
 pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
     let Some(package) = &args.package else {
-        ctx.printer.error("No package specified");
-        ctx.printer.detail("Usage: nx info <package>");
-        return 1;
+        return missing_argument_error("info", "PACKAGE");
     };
 
     let location = match find_package(package, &ctx.repo_root) {
@@ -553,8 +552,7 @@ pub fn cmd_status(ctx: &AppContext) -> i32 {
 
 pub fn cmd_installed(args: &InstalledArgs, ctx: &AppContext) -> i32 {
     if args.packages.is_empty() {
-        ctx.printer.error("No package specified");
-        return 1;
+        return missing_argument_error("installed", "PACKAGES...");
     }
 
     let mut results = Vec::new();

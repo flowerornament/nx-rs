@@ -1,0 +1,10 @@
+{
+  "exit_code": 2,
+  "stdout": "",
+  "stderr": "Usage: nx info [OPTIONS] PACKAGE\nTry 'nx info --help' for help.\n\nError: Missing argument 'PACKAGE'.",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

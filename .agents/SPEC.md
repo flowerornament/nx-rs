@@ -93,13 +93,13 @@ Defined at root callback and persisted in app state:
 
 ## 2.4 Exit Code Contract
 
-- `install`: `1` when no package args; otherwise `0` if all requested install actions succeeded or nothing selected; `1` on partial failure.
-- `remove`/`rm`: `1` when no package args; otherwise `0`.
-- `where`: `1` when no package arg; otherwise `0` (including not-found).
+- `install`: `2` when no package args; otherwise `0` if all requested install actions succeeded or nothing selected; `1` on partial failure.
+- `remove`/`rm`: `2` when no package args; otherwise `0`.
+- `where`: `2` when no package arg; otherwise `0` (including not-found).
 - `list`: `1` for invalid source filter; otherwise `0`.
-- `info`: `1` when no package arg; otherwise `0` (including not-found).
+- `info`: `2` when no package arg; otherwise `0` (including not-found).
 - `status`: `0`.
-- `installed`: `1` when no package args; otherwise `0` only if all requested packages are installed.
+- `installed`: `2` when no package args; otherwise `0` only if all requested packages are installed.
 - `undo`: `0`.
 - `update`: `0` on flake update success, else `1`.
 - `test`: `0` if all steps pass, else `1`.
@@ -479,5 +479,4 @@ Dry-run behavior:
   - rebuild preflight failures
   - missing install attr for nix-based sources
   - invalid `list` source filter
-
 

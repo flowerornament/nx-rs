@@ -37,6 +37,11 @@ const UPDATE_BASE_ARGS: &[&str] = &["update"];
 const TEST_BASE_ARGS: &[&str] = &["test"];
 const REBUILD_PASSTHROUGH_ARGS: &[&str] = &["rebuild", "--", "--show-trace", "foo"];
 const REBUILD_BASE_ARGS: &[&str] = &["rebuild"];
+const INSTALL_MISSING_ARGS: &[&str] = &["install"];
+const REMOVE_MISSING_ARGS: &[&str] = &["remove"];
+const WHERE_MISSING_ARGS: &[&str] = &["where"];
+const INFO_MISSING_ARGS: &[&str] = &["info"];
+const INSTALLED_MISSING_ARGS: &[&str] = &["installed"];
 const INFO_FOUND_ARGS: &[&str] = &["info", "ripgrep"];
 const INFO_JSON_FOUND_ARGS: &[&str] = &["info", "ripgrep", "--json"];
 const INFO_BLEEDING_EDGE_ARGS: &[&str] = &["info", "ripgrep", "--bleeding-edge"];
@@ -271,6 +276,8 @@ const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
     ),
 ];
 
+const NO_CALLS: &[ExpectedCall] = &[];
+
 const UPGRADE_COMMIT_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
     ExpectedCall::new(
@@ -298,6 +305,46 @@ const UPGRADE_SKIP_COMMIT_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
 )];
 
 const MATRIX_CASES: &[MatrixCase] = &[
+    MatrixCase {
+        id: "install_missing_args_parser_error",
+        cli_args: INSTALL_MISSING_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 2,
+        expected_calls: Some(NO_CALLS),
+        stdout_contains: &[],
+    },
+    MatrixCase {
+        id: "remove_missing_args_parser_error",
+        cli_args: REMOVE_MISSING_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 2,
+        expected_calls: Some(NO_CALLS),
+        stdout_contains: &[],
+    },
+    MatrixCase {
+        id: "where_missing_args_parser_error",
+        cli_args: WHERE_MISSING_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 2,
+        expected_calls: Some(NO_CALLS),
+        stdout_contains: &[],
+    },
+    MatrixCase {
+        id: "info_missing_args_parser_error",
+        cli_args: INFO_MISSING_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 2,
+        expected_calls: Some(NO_CALLS),
+        stdout_contains: &[],
+    },
+    MatrixCase {
+        id: "installed_missing_args_parser_error",
+        cli_args: INSTALLED_MISSING_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 2,
+        expected_calls: Some(NO_CALLS),
+        stdout_contains: &[],
+    },
     MatrixCase {
         id: "update_success_passthrough",
         cli_args: UPDATE_PASSTHROUGH_ARGS,

@@ -5,7 +5,9 @@ use anyhow::Context;
 
 use crate::cli::RemoveArgs;
 use crate::commands::context::AppContext;
-use crate::commands::shared::{SnippetMode, relative_location, show_snippet};
+use crate::commands::shared::{
+    SnippetMode, missing_argument_error, relative_location, show_snippet,
+};
 use crate::domain::plan::{InsertionMode, InstallPlan, LanguageInfo};
 use crate::domain::source::{PackageSource, SourceResult, detect_language_package};
 use crate::infra::ai_engine::{
@@ -17,8 +19,7 @@ use crate::infra::shell::run_captured_command;
 
 pub fn cmd_remove(args: &RemoveArgs, ctx: &AppContext) -> i32 {
     if args.packages.is_empty() {
-        ctx.printer.error("No packages specified");
-        return 1;
+        return missing_argument_error("remove", "PACKAGES...");
     }
 
     if args.dry_run {

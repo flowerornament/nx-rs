@@ -14,6 +14,15 @@ pub fn relative_location(location: &PackageLocation, repo_root: &Path) -> String
     }
 }
 
+/// Render Python/Typer-compatible missing positional argument output.
+pub fn missing_argument_error(command: &str, argument: &str) -> i32 {
+    eprintln!("Usage: nx {command} [OPTIONS] {argument}");
+    eprintln!("Try 'nx {command} --help' for help.");
+    eprintln!();
+    eprintln!("Error: Missing argument '{argument}'.");
+    2
+}
+
 fn strip_repo_prefix(path: &str, repo_root: &Path) -> String {
     let canonical = fs::canonicalize(repo_root).ok();
     let prefixes: Vec<String> = canonical

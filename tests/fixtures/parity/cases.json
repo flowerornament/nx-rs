@@ -10,6 +10,11 @@
     "rust_parity": true
   },
   {
+    "id": "where_missing_arg",
+    "args": ["where"],
+    "rust_parity": true
+  },
+  {
     "id": "search_found_stubbed",
     "args": ["search", "ripgrep"],
     "setup": "stub_info_sources",
@@ -98,6 +103,11 @@
     "rust_parity": true
   },
   {
+    "id": "installed_missing_arg",
+    "args": ["installed"],
+    "rust_parity": true
+  },
+  {
     "id": "status_plain",
     "args": ["status"],
     "rust_parity": true
@@ -138,6 +148,11 @@
     "rust_parity": true
   },
   {
+    "id": "info_missing_arg",
+    "args": ["info"],
+    "rust_parity": true
+  },
+  {
     "id": "install_dry_run_installed",
     "args": ["install", "--dry-run", "ripgrep"],
     "rust_parity": true
@@ -167,6 +182,11 @@
     "rust_parity": true
   },
   {
+    "id": "install_missing_arg",
+    "args": ["install"],
+    "rust_parity": true
+  },
+  {
     "id": "remove_dry_run",
     "args": ["remove", "--dry-run", "ripgrep"],
     "rust_parity": true
@@ -184,6 +204,11 @@
   {
     "id": "remove_yes_mutates",
     "args": ["remove", "--yes", "ripgrep"],
+    "rust_parity": true
+  },
+  {
+    "id": "remove_missing_arg",
+    "args": ["remove"],
     "rust_parity": true
   },
   {

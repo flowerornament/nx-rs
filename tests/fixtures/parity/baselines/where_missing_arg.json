@@ -1,0 +1,10 @@
+{
+  "exit_code": 2,
+  "stdout": "",
+  "stderr": "Usage: nx where [OPTIONS] PACKAGE\nTry 'nx where --help' for help.\n\nError: Missing argument 'PACKAGE'.",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

@@ -5,7 +5,9 @@ use std::path::Path;
 
 use crate::cli::{InstallArgs, PassthroughArgs};
 use crate::commands::context::AppContext;
-use crate::commands::shared::{SnippetMode, relative_location, show_dry_run_preview, show_snippet};
+use crate::commands::shared::{
+    SnippetMode, missing_argument_error, relative_location, show_dry_run_preview, show_snippet,
+};
 use crate::commands::system::cmd_rebuild;
 use crate::domain::location::PackageLocation;
 use crate::domain::plan::{
@@ -27,8 +29,7 @@ use crate::infra::sources::{check_nix_available, search_all_sources};
 
 pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
     if args.packages.is_empty() {
-        ctx.printer.error("No packages specified");
-        return 1;
+        return missing_argument_error("install", "PACKAGES...");
     }
 
     if args.dry_run {

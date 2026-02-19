@@ -54,12 +54,13 @@ Update rules for future agents:
 - Legacy directory was moved to `/tmp/nx-rs-legacy-20260212-032055`.
 - Re-verified on 2026-02-12 with `just cutover-validate`: shadow matrix, canary matrix, and mutation safety all passed.
 
-10. Parity harness coverage includes Rust-only search, stubbed upgrade brew path, and expanded Rust info JSON parity.
-- `tests/fixtures/parity/cases.json` currently has 50 cases.
-- 46 cases run in Python parity target; 48 cases run in Rust parity target.
+10. Parity harness coverage includes Rust-only search, stubbed upgrade brew path, expanded Rust info JSON parity, and missing-arg parser failures.
+- `tests/fixtures/parity/cases.json` currently has 58 cases.
+- 54 cases run in Python parity target; 58 cases run in Rust parity target.
 - Four `search_*` cases are Rust-only (`python_parity=false`) with stubbed baselines.
 - `info_json_found` and `info_json_sources_not_installed` are now enabled for Rust parity with Python-shaped source metadata output.
 - `upgrade_brew_stubbed_no_updates` verifies brew-phase parity with deterministic `brew outdated --json` stubs.
+- Missing-arg coverage now includes `install`, `remove`, `where`, `info`, and `installed`, each returning parser-style exit code `2` with Python-matching stderr.
 - Verified on 2026-02-19 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
 
 11. SPEC reconciliation found three drift items fixed in v1.0.

@@ -115,6 +115,34 @@
     "rust_parity": true
   },
   {
+    "id": "install_cache_hit_stubbed",
+    "args": ["install", "--dry-run", "nxrscachehit"],
+    "setup": "stub_install_sources_cache_hit",
+    "rust_parity": false,
+    "rust_parity_reason": "Rust install output diverges from Python for cache-hit install UX; behavior is covered by install command tests."
+  },
+  {
+    "id": "install_source_selection_multi_stubbed",
+    "args": ["install", "--bleeding-edge", "nxrsmulti"],
+    "setup": "stub_install_sources",
+    "rust_parity": false,
+    "rust_parity_reason": "Rust install output diverges from Python for multi-source selection UX; behavior is covered by install command tests."
+  },
+  {
+    "id": "install_dry_run_found_stubbed",
+    "args": ["install", "--dry-run", "nxrsdryrun"],
+    "setup": "stub_install_sources",
+    "rust_parity": false,
+    "rust_parity_reason": "Rust install output diverges from Python for dry-run install presentation; behavior is covered by install command tests."
+  },
+  {
+    "id": "install_platform_incompatible_stubbed",
+    "args": ["install", "--dry-run", "nxrsplatform"],
+    "setup": "stub_install_sources",
+    "rust_parity": false,
+    "rust_parity_reason": "Rust install output diverges from Python for platform-fallback install presentation; behavior is covered by install command tests."
+  },
+  {
     "id": "remove_dry_run",
     "args": ["remove", "--dry-run", "ripgrep"],
     "rust_parity": true

@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tempfile::TempDir;
 
 const PARITY_CAPTURE_ENV: &str = "NX_PARITY_CAPTURE";
@@ -46,6 +47,8 @@ enum CaseSetup {
     StubRebuildGitPreflightFail,
     StubInfoSources,
     StubInfoSourcesBleedingEdge,
+    StubInstallSources,
+    StubInstallSourcesCacheHit,
     ModifiedTrackedFile,
 }
 
@@ -348,7 +351,9 @@ fn apply_setup(repo_root: &Path, setup: CaseSetup) -> Result<(), Box<dyn Error>>
         | CaseSetup::StubRebuildFlakeCheckFail
         | CaseSetup::StubRebuildGitPreflightFail
         | CaseSetup::StubInfoSources
-        | CaseSetup::StubInfoSourcesBleedingEdge => {
+        | CaseSetup::StubInfoSourcesBleedingEdge
+        | CaseSetup::StubInstallSources
+        | CaseSetup::StubInstallSourcesCacheHit => {
             install_system_stubs(repo_root)?;
             materialize_test_layout(repo_root, TestLayout::None)?;
             Ok(())
@@ -401,6 +406,7 @@ exit 0
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // embedded shell script keeps stub behavior in one place
 fn write_nix_stub(stub_bin: &Path) -> Result<(), Box<dyn Error>> {
     support::write_executable(
         &stub_bin.join("nix"),
@@ -477,6 +483,66 @@ JSON
   fi
 fi
 
+if [ "$mode" = "stub_install_sources" ] || [ "$mode" = "stub_install_sources_cache_hit" ]; then
+  if [ "$1" = "search" ] && [ "$2" = "--json" ]; then
+    target="$3"
+    query="$4"
+    if [ "$query" = "nxrsmulti" ]; then
+      if [ "$target" = "github:nix-community/NUR" ]; then
+        cat <<'JSON'
+{"legacyPackages.aarch64-darwin.nxrsmultinur":{"pname":"nxrsmultinur","version":"1.0.0","description":"Stub NUR multi-source candidate"}}
+JSON
+        exit 0
+      fi
+      cat <<'JSON'
+{"legacyPackages.aarch64-darwin.nxrsmultinxs":{"pname":"nxrsmultinxs","version":"1.0.0","description":"Stub nixpkgs multi-source candidate"}}
+JSON
+      exit 0
+    fi
+    if [ "$query" = "nxrsdryrun" ]; then
+      cat <<'JSON'
+{"legacyPackages.aarch64-darwin.nxrsdryrun":{"pname":"nxrsdryrun","version":"1.0.0","description":"Stub dry-run install candidate"}}
+JSON
+      exit 0
+    fi
+    if [ "$query" = "nxrsplatform" ]; then
+      cat <<'JSON'
+{
+  "legacyPackages.aarch64-darwin.nxrsplatformincompatible": {
+    "pname": "nxrsplatformincompatible",
+    "version": "1.0.0",
+    "description": "Stub platform-incompatible candidate"
+  },
+  "legacyPackages.aarch64-darwin.nxrsplatformfallback": {
+    "pname": "nxrsplatformfallback",
+    "version": "1.0.0",
+    "description": "Stub platform-compatible fallback"
+  }
+}
+JSON
+      exit 0
+    fi
+    echo "{}"
+    exit 0
+  fi
+
+  if [ "$1" = "eval" ] && [ "$2" = "--json" ]; then
+    attr="$3"
+    case "$attr" in
+      *nxrsplatformincompatible.meta.platforms)
+        echo '["x86_64-windows","aarch64-windows"]'
+        ;;
+      *.meta.platforms)
+        echo '["aarch64-darwin","x86_64-darwin","x86_64-linux","aarch64-linux"]'
+        ;;
+      *)
+        echo "null"
+        ;;
+    esac
+    exit 0
+  fi
+fi
+
 echo "stub nix unsupported: $*" >&2
 exit 0
 "#,
@@ -499,7 +565,29 @@ fn write_brew_stub(stub_bin: &Path) -> Result<(), Box<dyn Error>> {
     support::write_executable(
         &stub_bin.join("brew"),
         r#"#!/bin/sh
+mode="${NX_PARITY_MODE:-stub_system_success}"
+
 if [ "$1" = "info" ] && [ "$2" = "--json=v2" ]; then
+  if [ "$mode" = "stub_install_sources" ] || [ "$mode" = "stub_install_sources_cache_hit" ]; then
+    if [ "$3" = "--cask" ]; then
+      query="$4"
+      if [ "$query" = "nxrsmulti" ]; then
+        echo '{"casks":[{"token":"nxrsmulticask","version":"1.0.0","desc":"Stub cask multi-source candidate"}]}'
+        exit 0
+      fi
+      echo '{"casks":[]}'
+      exit 0
+    fi
+
+    query="$3"
+    if [ "$query" = "nxrsmulti" ]; then
+      echo '{"formulae":[{"name":"nxrsmultibrew","versions":{"stable":"1.0.0"},"desc":"Stub Homebrew multi-source candidate"}]}'
+      exit 0
+    fi
+    echo '{"formulae":[]}'
+    exit 0
+  fi
+
   if [ "$3" = "--cask" ]; then
     echo '{"casks":[]}'
     exit 0
@@ -605,6 +693,7 @@ fn run_target_case(
     // Keep HOME outside the snapshotted repo tree to avoid cache artifacts
     // polluting file-diff baselines.
     let home_dir = TempDir::new()?;
+    prepare_home_for_case(home_dir.path(), case.setup)?;
 
     let mut command = Command::new(cli_bin);
     command
@@ -677,6 +766,8 @@ fn uses_system_stubs(setup: CaseSetup) -> bool {
             | CaseSetup::StubRebuildGitPreflightFail
             | CaseSetup::StubInfoSources
             | CaseSetup::StubInfoSourcesBleedingEdge
+            | CaseSetup::StubInstallSources
+            | CaseSetup::StubInstallSourcesCacheHit
     )
 }
 
@@ -691,6 +782,8 @@ fn setup_mode(setup: CaseSetup) -> Option<&'static str> {
         CaseSetup::StubRebuildGitPreflightFail => Some("stub_rebuild_git_preflight_fail"),
         CaseSetup::StubInfoSources => Some("stub_info_sources"),
         CaseSetup::StubInfoSourcesBleedingEdge => Some("stub_info_sources_bleeding_edge"),
+        CaseSetup::StubInstallSources => Some("stub_install_sources"),
+        CaseSetup::StubInstallSourcesCacheHit => Some("stub_install_sources_cache_hit"),
         CaseSetup::None
         | CaseSetup::UntrackedNix
         | CaseSetup::DefaultLaunchdService
@@ -699,7 +792,43 @@ fn setup_mode(setup: CaseSetup) -> Option<&'static str> {
 }
 
 fn blocks_external_network(setup: CaseSetup) -> bool {
-    matches!(setup, CaseSetup::StubInfoSourcesBleedingEdge)
+    matches!(
+        setup,
+        CaseSetup::StubInfoSourcesBleedingEdge
+            | CaseSetup::StubInstallSources
+            | CaseSetup::StubInstallSourcesCacheHit
+    )
+}
+
+fn prepare_home_for_case(home_dir: &Path, setup: CaseSetup) -> Result<(), Box<dyn Error>> {
+    if matches!(setup, CaseSetup::StubInstallSourcesCacheHit) {
+        seed_cache_hit(home_dir)?;
+    }
+    Ok(())
+}
+
+fn seed_cache_hit(home_dir: &Path) -> Result<(), Box<dyn Error>> {
+    let cache_dir = home_dir.join(".cache/nx");
+    fs::create_dir_all(&cache_dir)?;
+    let cache = json!({
+        "schema_version": 1,
+        "entries": {
+            "nxrscachehit|nxs|unknown": {
+                "attr": "nxrscachehit",
+                "version": "1.0.0",
+                "description": "Stub cache-hit candidate",
+                "confidence": 1.0,
+                "requires_flake_mod": false,
+                "flake_url": null
+            }
+        }
+    });
+    let cache_json = serde_json::to_string_pretty(&cache)?;
+    fs::write(
+        cache_dir.join("packages_v4.json"),
+        format!("{cache_json}\n"),
+    )?;
+    Ok(())
 }
 
 fn snapshot_repo_files(repo_root: &Path) -> Result<BTreeMap<String, String>, Box<dyn Error>> {

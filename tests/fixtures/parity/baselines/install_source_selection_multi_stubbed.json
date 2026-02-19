@@ -1,0 +1,10 @@
+{
+  "exit_code": 1,
+  "stdout": "\n> Installing nxrsmulti\n\n  Found (1)\n  nxrsmulti\n    1. NUR\n           Version:     1.0.0\n           Description: Stub NUR multi-source candidate\n    2. nxs (pkgs.nxrsmultinxs)\n           Version:     1.0.0\n           Description: Stub nixpkgs multi-source candidate\n    3. Homebrew formula\n           Version:     1.0.0\n           Description: Stub Homebrew multi-source candidate\n    4. Homebrew cask\n           Version:     1.0.0\n           Description: Stub cask multi-source candidate\n\n  Install? [1/2/3/4/n]:\n  Installing (1)\n! nxrsmulti requires flake.nix modification - use --engine=claude",
+  "stderr": "",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

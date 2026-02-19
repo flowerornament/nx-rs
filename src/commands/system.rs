@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::cli::{PassthroughArgs, UpgradeArgs};
 use crate::commands::context::AppContext;
-use crate::domain::upgrade::{diff_locks, load_flake_lock, short_rev};
+use crate::domain::upgrade::{InputChange, diff_locks, load_flake_lock, short_rev};
 use crate::infra::shell::{
     CapturedCommand, run_captured_command, run_indented_command, run_indented_command_collecting,
 };
@@ -160,6 +160,23 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<bool, i32> {
                 short_rev(&change.old_rev),
                 short_rev(&change.new_rev),
             );
+
+            if let Some(compare_url) = flake_compare_url(change) {
+                println!("    changelog: {compare_url}");
+            }
+
+            if let Some(summary) = fetch_flake_compare_summary(change) {
+                let suffix = if summary.total_commits == 1 { "" } else { "s" };
+                if summary.commit_subjects.is_empty() {
+                    println!("    summary: {} commit{suffix}", summary.total_commits);
+                } else {
+                    println!(
+                        "    summary: {} commit{suffix}: {}",
+                        summary.total_commits,
+                        summary.commit_subjects.join(" | "),
+                    );
+                }
+            }
         }
     }
 
@@ -173,6 +190,82 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<bool, i32> {
     }
 
     Ok(!diff.changed.is_empty())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FlakeCompareSummary {
+    total_commits: usize,
+    commit_subjects: Vec<String>,
+}
+
+fn fetch_flake_compare_summary(change: &InputChange) -> Option<FlakeCompareSummary> {
+    let endpoint = flake_compare_endpoint(change)?;
+    let output = run_captured_command("gh", &["api", &endpoint], None).ok()?;
+    if output.code != 0 {
+        return None;
+    }
+    parse_flake_compare_json(&output.stdout)
+}
+
+fn parse_flake_compare_json(json_str: &str) -> Option<FlakeCompareSummary> {
+    let data: serde_json::Value = serde_json::from_str(json_str).ok()?;
+    let commits = data.get("commits")?.as_array()?;
+    if commits.is_empty() {
+        return None;
+    }
+
+    let total_commits = data
+        .get("total_commits")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|count| usize::try_from(count).ok())
+        .unwrap_or(commits.len());
+
+    let commit_subjects = commits
+        .iter()
+        .filter_map(|commit| {
+            commit
+                .get("commit")
+                .and_then(|value| value.get("message"))
+                .and_then(serde_json::Value::as_str)
+                .map(first_commit_line)
+        })
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .take(3)
+        .collect();
+
+    Some(FlakeCompareSummary {
+        total_commits,
+        commit_subjects,
+    })
+}
+
+fn first_commit_line(message: &str) -> &str {
+    message.lines().next().map_or("", str::trim)
+}
+
+fn flake_compare_endpoint(change: &InputChange) -> Option<String> {
+    let old = short_rev(&change.old_rev);
+    let new = short_rev(&change.new_rev);
+    if old.is_empty() || new.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "repos/{}/{}/compare/{old}...{new}",
+        change.owner, change.repo
+    ))
+}
+
+fn flake_compare_url(change: &InputChange) -> Option<String> {
+    let old = short_rev(&change.old_rev);
+    let new = short_rev(&change.new_rev);
+    if old.is_empty() || new.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "https://github.com/{}/{}/compare/{old}...{new}",
+        change.owner, change.repo
+    ))
 }
 
 /// Brew phase: check outdated packages, display, and upgrade.
@@ -1158,6 +1251,68 @@ mod tests {
     fn brew_info_parse_invalid_json_returns_empty() {
         let result = parse_brew_info_json("oops", false);
         assert!(result.is_empty());
+    }
+
+    // --- flake changelog metadata ---
+
+    fn sample_input_change() -> InputChange {
+        InputChange {
+            name: "home-manager".to_string(),
+            owner: "nix-community".to_string(),
+            repo: "home-manager".to_string(),
+            old_rev: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            new_rev: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+            old_modified: 0,
+            new_modified: 0,
+        }
+    }
+
+    #[test]
+    fn flake_compare_url_uses_short_revs() {
+        let url = flake_compare_url(&sample_input_change());
+        assert_eq!(
+            url.as_deref(),
+            Some("https://github.com/nix-community/home-manager/compare/aaaaaaa...bbbbbbb")
+        );
+    }
+
+    #[test]
+    fn flake_compare_endpoint_uses_short_revs() {
+        let endpoint = flake_compare_endpoint(&sample_input_change());
+        assert_eq!(
+            endpoint.as_deref(),
+            Some("repos/nix-community/home-manager/compare/aaaaaaa...bbbbbbb")
+        );
+    }
+
+    #[test]
+    fn parse_flake_compare_json_extracts_commit_summary() {
+        let json = r#"{
+            "total_commits": 4,
+            "commits": [
+                {"commit": {"message": "feat: first line\n\nbody"}},
+                {"commit": {"message": "fix: second line"}},
+                {"commit": {"message": "chore: third line"}},
+                {"commit": {"message": "docs: fourth line"}}
+            ]
+        }"#;
+
+        let summary = parse_flake_compare_json(json).expect("summary should parse");
+        assert_eq!(summary.total_commits, 4);
+        assert_eq!(
+            summary.commit_subjects,
+            vec![
+                "feat: first line".to_string(),
+                "fix: second line".to_string(),
+                "chore: third line".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_flake_compare_json_invalid_returns_none() {
+        let summary = parse_flake_compare_json("not json");
+        assert!(summary.is_none());
     }
 
     // --- changelog URL derivation ---

@@ -25,6 +25,10 @@ struct CaseSpec {
     args: Vec<String>,
     #[serde(default)]
     setup: CaseSetup,
+    #[serde(default = "default_true")]
+    python_parity: bool,
+    #[serde(default)]
+    python_parity_reason: Option<String>,
     #[serde(default)]
     rust_parity: bool,
     #[serde(default)]
@@ -77,7 +81,7 @@ impl HarnessTarget {
 
     fn includes_case(self, case: &CaseSpec) -> bool {
         match self {
-            Self::Python => true,
+            Self::Python => case.python_parity,
             Self::Rust => case.rust_parity,
         }
     }
@@ -109,14 +113,6 @@ fn parity_harness() -> Result<(), Box<dyn Error>> {
         .map_or_else(|| home_dir().join("code/nx-python/nx"), PathBuf::from);
     let target = HarnessTarget::from_env()?;
     let capture_mode = env::var_os(PARITY_CAPTURE_ENV).is_some();
-
-    if capture_mode && target != HarnessTarget::Python {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{PARITY_CAPTURE_ENV} is only supported with {PARITY_TARGET_ENV}=python"),
-        )
-        .into());
-    }
 
     let all_cases = read_cases(&cases_path)?;
     validate_case_annotations(&all_cases)?;
@@ -219,28 +215,59 @@ fn read_cases(path: &Path) -> Result<Vec<CaseSpec>, Box<dyn Error>> {
 
 fn validate_case_annotations(cases: &[CaseSpec]) -> Result<(), Box<dyn Error>> {
     for case in cases {
-        if case.rust_parity {
-            continue;
+        if !case.python_parity {
+            let Some(reason) = case.python_parity_reason.as_deref() else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "case '{}' has python_parity=false without python_parity_reason",
+                        case.id
+                    ),
+                )
+                .into());
+            };
+            if reason.trim().is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("case '{}' has empty python_parity_reason", case.id),
+                )
+                .into());
+            }
         }
-        let Some(reason) = case.rust_parity_reason.as_deref() else {
+
+        if !case.rust_parity {
+            let Some(reason) = case.rust_parity_reason.as_deref() else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "case '{}' has rust_parity=false without rust_parity_reason",
+                        case.id
+                    ),
+                )
+                .into());
+            };
+            if reason.trim().is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("case '{}' has empty rust_parity_reason", case.id),
+                )
+                .into());
+            }
+        }
+
+        if !case.python_parity && !case.rust_parity {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!(
-                    "case '{}' has rust_parity=false without rust_parity_reason",
-                    case.id
-                ),
-            )
-            .into());
-        };
-        if reason.trim().is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("case '{}' has empty rust_parity_reason", case.id),
+                format!("case '{}' is disabled for both parity targets", case.id),
             )
             .into());
         }
     }
     Ok(())
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 fn read_baseline(path: &Path) -> Result<ParityOutcome, Box<dyn Error>> {

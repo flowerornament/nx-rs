@@ -21,15 +21,16 @@ Update rules for future agents:
 - Running `bd doctor` must be done from this repo root for authoritative status.
 - `bd doctor` in unrelated parent directories checks different rigs and gives unrelated warnings.
 
-3. Parity baselines are Python-reference snapshots.
+3. Parity baselines support target-specific capture.
 - Baselines live in `tests/fixtures/parity/baselines/`.
-- Capture command: `just parity-capture`.
-- Capture mode is Python-only (`NX_PARITY_CAPTURE=1` with default target behavior).
+- Python capture command: `just parity-capture`.
+- Rust capture is supported with `NX_PARITY_CAPTURE=1 NX_PARITY_TARGET=rust`.
 
 4. Parity harness is dual-target with case gating.
 - Python verification: `just parity-check-python` (or `just parity-check`).
 - Rust verification: `just parity-check-rust`.
-- Rust parity runs only fixture cases with `"rust_parity": true` in `tests/fixtures/parity/cases.json`.
+- Python target runs fixture cases with `python_parity=true` (default when omitted).
+- Rust target runs fixture cases with `rust_parity=true`.
 
 5. Rust CLI contract includes default install preprocessing.
 - Unknown first non-flag token is rewritten to `install` before clap parsing.
@@ -53,9 +54,11 @@ Update rules for future agents:
 - Legacy directory was moved to `/tmp/nx-rs-legacy-20260212-032055`.
 - Re-verified on 2026-02-12 with `just cutover-validate`: shadow matrix, canary matrix, and mutation safety all passed.
 
-10. Rust parity harness now covers all current fixture cases.
-- `tests/fixtures/parity/cases.json` currently has 37 cases; all 37 are `rust_parity: true`.
-- Verified on 2026-02-16 with both `just parity-check-rust` and `just parity-check-python`.
+10. Rust parity harness includes Rust-only search coverage.
+- `tests/fixtures/parity/cases.json` currently has 49 cases.
+- 45 cases run in Python parity target; 45 cases run in Rust parity target.
+- Four `search_*` cases are Rust-only (`python_parity=false`) with stubbed baselines.
+- Verified on 2026-02-19 with both `just parity-check-rust` and `just parity-check-python`.
 
 11. SPEC reconciliation found three drift items fixed in v1.0.
 - `info` exit code: clarified returns 0 on not-found (matching `where` behavior).

@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "stdout": "[\n  {\n    \"name\": \"ripgrep\",\n    \"source\": \"nxs\",\n    \"attr\": \"ripgrep\",\n    \"version\": \"14.1.1\",\n    \"confidence\": 1.0,\n    \"description\": \"Stub ripgrep package\"\n  }\n]",
+  "stderr": "  Searching for ripgrep... done",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

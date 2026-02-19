@@ -1,0 +1,10 @@
+{
+  "exit_code": 1,
+  "stdout": "",
+  "stderr": "  Searching for not-a-real-package... done\nx not-a-real-package: not found in any source",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

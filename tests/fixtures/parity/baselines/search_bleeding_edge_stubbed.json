@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "stdout": "\n\n> Results for 'ripgrep'\n\n  nur ripgrep (14.1.1) - Stub ripgrep package\n  nxs ripgrep (14.1.1) - Stub ripgrep package",
+  "stderr": "  Searching for ripgrep... done",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {}
+  }
+}

@@ -10,6 +10,38 @@
     "rust_parity": true
   },
   {
+    "id": "search_found_stubbed",
+    "args": ["search", "ripgrep"],
+    "setup": "stub_info_sources",
+    "python_parity": false,
+    "python_parity_reason": "Search command is Rust-only; Python reference CLI does not expose this command.",
+    "rust_parity": true
+  },
+  {
+    "id": "search_not_found_stubbed",
+    "args": ["search", "not-a-real-package"],
+    "setup": "stub_info_sources",
+    "python_parity": false,
+    "python_parity_reason": "Search command is Rust-only; Python reference CLI does not expose this command.",
+    "rust_parity": true
+  },
+  {
+    "id": "search_json_found_stubbed",
+    "args": ["search", "ripgrep", "--json"],
+    "setup": "stub_info_sources",
+    "python_parity": false,
+    "python_parity_reason": "Search command is Rust-only; Python reference CLI does not expose this command.",
+    "rust_parity": true
+  },
+  {
+    "id": "search_bleeding_edge_stubbed",
+    "args": ["search", "ripgrep", "--bleeding-edge"],
+    "setup": "stub_info_sources_bleeding_edge",
+    "python_parity": false,
+    "python_parity_reason": "Search command is Rust-only; Python reference CLI does not expose this command.",
+    "rust_parity": true
+  },
+  {
     "id": "list_plain",
     "args": ["list", "--plain"],
     "rust_parity": true

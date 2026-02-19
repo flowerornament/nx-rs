@@ -621,29 +621,76 @@ fn check_flake(ctx: &AppContext) -> Result<(), i32> {
 }
 
 fn do_rebuild(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
-    ctx.printer.action("Rebuilding system");
-    println!();
     let repo = ctx.repo_root.display().to_string();
-    let mut rebuild_args: Vec<&str> = vec![DARWIN_REBUILD, "switch", "--flake", &repo];
-    rebuild_args.extend(args.passthrough.iter().map(String::as_str));
+    let mut nofile_limit: u32 = 8192;
 
-    let return_code = match run_indented_command("sudo", &rebuild_args, None, &ctx.printer, "  ") {
-        Ok(code) => code,
-        Err(err) => {
-            ctx.printer.error("Rebuild failed");
-            ctx.printer.error(&format!("{err:#}"));
-            return 1;
+    for attempt in 0..3 {
+        if attempt == 0 {
+            ctx.printer.action("Rebuilding system");
+        } else {
+            ctx.printer.action("Retrying rebuild");
         }
-    };
-
-    if return_code == 0 {
         println!();
-        ctx.printer.success("System rebuilt");
-        return 0;
+
+        let rebuild_cmd = build_rebuild_command(&repo, args, nofile_limit);
+        let arg_refs: Vec<&str> = rebuild_cmd.iter().map(String::as_str).collect();
+
+        let (code, output) =
+            match run_indented_command_collecting("sudo", &arg_refs, None, &ctx.printer, "  ") {
+                Ok(result) => result,
+                Err(err) => {
+                    ctx.printer.error("Rebuild failed");
+                    ctx.printer.error(&format!("{err:#}"));
+                    return 1;
+                }
+            };
+
+        if code == 0 {
+            println!();
+            ctx.printer.success("System rebuilt");
+            return 0;
+        }
+
+        if attempt >= 2 || !is_fd_exhaustion(&output) {
+            break;
+        }
+
+        ctx.printer
+            .warn("Nix hit file descriptor limits, clearing cache and retrying");
+        clear_root_tarball_pack_cache();
+        nofile_limit = 65536;
     }
 
     ctx.printer.error("Rebuild failed");
     1
+}
+
+/// Build the `darwin-rebuild` command wrapped with a `ulimit` raise.
+///
+/// Returns args for `sudo`, so the ulimit applies in root's shell context
+/// before exec-ing `darwin-rebuild`.
+fn build_rebuild_command(repo: &str, args: &PassthroughArgs, nofile_limit: u32) -> Vec<String> {
+    let mut cmd_parts = vec![
+        DARWIN_REBUILD.to_string(),
+        "switch".to_string(),
+        "--flake".to_string(),
+        repo.to_string(),
+    ];
+    cmd_parts.extend(args.passthrough.iter().cloned());
+    let full_cmd = cmd_parts.join(" ");
+
+    vec![
+        "bash".to_string(),
+        "-lc".to_string(),
+        format!("ulimit -n {nofile_limit} 2>/dev/null; exec {full_cmd}"),
+    ]
+}
+
+/// Clear root's nix tarball pack cache to reduce open file pressure during rebuild.
+fn clear_root_tarball_pack_cache() {
+    let pack_dir = "/var/root/.cache/nix/tarball-cache-v2/objects/pack";
+    let _ = run_captured_command("sudo", &["rm", "-rf", pack_dir], None);
+    let _ = run_captured_command("sudo", &["mkdir", "-p", pack_dir], None);
 }
 
 #[cfg(test)]
@@ -882,5 +929,30 @@ mod tests {
         assert_eq!(result[0], "-lc");
         assert!(result[1].contains("ulimit -n 8192"));
         assert!(result[1].contains("exec nix flake update"));
+    }
+
+    // --- build_rebuild_command ---
+
+    #[test]
+    fn rebuild_command_wraps_with_ulimit() {
+        let args = PassthroughArgs {
+            passthrough: Vec::new(),
+        };
+        let result = build_rebuild_command("/Users/test/.nix-config", &args, 8192);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], "bash");
+        assert_eq!(result[1], "-lc");
+        assert!(result[2].contains("ulimit -n 8192"));
+        assert!(result[2].contains(&format!("exec {DARWIN_REBUILD} switch --flake")));
+    }
+
+    #[test]
+    fn rebuild_command_includes_passthrough_args() {
+        let args = PassthroughArgs {
+            passthrough: vec!["--show-trace".into()],
+        };
+        let result = build_rebuild_command("/test", &args, 65536);
+        assert!(result[2].contains("ulimit -n 65536"));
+        assert!(result[2].contains("--show-trace"));
     }
 }

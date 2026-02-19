@@ -162,20 +162,15 @@ const TEST_UNITTEST_FAIL_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("python3", ExpectedCwd::RepoRoot, TEST_UNITTEST_ARGS),
 ];
 
+const REBUILD_SUDO_BASH_CMD: &str = "ulimit -n 8192 2>/dev/null; exec /run/current-system/sw/bin/darwin-rebuild switch --flake <REPO_ROOT> --show-trace foo";
+
 const REBUILD_SUCCESS_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("git", ExpectedCwd::RepoRoot, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", ExpectedCwd::RepoRoot, REBUILD_FLAKE_ARGS),
     ExpectedCall::new(
         "sudo",
         ExpectedCwd::RepoRoot,
-        &[
-            "/run/current-system/sw/bin/darwin-rebuild",
-            "switch",
-            "--flake",
-            REPO_ROOT_TOKEN,
-            "--show-trace",
-            "foo",
-        ],
+        &["bash", "-lc", REBUILD_SUDO_BASH_CMD],
     ),
     ExpectedCall::new(
         "darwin-rebuild",
@@ -207,14 +202,7 @@ const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new(
         "sudo",
         ExpectedCwd::RepoRoot,
-        &[
-            "/run/current-system/sw/bin/darwin-rebuild",
-            "switch",
-            "--flake",
-            REPO_ROOT_TOKEN,
-            "--show-trace",
-            "foo",
-        ],
+        &["bash", "-lc", REBUILD_SUDO_BASH_CMD],
     ),
     ExpectedCall::new(
         "darwin-rebuild",
@@ -700,6 +688,14 @@ case "$program" in
     if [ "$mode" = "sudo_fail" ]; then
       echo "stub sudo failed" >&2
       exit 1
+    fi
+
+    # Handle bash -lc wrapper (ulimit + exec darwin-rebuild)
+    if [ "${1:-}" = "bash" ] && [ "${2:-}" = "-lc" ]; then
+      cmd="${3:-}"
+      cmd="$(printf '%s' "$cmd" | sed "s|/run/current-system/sw/bin/darwin-rebuild|${NX_SYSTEM_IT_DARWIN_REBUILD:?}|g")"
+      bash -c "$cmd"
+      exit $?
     fi
 
     if [ "${1:-}" = "/run/current-system/sw/bin/darwin-rebuild" ]; then

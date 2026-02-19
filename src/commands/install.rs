@@ -1,15 +1,19 @@
+use std::collections::HashSet;
+use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
 use crate::cli::{InstallArgs, PassthroughArgs};
 use crate::commands::context::AppContext;
-use crate::commands::shared::{SnippetMode, relative_location, show_snippet};
+use crate::commands::shared::{SnippetMode, relative_location, show_dry_run_preview, show_snippet};
 use crate::commands::system::cmd_rebuild;
 use crate::domain::location::PackageLocation;
 use crate::domain::plan::{
     InsertionMode, InstallPlan, build_install_plan, nix_manifest_candidates,
 };
-use crate::domain::source::{SourcePreferences, SourceResult, detect_language_package};
+use crate::domain::source::{
+    PackageSource, SourcePreferences, SourceResult, detect_language_package,
+};
 use crate::infra::ai_engine::{
     AiEngine, ClaudeEngine, CommandOutcome, build_edit_prompt, build_routing_context,
     run_edit_with_callback, select_engine,
@@ -116,14 +120,28 @@ fn install_one(
     let Some(resolution) = search_for_package(package, args, ctx, cache) else {
         return false;
     };
-    let sr = match resolution {
-        SearchResolution::Install(sr) => sr,
+    let (sr, platform_warning) = match resolution {
+        SearchResolution::Install {
+            result,
+            platform_warning,
+        } => (result, platform_warning),
         SearchResolution::AlreadyInstalled(location) => {
             report_already_installed(package, &location, ctx);
             return true;
         }
         SearchResolution::Skipped => return true,
     };
+
+    println!();
+    if args.dry_run {
+        ctx.printer.detail("Analyzing (1)");
+    } else {
+        ctx.printer.detail("Installing (1)");
+    }
+
+    if let Some(warning) = platform_warning {
+        ctx.printer.warn(&warning);
+    }
 
     let mut plan = match build_install_plan(&sr, &ctx.config_files) {
         Ok(p) => p,
@@ -139,6 +157,8 @@ fn install_one(
         return false;
     }
 
+    println!("> Routing {}", sr.name);
+
     if let Some(ref warning) = plan.routing_warning {
         ctx.printer.warn(warning);
     }
@@ -151,10 +171,23 @@ fn install_one(
         .to_string();
 
     if args.dry_run {
-        ctx.printer.detail(&format!(
-            "[DRY RUN] Would add '{}' to {rel_target}",
-            plan.package_token
-        ));
+        if plan.insertion_mode == InsertionMode::NixManifest
+            && let Some(insert_after_line) = find_preview_insert_after_line(&plan.target_file)
+        {
+            let simulated_line = build_simulated_preview_line(&plan.package_token, &sr.description);
+            show_dry_run_preview(&plan.target_file, insert_after_line, &simulated_line, 1);
+        }
+
+        println!();
+        if let Some(language_info) = &plan.language_info {
+            ctx.printer.success(&format!(
+                "Would add '{}' to {}.withPackages in {rel_target}",
+                language_info.bare_name, language_info.runtime
+            ));
+        } else {
+            ctx.printer
+                .success(&format!("Would add {} to {rel_target}", plan.package_token));
+        }
         maybe_setup_service(&sr.name, args, ctx);
         return true;
     }
@@ -219,7 +252,7 @@ fn gate_flake_input(
     }
     if !engine.supports_flake_input() {
         ctx.printer.warn(&format!(
-            "{package} requires flake.nix modification \u{2014} use --engine=claude"
+            "{package} requires flake.nix modification - use --engine=claude"
         ));
         return false;
     }
@@ -465,7 +498,10 @@ fn report_already_installed(package: &str, location: &PackageLocation, ctx: &App
 }
 
 enum SearchResolution {
-    Install(SourceResult),
+    Install {
+        result: SourceResult,
+        platform_warning: Option<String>,
+    },
     AlreadyInstalled(PackageLocation),
     Skipped,
 }
@@ -516,9 +552,7 @@ fn search_for_package(
     let flake_lock = ctx.repo_root.join("flake.lock");
     let flake_lock_path = flake_lock.exists().then_some(flake_lock.as_path());
 
-    ctx.printer.searching(package);
     let results = search_all_sources(package, &prefs, flake_lock_path);
-    ctx.printer.searching_done();
 
     if results.is_empty() {
         show_unknown_group(package, ctx);
@@ -549,17 +583,27 @@ fn resolve_search_candidates(
         return None;
     }
 
+    let display_indices = unique_source_candidate_indices(candidates);
+    let display_candidates: Vec<&SourceResult> = display_indices
+        .iter()
+        .map(|&idx| &candidates[idx])
+        .collect();
+
     match find_existing_for_candidates(candidates, repo_root) {
         Ok(Some(location)) => {
             show_resolution_groups(package, &[], Some(&location), ctx);
             Some(SearchResolution::AlreadyInstalled(location))
         }
         Ok(None) => {
-            show_resolution_groups(package, candidates, None, ctx);
+            show_resolution_groups(package, &display_candidates, None, ctx);
+            if !args.yes && !args.dry_run && !display_candidates.is_empty() {
+                println!();
+            }
 
-            match choose_candidate_selection(args, candidates, ctx) {
+            match choose_candidate_selection(args, &display_candidates, ctx) {
                 CandidateSelection::Selected(choice) => {
-                    resolve_platform_candidate(&candidates[choice], candidates, ctx)
+                    let selected_index = display_indices[choice];
+                    resolve_platform_candidate(&candidates[selected_index], candidates, ctx)
                 }
                 CandidateSelection::Skipped => {
                     ctx.printer.detail("Cancelled.");
@@ -576,7 +620,7 @@ fn resolve_search_candidates(
 
 fn choose_candidate_selection(
     args: &InstallArgs,
-    candidates: &[SourceResult],
+    candidates: &[&SourceResult],
     ctx: &AppContext,
 ) -> CandidateSelection {
     select_candidate_index(
@@ -620,14 +664,23 @@ fn resolve_platform_candidate(
     ctx: &AppContext,
 ) -> Option<SearchResolution> {
     match resolve_platform_candidate_with(selected, candidates, check_nix_available) {
-        Ok(PlatformResolution::Primary(primary)) => Some(SearchResolution::Install(primary)),
+        Ok(PlatformResolution::Primary(primary)) => Some(SearchResolution::Install {
+            result: primary,
+            platform_warning: None,
+        }),
         Ok(PlatformResolution::Fallback { candidate, reason }) => {
-            let fallback_desc = candidate.attr.as_deref().unwrap_or(&candidate.name);
-            ctx.printer.warn(&format!(
-                "{}: {reason}; trying {fallback_desc}",
-                selected.name
-            ));
-            Some(SearchResolution::Install(candidate))
+            let fallback_desc = candidate
+                .attr
+                .as_deref()
+                .unwrap_or(&candidate.name)
+                .to_string();
+            Some(SearchResolution::Install {
+                result: candidate,
+                platform_warning: Some(format!(
+                    "{}: {reason}; trying {fallback_desc}",
+                    selected.name
+                )),
+            })
         }
         Err(reason) => {
             ctx.printer.error(&format!("{}: {reason}", selected.name));
@@ -679,38 +732,59 @@ where
     Err(reason)
 }
 
+fn unique_source_candidate_indices(candidates: &[SourceResult]) -> Vec<usize> {
+    let mut seen = HashSet::new();
+    let mut indices = Vec::new();
+    for (idx, candidate) in candidates.iter().enumerate() {
+        if seen.insert(candidate.source) {
+            indices.push(idx);
+        }
+    }
+    indices
+}
+
 fn show_unknown_group(package: &str, ctx: &AppContext) {
     println!();
-    ctx.printer.action(&format!("Results for '{package}'"));
     ctx.printer.detail("unknown/not found:");
     ctx.printer.detail(&format!("  - {package}"));
 }
 
 fn show_resolution_groups(
     package: &str,
-    installable: &[SourceResult],
+    installable: &[&SourceResult],
     installed: Option<&PackageLocation>,
     ctx: &AppContext,
 ) {
-    println!();
-    ctx.printer.action(&format!("Results for '{package}'"));
-
     if !installable.is_empty() {
-        ctx.printer.detail("installable:");
-        for (idx, candidate) in installable.iter().enumerate() {
-            let attr = candidate.attr.as_deref().unwrap_or(&candidate.name);
+        println!();
+        ctx.printer.detail("Found (1)");
+
+        if installable.len() == 1 {
+            let candidate = installable[0];
+            let source = format_source_display(candidate.source, candidate.attr.as_deref());
             let detail = if candidate.description.is_empty() {
                 String::new()
             } else {
-                format!(" - {}", candidate.description)
+                format!(" - {}", truncate_text(&candidate.description, 50))
             };
-            ctx.printer.detail(&format!(
-                "  {}. {} ({}){}",
-                idx + 1,
-                attr,
-                candidate.source,
-                detail
-            ));
+            ctx.printer
+                .detail(&format!("{package} via {source}{detail}"));
+        } else {
+            ctx.printer.detail(package);
+            for (idx, candidate) in installable.iter().enumerate() {
+                let source = format_source_display(candidate.source, candidate.attr.as_deref());
+                ctx.printer.detail(&format!("  {}. {source}", idx + 1));
+                if let Some(version) = candidate.version.as_deref() {
+                    ctx.printer
+                        .detail(&format!("         Version:     {version}"));
+                }
+                if !candidate.description.is_empty() {
+                    ctx.printer.detail(&format!(
+                        "         Description: {}",
+                        truncate_text(&candidate.description, 60)
+                    ));
+                }
+            }
         }
     }
 
@@ -721,6 +795,68 @@ fn show_resolution_groups(
             relative_location(location, &ctx.repo_root)
         ));
     }
+}
+
+fn format_source_display(source: PackageSource, attr: Option<&str>) -> String {
+    match source {
+        PackageSource::Nxs => {
+            attr.map_or_else(|| "nxs".to_string(), |value| format!("nxs (pkgs.{value})"))
+        }
+        PackageSource::Nur => "NUR".to_string(),
+        PackageSource::FlakeInput => "Flake overlay".to_string(),
+        PackageSource::Homebrew => "Homebrew formula".to_string(),
+        PackageSource::Cask => "Homebrew cask".to_string(),
+        PackageSource::Mas => "Mac App Store".to_string(),
+    }
+}
+
+fn truncate_text(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let take = max_chars.saturating_sub(3);
+    format!("{}...", text.chars().take(take).collect::<String>())
+}
+
+fn build_simulated_preview_line(package_token: &str, description: &str) -> String {
+    if description.is_empty() {
+        return package_token.to_string();
+    }
+    let truncated = description.chars().take(40).collect::<String>();
+    format!("{package_token}  # {truncated}...")
+}
+
+fn find_preview_insert_after_line(file_path: &Path) -> Option<usize> {
+    let content = fs::read_to_string(file_path).ok()?;
+    let mut insert_after = None;
+    for (idx, line) in content.lines().enumerate() {
+        if is_preview_manifest_entry(line) {
+            insert_after = Some(idx + 1);
+        }
+    }
+    insert_after
+}
+
+fn is_preview_manifest_entry(line: &str) -> bool {
+    if !line.starts_with("    ") {
+        return false;
+    }
+    let trimmed = line.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('#')
+        || trimmed.starts_with('[')
+        || trimmed.starts_with(']')
+        || trimmed.starts_with('{')
+        || trimmed.starts_with('}')
+    {
+        return false;
+    }
+
+    let token = trimmed.split_whitespace().next().unwrap_or_default();
+    !token.is_empty()
+        && token
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.')
 }
 
 fn prompt_source_choice(count: usize) -> Option<usize> {

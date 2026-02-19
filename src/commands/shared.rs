@@ -81,3 +81,61 @@ pub fn show_snippet(
     }
     println!("  └{}", "─".repeat(40));
 }
+
+pub fn show_dry_run_preview(
+    file_path: &Path,
+    insert_after_line: usize,
+    simulated_line: &str,
+    context: usize,
+) {
+    if insert_after_line == 0 {
+        return;
+    }
+
+    let Ok(file_content) = fs::read_to_string(file_path) else {
+        return;
+    };
+    let lines: Vec<&str> = file_content.lines().collect();
+    if lines.is_empty() {
+        return;
+    }
+
+    let start = insert_after_line.saturating_sub(context + 1);
+    let end = usize::min(lines.len(), insert_after_line + context);
+    if start >= end {
+        return;
+    }
+
+    let inferred_indent = lines[start..end]
+        .iter()
+        .find_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                return None;
+            }
+            Some(
+                line.chars()
+                    .take_while(|c| c.is_whitespace())
+                    .collect::<String>(),
+            )
+        })
+        .unwrap_or_default();
+    let simulated = format!("{}{}", inferred_indent, simulated_line.trim_start());
+
+    #[allow(clippy::map_unwrap_or)] // map+unwrap_or_else reads better than map_or_else here
+    let file_name = file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| file_path.display().to_string());
+
+    println!();
+    println!("  ┌── {file_name} (preview) ───");
+    for (idx, line) in lines.iter().enumerate().take(end).skip(start) {
+        println!("  │   {:4} │ {line}", idx + 1);
+        if idx + 1 == insert_after_line {
+            println!("  │ +      │ {simulated}");
+        }
+    }
+    println!("  └{}", "─".repeat(40));
+}

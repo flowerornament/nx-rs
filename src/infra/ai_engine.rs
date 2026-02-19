@@ -236,7 +236,9 @@ fn resolve_routing_run_result(
         }
         _ => RouteDecision {
             target_file: fallback.to_string(),
-            warning: None,
+            warning: Some(format!(
+                "Routing model unavailable for {package}; using fallback {fallback}"
+            )),
         },
     }
 }
@@ -742,7 +744,10 @@ mod tests {
             "packages/nix/cli.nix",
         );
         assert_eq!(decision.target_file, "packages/nix/cli.nix");
-        assert!(decision.warning.is_none());
+        assert_eq!(
+            decision.warning.as_deref(),
+            Some("Routing model unavailable for ripgrep; using fallback packages/nix/cli.nix")
+        );
     }
 
     #[test]

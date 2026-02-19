@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -7,9 +8,12 @@ use serde_json::{Map, Value};
 use crate::cli::{InfoArgs, InstalledArgs, ListArgs, WhereArgs};
 use crate::commands::context::AppContext;
 use crate::commands::shared::{SnippetMode, relative_location, show_snippet};
-use crate::domain::source::{PackageSource, SourcePreferences, SourceResult};
+use crate::domain::location::PackageLocation;
+use crate::domain::source::{
+    OVERLAY_PACKAGES, PackageSource, SourcePreferences, SourceResult, normalize_name,
+};
 use crate::infra::cache::MultiSourceCache;
-use crate::infra::config_scan::{PackageBuckets, scan_packages};
+use crate::infra::config_scan::{PackageBuckets, collect_nix_files, scan_packages};
 use crate::infra::finder::{PackageMatch, find_package, find_package_fuzzy};
 use crate::infra::query_info::{
     ConfigOptionInfo, FlakeHubInfo, darwin_service_info, hm_module_info, search_flakehub,
@@ -103,9 +107,11 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
         }
     };
 
+    let mut cache = MultiSourceCache::load(&ctx.repo_root).ok();
+    let info_sources = collect_info_sources(package, args, &ctx.repo_root, &mut cache);
+
     if args.json {
-        let mut cache = MultiSourceCache::load(&ctx.repo_root).ok();
-        let sources = collect_info_sources(package, args, &ctx.repo_root, &mut cache)
+        let sources = info_sources
             .into_iter()
             .map(info_source_json_from_result)
             .collect();
@@ -132,35 +138,54 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
         }
     }
 
-    let status = if location.is_some() {
-        "installed"
-    } else {
-        "not installed"
-    };
+    let (installed_source, active_overlay) = location.as_ref().map_or((None, None), |found| {
+        detect_installed_source(found, package, &ctx.repo_root)
+    });
+    let status = info_status_text(
+        location.is_some(),
+        installed_source.as_deref(),
+        active_overlay.as_deref(),
+    );
+    let flakehub = collect_info_flakehub(package, args.bleeding_edge, search_flakehub);
+
     println!();
     ctx.printer.detail(&format!("{package} ({status})"));
-    if let Some(location) = location {
+    if let Some(location) = location.as_ref() {
         ctx.printer.detail(&format!(
             "Location: {}",
-            relative_location(&location, &ctx.repo_root)
+            relative_location(location, &ctx.repo_root)
         ));
         if let Some(line_num) = location.line() {
             show_snippet(location.path(), line_num, 1, SnippetMode::Add, false);
         }
-    } else {
+    }
+
+    if location.is_none() && info_sources.is_empty() && flakehub.is_empty() {
         ctx.printer.error(&format!("{package} not found"));
         println!();
         ctx.printer.detail(&format!("Try: nx {package}"));
+        return 0;
     }
+
+    render_info_sources_plain(&info_sources, installed_source.as_deref());
+    render_config_option_plain(
+        "Home-manager module",
+        "Module",
+        hm_module_info(package, &ctx.repo_root),
+    );
+    render_config_option_plain(
+        "nix-darwin service",
+        "Service",
+        darwin_service_info(package, &ctx.repo_root),
+    );
+    render_flakehub_plain(&flakehub);
+    render_install_hints_plain(package, &info_sources, location.is_some());
+
     0
 }
 
-fn source_prefs_from_info_args(args: &InfoArgs) -> SourcePreferences {
-    SourcePreferences {
-        bleeding_edge: args.bleeding_edge,
-        nur: args.bleeding_edge,
-        ..Default::default()
-    }
+fn source_prefs_from_info_args(_args: &InfoArgs) -> SourcePreferences {
+    SourcePreferences::default()
 }
 
 fn collect_info_sources(
@@ -211,6 +236,280 @@ where
         return Vec::new();
     }
     search(package).into_iter().take(3).collect()
+}
+
+fn info_status_text(
+    installed: bool,
+    installed_source: Option<&str>,
+    active_overlay: Option<&str>,
+) -> String {
+    if !installed {
+        return "not installed".to_string();
+    }
+    if let Some(overlay) = active_overlay {
+        return format!("installed via {overlay}");
+    }
+    installed_source.map_or_else(
+        || "installed".to_string(),
+        |source| format!("installed ({source})"),
+    )
+}
+
+fn detect_installed_source(
+    location: &PackageLocation,
+    package: &str,
+    repo_root: &Path,
+) -> (Option<String>, Option<String>) {
+    let rel = relative_location(location, repo_root);
+    let rel_path = rel.rsplit_once(':').map_or(rel.as_str(), |(path, _)| path);
+
+    if rel_path == "system/darwin.nix"
+        && let Ok(buckets) = scan_packages(repo_root)
+    {
+        let package_norm = normalize_name(package);
+        let matches = |value: &String| {
+            value.eq_ignore_ascii_case(package) || value.eq_ignore_ascii_case(&package_norm)
+        };
+        if buckets.casks.iter().any(matches) {
+            return (Some(PackageSource::Cask.as_str().to_string()), None);
+        }
+        if buckets.brews.iter().any(matches) {
+            return (Some(PackageSource::Homebrew.as_str().to_string()), None);
+        }
+        if buckets.mas.iter().any(matches) {
+            return (Some(PackageSource::Mas.as_str().to_string()), None);
+        }
+    }
+
+    if let Some(overlay) = check_overlay_active(package, repo_root) {
+        return (
+            Some(PackageSource::FlakeInput.as_str().to_string()),
+            Some(overlay),
+        );
+    }
+
+    (Some(PackageSource::Nxs.as_str().to_string()), None)
+}
+
+fn check_overlay_active(name: &str, repo_root: &Path) -> Option<String> {
+    let normalized = normalize_name(name);
+    let (overlay_name, _, _) = OVERLAY_PACKAGES.get(normalized.as_str())?;
+
+    let flake_lock = repo_root.join("flake.lock");
+    let lock_content = fs::read_to_string(flake_lock).ok()?;
+    let lock_json: Value = serde_json::from_str(&lock_content).ok()?;
+    let nodes = lock_json.get("nodes").and_then(Value::as_object)?;
+    if !nodes.contains_key(*overlay_name) {
+        return None;
+    }
+
+    let overlay_token = format!("inputs.{overlay_name}");
+    for nix_file in collect_nix_files(repo_root) {
+        let Ok(content) = fs::read_to_string(nix_file) else {
+            continue;
+        };
+        if content.contains("overlays") && content.contains(&overlay_token) {
+            return Some((*overlay_name).to_string());
+        }
+    }
+
+    None
+}
+
+fn render_info_sources_plain(sources: &[SourceResult], installed_source: Option<&str>) {
+    for source in sources {
+        let label = info_source_label(source);
+        let is_current = installed_source.is_some_and(|current| current == source.source.as_str());
+        let metadata = info_source_json_from_result(source.clone());
+
+        println!();
+        if is_current {
+            println!("  {label} (current)");
+        } else {
+            println!("  {label}");
+        }
+
+        render_info_metadata_plain(&metadata);
+        render_info_warnings_plain(&metadata);
+        render_info_dependencies_plain(&metadata);
+        render_info_artifacts_plain(&metadata);
+        render_info_caveats_plain(&metadata);
+    }
+}
+
+fn info_source_label(source: &SourceResult) -> String {
+    let label_name = source.attr.as_deref().unwrap_or(&source.name);
+    match source.source {
+        PackageSource::Nxs => format!("nxs (pkgs.{label_name})"),
+        PackageSource::Homebrew => "Homebrew formula".to_string(),
+        PackageSource::Cask => "Homebrew cask".to_string(),
+        PackageSource::Nur => format!("NUR ({label_name})"),
+        PackageSource::FlakeInput => format!("Flake overlay ({label_name})"),
+        PackageSource::Mas => "Mac App Store".to_string(),
+    }
+}
+
+fn render_info_metadata_plain(source: &InfoSourceJson) {
+    if let Some(value) = source.version.as_deref() {
+        println!("  {:<13} {value}", "Version:");
+    }
+    if let Some(value) = source.description.as_deref() {
+        println!("  {:<13} {value}", "Description:");
+    }
+    if let Some(value) = source.homepage.as_deref() {
+        println!("  {:<13} {value}", "Homepage:");
+    }
+    if let Some(value) = source.license.as_deref() {
+        println!("  {:<13} {value}", "License:");
+    }
+    if source.head_available {
+        println!("  {:<13} Available (brew install --HEAD)", "HEAD build:");
+    }
+}
+
+fn render_info_warnings_plain(source: &InfoSourceJson) {
+    if source.broken {
+        println!("! This package is marked as BROKEN");
+    }
+    if source.insecure {
+        println!("! This package is marked as INSECURE");
+    }
+}
+
+fn render_info_dependencies_plain(source: &InfoSourceJson) {
+    if let Some(dependencies) = source.dependencies.as_ref()
+        && !dependencies.is_empty()
+    {
+        let shown = dependencies
+            .iter()
+            .take(10)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = if dependencies.len() > 10 {
+            format!(" (+{} more)", dependencies.len() - 10)
+        } else {
+            String::new()
+        };
+        println!("  {:<13} {shown}{more}", "Dependencies:");
+    }
+
+    if let Some(build_dependencies) = source.build_dependencies.as_ref()
+        && !build_dependencies.is_empty()
+    {
+        let shown = build_dependencies
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = if build_dependencies.len() > 5 {
+            format!(" (+{} more)", build_dependencies.len() - 5)
+        } else {
+            String::new()
+        };
+        println!("  {:<13} {shown}{more}", "Build deps:");
+    }
+}
+
+fn render_info_artifacts_plain(source: &InfoSourceJson) {
+    if let Some(artifacts) = source.artifacts.as_ref()
+        && !artifacts.is_empty()
+    {
+        let shown = artifacts
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("  {:<13} {shown}", "Installs:");
+    }
+}
+
+fn render_info_caveats_plain(source: &InfoSourceJson) {
+    let Some(caveats) = source.caveats.as_deref() else {
+        return;
+    };
+    let trimmed = caveats.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+
+    println!();
+    println!("  Caveats:");
+    for line in trimmed.split('\n').take(5) {
+        println!("    {line}");
+    }
+    if caveats.matches('\n').count() > 5 {
+        println!("    ...");
+    }
+}
+
+fn render_config_option_plain(title: &str, kind: &str, info: Option<ConfigOptionInfo>) {
+    let Some(info) = info else {
+        return;
+    };
+    let tag = if info.enabled { " (enabled)" } else { "" };
+
+    println!();
+    println!("  {title}{tag}");
+    println!("  {kind}: {}", info.path);
+    println!("  Example: {}", info.example);
+}
+
+fn render_flakehub_plain(results: &[FlakeHubInfo]) {
+    if results.is_empty() {
+        return;
+    }
+
+    println!();
+    println!("  FlakeHub flakes ({})", results.len());
+    for result in results.iter().take(3) {
+        println!("  {}", result.name);
+        if !result.description.is_empty() {
+            let summary = result.description.chars().take(60).collect::<String>();
+            println!("    {summary}...");
+        }
+        if let Some(version) = result.version.as_deref() {
+            println!("    Latest: {version}");
+        }
+    }
+
+    println!();
+    let first = &results[0];
+    let flake_short = first.name.split('/').nth(1).unwrap_or(&first.name);
+    println!("  To use a FlakeHub flake, add to flake.nix inputs:");
+    println!("    {flake_short} = {{");
+    println!(
+        "      url = \"https://flakehub.com/f/{name}/*.tar.gz\";",
+        name = first.name
+    );
+    println!("    }};");
+    println!();
+    println!("  Then use: inputs.{flake_short}.packages.${{system}}.default");
+}
+
+fn render_install_hints_plain(name: &str, infos: &[SourceResult], installed: bool) {
+    if installed || infos.len() <= 1 {
+        return;
+    }
+
+    println!("  Available from multiple sources. Install with:");
+    for info in infos {
+        let hint = install_hint_for_source(name, info.source);
+        println!("  {hint}");
+    }
+}
+
+fn install_hint_for_source(name: &str, source: PackageSource) -> String {
+    match source {
+        PackageSource::Nxs => format!("nx {name}"),
+        PackageSource::Nur => format!("nx --nur {name}"),
+        PackageSource::Homebrew => format!("nx --source homebrew {name}"),
+        PackageSource::Cask => format!("nx --cask {name}"),
+        PackageSource::Mas => format!("nx --mas {name}"),
+        PackageSource::FlakeInput => format!("nx --bleeding-edge {name}"),
+    }
 }
 
 pub fn cmd_status(ctx: &AppContext) -> i32 {
@@ -1011,6 +1310,22 @@ mod tests {
         assert_eq!(
             value.get("head_available").and_then(Value::as_bool),
             Some(false)
+        );
+    }
+
+    #[test]
+    fn info_source_label_uses_nix_attr_display() {
+        let source = source_result("ripgrep", PackageSource::Nxs, Some("ripgrep"), 1.0);
+        assert_eq!(info_source_label(&source), "nxs (pkgs.ripgrep)");
+    }
+
+    #[test]
+    fn info_status_text_matches_python_shape() {
+        assert_eq!(info_status_text(false, None, None), "not installed");
+        assert_eq!(info_status_text(true, Some("nxs"), None), "installed (nxs)");
+        assert_eq!(
+            info_status_text(true, Some("flake-input"), Some("fenix")),
+            "installed via fenix"
         );
     }
 

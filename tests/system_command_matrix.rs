@@ -43,7 +43,10 @@ const INFO_BLEEDING_EDGE_ARGS: &[&str] = &["info", "ripgrep", "--bleeding-edge"]
 const INFO_JSON_HM_MODULE_ARGS: &[&str] = &["info", "git", "--json"];
 const INFO_JSON_DARWIN_SERVICE_ARGS: &[&str] = &["info", "yabai", "--json"];
 
-const INFO_FOUND_STDOUT: &[&str] = &["ripgrep (installed)", "Location: packages/nix/cli.nix:5"];
+const INFO_FOUND_STDOUT: &[&str] = &[
+    "ripgrep (installed (nxs))",
+    "Location: packages/nix/cli.nix:5",
+];
 const INFO_JSON_FOUND_STDOUT: &[&str] = &[
     "\"name\": \"ripgrep\"",
     "\"installed\": true",

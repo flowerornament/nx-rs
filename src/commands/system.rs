@@ -166,15 +166,11 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<bool, i32> {
             }
 
             if let Some(summary) = fetch_flake_compare_summary(change) {
-                let suffix = if summary.total_commits == 1 { "" } else { "s" };
-                if summary.commit_subjects.is_empty() {
-                    println!("    summary: {} commit{suffix}", summary.total_commits);
-                } else {
-                    println!(
-                        "    summary: {} commit{suffix}: {}",
-                        summary.total_commits,
-                        summary.commit_subjects.join(" | "),
-                    );
+                println!("    summary: {}", format_compare_summary(&summary));
+                if let Some(ai_summary) =
+                    maybe_ai_summary(args.no_ai, || summarize_flake_change_ai(change, &summary))
+                {
+                    println!("    ai summary: {ai_summary}");
                 }
             }
         }
@@ -193,21 +189,30 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<bool, i32> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct FlakeCompareSummary {
+struct CompareSummary {
     total_commits: usize,
     commit_subjects: Vec<String>,
 }
 
-fn fetch_flake_compare_summary(change: &InputChange) -> Option<FlakeCompareSummary> {
+fn fetch_flake_compare_summary(change: &InputChange) -> Option<CompareSummary> {
     let endpoint = flake_compare_endpoint(change)?;
-    let output = run_captured_command("gh", &["api", &endpoint], None).ok()?;
+    fetch_compare_summary(&endpoint)
+}
+
+fn fetch_brew_compare_summary(package: &BrewOutdatedPackage) -> Option<CompareSummary> {
+    let endpoint = brew_compare_endpoint(package)?;
+    fetch_compare_summary(&endpoint)
+}
+
+fn fetch_compare_summary(endpoint: &str) -> Option<CompareSummary> {
+    let output = run_captured_command("gh", &["api", endpoint], None).ok()?;
     if output.code != 0 {
         return None;
     }
-    parse_flake_compare_json(&output.stdout)
+    parse_compare_json(&output.stdout)
 }
 
-fn parse_flake_compare_json(json_str: &str) -> Option<FlakeCompareSummary> {
+fn parse_compare_json(json_str: &str) -> Option<CompareSummary> {
     let data: serde_json::Value = serde_json::from_str(json_str).ok()?;
     let commits = data.get("commits")?.as_array()?;
     if commits.is_empty() {
@@ -234,10 +239,187 @@ fn parse_flake_compare_json(json_str: &str) -> Option<FlakeCompareSummary> {
         .take(3)
         .collect();
 
-    Some(FlakeCompareSummary {
+    Some(CompareSummary {
         total_commits,
         commit_subjects,
     })
+}
+
+fn format_compare_summary(summary: &CompareSummary) -> String {
+    let suffix = if summary.total_commits == 1 { "" } else { "s" };
+    if summary.commit_subjects.is_empty() {
+        format!("{} commit{suffix}", summary.total_commits)
+    } else {
+        format!(
+            "{} commit{suffix}: {}",
+            summary.total_commits,
+            summary.commit_subjects.join(" | "),
+        )
+    }
+}
+
+fn maybe_ai_summary<F>(no_ai: bool, summarize: F) -> Option<String>
+where
+    F: FnOnce() -> Option<String>,
+{
+    if no_ai { None } else { summarize() }
+}
+
+const KEY_INPUTS: &[&str] = &["nxs", "home-manager", "nix-darwin"];
+
+fn should_use_detailed_ai_summary(input_name: &str, commit_count: usize) -> bool {
+    KEY_INPUTS.contains(&input_name) || commit_count > 50
+}
+
+fn summarize_flake_change_ai(change: &InputChange, summary: &CompareSummary) -> Option<String> {
+    let target = format!(
+        "flake input {} ({}/{})",
+        change.name, change.owner, change.repo
+    );
+    let detailed = should_use_detailed_ai_summary(&change.name, summary.total_commits);
+    summarize_with_ai(&target, &summary.commit_subjects, detailed, 2, 400)
+}
+
+fn summarize_brew_change_ai(
+    package: &BrewOutdatedPackage,
+    summary: &CompareSummary,
+) -> Option<String> {
+    let target = format!(
+        "Homebrew package {} ({} -> {})",
+        package.name, package.installed_version, package.current_version
+    );
+    summarize_with_ai(&target, &summary.commit_subjects, false, 1, 180)
+}
+
+fn summarize_with_ai(
+    target: &str,
+    commits: &[String],
+    detailed: bool,
+    max_lines: usize,
+    max_chars: usize,
+) -> Option<String> {
+    if commits.is_empty() {
+        return None;
+    }
+
+    if detailed {
+        summarize_with_claude(target, commits, max_lines, max_chars)
+            .or_else(|| summarize_with_codex(target, commits, max_lines, max_chars))
+    } else {
+        summarize_with_codex(target, commits, max_lines, max_chars)
+            .or_else(|| summarize_with_claude(target, commits, max_lines, max_chars))
+    }
+}
+
+fn summarize_with_codex(
+    target: &str,
+    commits: &[String],
+    max_lines: usize,
+    max_chars: usize,
+) -> Option<String> {
+    let prompt = build_codex_summary_prompt(target, commits);
+    run_ai_summary(
+        "codex",
+        &["exec", "-m", "o4-mini", "--full-auto", &prompt],
+        max_lines,
+        max_chars,
+    )
+}
+
+fn summarize_with_claude(
+    target: &str,
+    commits: &[String],
+    max_lines: usize,
+    max_chars: usize,
+) -> Option<String> {
+    let prompt = build_claude_summary_prompt(target, commits);
+    run_ai_summary("claude", &["--print", "-p", &prompt], max_lines, max_chars)
+}
+
+fn build_codex_summary_prompt(target: &str, commits: &[String]) -> String {
+    let commit_text = commits
+        .iter()
+        .take(30)
+        .map(|commit| format!("- {commit}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "Summarize these software update commits for {target} in 1 sentence.\n\
+Focus on user-visible features, fixes, security updates, and breaking changes.\n\
+Ignore minor refactors and dependency churn.\n\n\
+Commits:\n\
+{commit_text}\n\n\
+Summary:"
+    )
+}
+
+fn build_claude_summary_prompt(target: &str, commits: &[String]) -> String {
+    let commit_text = commits
+        .iter()
+        .take(40)
+        .map(|commit| format!("- {commit}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "Summarize the key upgrade impact for {target} in 2 short sentences.\n\
+Focus on behavior changes users will notice, important fixes, and any risks.\n\
+Skip internal-only refactors.\n\n\
+Commits:\n\
+{commit_text}\n\n\
+Summary:"
+    )
+}
+
+fn run_ai_summary(
+    program: &str,
+    args: &[&str],
+    max_lines: usize,
+    max_chars: usize,
+) -> Option<String> {
+    let output = run_captured_command(program, args, None).ok()?;
+    if output.code != 0 {
+        return None;
+    }
+    parse_ai_summary_output(&output.stdout, max_lines, max_chars)
+}
+
+fn parse_ai_summary_output(output: &str, max_lines: usize, max_chars: usize) -> Option<String> {
+    let lines = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(trim_summary_prefix)
+        .filter(|line| !line.is_empty())
+        .take(max_lines)
+        .collect::<Vec<_>>();
+
+    if lines.is_empty() {
+        return None;
+    }
+
+    let joined = lines.join(" ");
+    Some(truncate_summary(joined.trim(), max_chars))
+}
+
+fn trim_summary_prefix(line: &str) -> &str {
+    line.trim_start_matches(['-', '*', ' ']).trim()
+}
+
+fn truncate_summary(text: &str, max_chars: usize) -> String {
+    let chars = text.chars().collect::<Vec<_>>();
+    if chars.len() <= max_chars {
+        return text.to_string();
+    }
+
+    let keep = max_chars.saturating_sub(3);
+    let mut shortened = chars.into_iter().take(keep).collect::<String>();
+    while shortened.ends_with(' ') {
+        shortened.pop();
+    }
+    shortened.push_str("...");
+    shortened
 }
 
 fn first_commit_line(message: &str) -> &str {
@@ -268,6 +450,17 @@ fn flake_compare_url(change: &InputChange) -> Option<String> {
     ))
 }
 
+fn brew_compare_endpoint(package: &BrewOutdatedPackage) -> Option<String> {
+    let homepage = package.homepage.as_deref()?;
+    let (owner, repo) = github_owner_repo(homepage)?;
+    let old = normalize_version(&package.installed_version);
+    let new = normalize_version(&package.current_version);
+    if old.is_empty() || new.is_empty() {
+        return None;
+    }
+    Some(format!("repos/{owner}/{repo}/compare/{old}...{new}"))
+}
+
 /// Brew phase: check outdated packages, display, and upgrade.
 fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
     ctx.printer.action("Checking Homebrew updates");
@@ -294,6 +487,13 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
             println!("    {changelog_url}");
         } else if let Some(homepage) = &package.homepage {
             println!("    {homepage}");
+        }
+
+        if let Some(ai_summary) = maybe_ai_summary(args.no_ai, || {
+            fetch_brew_compare_summary(package)
+                .and_then(|summary| summarize_brew_change_ai(package, &summary))
+        }) {
+            println!("    ai summary: {ai_summary}");
         }
     }
 
@@ -1285,7 +1485,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_flake_compare_json_extracts_commit_summary() {
+    fn parse_compare_json_extracts_commit_summary() {
         let json = r#"{
             "total_commits": 4,
             "commits": [
@@ -1296,7 +1496,7 @@ mod tests {
             ]
         }"#;
 
-        let summary = parse_flake_compare_json(json).expect("summary should parse");
+        let summary = parse_compare_json(json).expect("summary should parse");
         assert_eq!(summary.total_commits, 4);
         assert_eq!(
             summary.commit_subjects,
@@ -1309,9 +1509,46 @@ mod tests {
     }
 
     #[test]
-    fn parse_flake_compare_json_invalid_returns_none() {
-        let summary = parse_flake_compare_json("not json");
+    fn parse_compare_json_invalid_returns_none() {
+        let summary = parse_compare_json("not json");
         assert!(summary.is_none());
+    }
+
+    #[test]
+    fn maybe_ai_summary_respects_no_ai_gate() {
+        let mut called = false;
+        let summary = maybe_ai_summary(true, || {
+            called = true;
+            Some("should not run".to_string())
+        });
+        assert!(summary.is_none());
+        assert!(!called);
+    }
+
+    #[test]
+    fn maybe_ai_summary_runs_when_enabled() {
+        let mut called = false;
+        let summary = maybe_ai_summary(false, || {
+            called = true;
+            Some("ok".to_string())
+        });
+        assert_eq!(summary.as_deref(), Some("ok"));
+        assert!(called);
+    }
+
+    #[test]
+    fn detailed_ai_summary_for_key_input() {
+        assert!(should_use_detailed_ai_summary("home-manager", 1));
+        assert!(should_use_detailed_ai_summary("custom-input", 51));
+        assert!(!should_use_detailed_ai_summary("custom-input", 10));
+    }
+
+    #[test]
+    fn parse_ai_summary_output_compacts_and_truncates() {
+        let output = "Summary: first line\n\n- second line\nthird line";
+        let parsed = parse_ai_summary_output(output, 2, 30).expect("summary should parse");
+        assert!(parsed.starts_with("Summary: first line second"));
+        assert!(parsed.len() <= 30);
     }
 
     // --- changelog URL derivation ---

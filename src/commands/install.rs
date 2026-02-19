@@ -274,23 +274,25 @@ fn execute_edit(
     let before_diff = git_diff(&ctx.repo_root);
     let mut deterministic: Option<anyhow::Result<EditOutcome>> = None;
 
-    let execution = run_edit_with_callback(engine, &prompt, &ctx.repo_root, || {
-        if engine.name() != "codex" {
-            return None;
-        }
-
-        deterministic = Some(apply_edit(plan));
-        deterministic.as_ref().map(|result| match result {
-            Ok(_) => CommandOutcome {
-                success: true,
-                output: "deterministic edit applied".to_string(),
-            },
-            Err(err) => CommandOutcome {
-                success: false,
-                output: err.to_string(),
-            },
-        })
-    });
+    let execution =
+        run_edit_with_callback(engine, &prompt, &ctx.repo_root, || match apply_edit(plan) {
+            Ok(outcome) => {
+                deterministic = Some(Ok(outcome));
+                Some(CommandOutcome {
+                    success: true,
+                    output: "deterministic edit applied".to_string(),
+                })
+            }
+            Err(err) if should_fallback_to_ai(engine, &err) => None,
+            Err(err) => {
+                let message = err.to_string();
+                deterministic = Some(Err(err));
+                Some(CommandOutcome {
+                    success: false,
+                    output: message,
+                })
+            }
+        });
 
     if let Some(result) = deterministic {
         return report_deterministic_edit(result, plan, rel_target, ctx);
@@ -323,6 +325,16 @@ fn execute_edit(
         show_snippet(location.path(), line, 2, SnippetMode::Add, false);
     }
     true
+}
+
+fn should_fallback_to_ai(engine: &dyn AiEngine, err: &anyhow::Error) -> bool {
+    engine.name() == "claude" && is_unsupported_edit_shape(err)
+}
+
+fn is_unsupported_edit_shape(err: &anyhow::Error) -> bool {
+    let message = err.to_string();
+    message.starts_with("no ")
+        && (message.contains("list found") || message.contains("block found"))
 }
 
 fn report_deterministic_edit(
@@ -1292,7 +1304,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_edit_claude_uses_ai_path() {
+    fn execute_edit_claude_uses_deterministic_path() {
         let tmp = TempDir::new().expect("temp dir should be created");
         let root = tmp.path();
         write_nix(
@@ -1316,21 +1328,77 @@ mod tests {
         let plan = test_plan(root, "ripgrep");
 
         assert!(execute_edit(&plan, "packages/nix/cli.nix", &ctx, &engine));
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
 
         let edited = fs::read_to_string(root.join("packages/nix/cli.nix"))
             .expect("target file should be readable");
-        assert!(!edited.contains("ripgrep"));
+        assert!(edited.contains("ripgrep"));
     }
 
     #[test]
-    fn execute_edit_claude_failure_returns_false() {
+    fn execute_edit_claude_is_idempotent_without_ai_fallback() {
         let tmp = TempDir::new().expect("temp dir should be created");
         let root = tmp.path();
         write_nix(
             root,
             "packages/nix/cli.nix",
-            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    bat\n  ];\n}\n",
+            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    bat\n    ripgrep\n  ];\n}\n",
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let engine = StubEngine {
+            engine_name: "claude",
+            supports_flake: true,
+            run_edit_calls: calls.clone(),
+            run_edit_outcome: CommandOutcome {
+                success: true,
+                output: "ok".to_string(),
+            },
+        };
+
+        let ctx = test_context(root);
+        let plan = test_plan(root, "ripgrep");
+
+        assert!(execute_edit(&plan, "packages/nix/cli.nix", &ctx, &engine));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn execute_edit_claude_falls_back_to_ai_when_deterministic_unsupported() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_nix(
+            root,
+            "packages/nix/cli.nix",
+            "{ pkgs, ... }:\n{\n  services = { };\n}\n",
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let engine = StubEngine {
+            engine_name: "claude",
+            supports_flake: true,
+            run_edit_calls: calls.clone(),
+            run_edit_outcome: CommandOutcome {
+                success: true,
+                output: "ok".to_string(),
+            },
+        };
+
+        let ctx = test_context(root);
+        let plan = test_plan(root, "ripgrep");
+
+        assert!(execute_edit(&plan, "packages/nix/cli.nix", &ctx, &engine));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn execute_edit_claude_fallback_failure_returns_false() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_nix(
+            root,
+            "packages/nix/cli.nix",
+            "{ pkgs, ... }:\n{\n  services = { };\n}\n",
         );
 
         let calls = Arc::new(AtomicUsize::new(0));

@@ -479,6 +479,12 @@ enum PlatformResolution {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CandidateSelection {
+    Selected(usize),
+    Skipped,
+}
+
 /// Search all sources for a package. Returns `None` with error printed if not found.
 fn search_for_package(
     package: &str,
@@ -551,25 +557,61 @@ fn resolve_search_candidates(
         Ok(None) => {
             show_resolution_groups(package, candidates, None, ctx);
 
-            if args.yes || args.dry_run || candidates.len() == 1 {
-                return candidates
-                    .first()
-                    .and_then(|selected| resolve_platform_candidate(selected, candidates, ctx));
-            }
-
-            prompt_source_choice(candidates.len()).map_or_else(
-                || {
+            match choose_candidate_selection(args, candidates, ctx) {
+                CandidateSelection::Selected(choice) => {
+                    resolve_platform_candidate(&candidates[choice], candidates, ctx)
+                }
+                CandidateSelection::Skipped => {
                     ctx.printer.detail("Cancelled.");
                     Some(SearchResolution::Skipped)
-                },
-                |choice| resolve_platform_candidate(&candidates[choice], candidates, ctx),
-            )
+                }
+            }
         }
         Err(err) => {
             ctx.printer.error(&format!("install lookup failed: {err}"));
             None
         }
     }
+}
+
+fn choose_candidate_selection(
+    args: &InstallArgs,
+    candidates: &[SourceResult],
+    ctx: &AppContext,
+) -> CandidateSelection {
+    select_candidate_index(
+        args,
+        candidates.len(),
+        || {
+            let candidate = &candidates[0];
+            let attr = candidate.attr.as_deref().unwrap_or(&candidate.name);
+            ctx.printer
+                .confirm(&format!("Install {attr} ({})?", candidate.source), true)
+        },
+        prompt_source_choice,
+    )
+}
+
+fn select_candidate_index(
+    args: &InstallArgs,
+    candidate_count: usize,
+    confirm_single: impl FnOnce() -> bool,
+    prompt_choice: impl FnOnce(usize) -> Option<usize>,
+) -> CandidateSelection {
+    if candidate_count == 0 {
+        return CandidateSelection::Skipped;
+    }
+    if args.yes || args.dry_run {
+        return CandidateSelection::Selected(0);
+    }
+    if candidate_count == 1 {
+        return if confirm_single() {
+            CandidateSelection::Selected(0)
+        } else {
+            CandidateSelection::Skipped
+        };
+    }
+    prompt_choice(candidate_count).map_or(CandidateSelection::Skipped, CandidateSelection::Selected)
 }
 
 fn resolve_platform_candidate(
@@ -987,6 +1029,120 @@ mod tests {
         assert_eq!(parse_source_choice("0", 3), None);
         assert_eq!(parse_source_choice("9", 3), None);
         assert_eq!(parse_source_choice("abc", 3), None);
+    }
+
+    #[test]
+    fn select_candidate_index_yes_bypasses_prompts() {
+        let mut args = install_args_template();
+        args.yes = true;
+
+        let mut confirm_calls = 0usize;
+        let mut prompt_calls = 0usize;
+
+        let selection = select_candidate_index(
+            &args,
+            3,
+            || {
+                confirm_calls += 1;
+                true
+            },
+            |_| {
+                prompt_calls += 1;
+                Some(2)
+            },
+        );
+
+        assert_eq!(selection, CandidateSelection::Selected(0));
+        assert_eq!(confirm_calls, 0);
+        assert_eq!(prompt_calls, 0);
+    }
+
+    #[test]
+    fn select_candidate_index_dry_run_bypasses_prompts() {
+        let mut args = install_args_template();
+        args.dry_run = true;
+
+        let mut confirm_calls = 0usize;
+        let mut prompt_calls = 0usize;
+
+        let selection = select_candidate_index(
+            &args,
+            2,
+            || {
+                confirm_calls += 1;
+                true
+            },
+            |_| {
+                prompt_calls += 1;
+                Some(1)
+            },
+        );
+
+        assert_eq!(selection, CandidateSelection::Selected(0));
+        assert_eq!(confirm_calls, 0);
+        assert_eq!(prompt_calls, 0);
+    }
+
+    #[test]
+    fn select_candidate_index_single_requires_confirmation() {
+        let args = install_args_template();
+
+        let mut confirm_calls = 0usize;
+        let mut prompt_calls = 0usize;
+        let declined = select_candidate_index(
+            &args,
+            1,
+            || {
+                confirm_calls += 1;
+                false
+            },
+            |_| {
+                prompt_calls += 1;
+                Some(0)
+            },
+        );
+
+        assert_eq!(declined, CandidateSelection::Skipped);
+        assert_eq!(confirm_calls, 1);
+        assert_eq!(prompt_calls, 0);
+    }
+
+    #[test]
+    fn select_candidate_index_multi_uses_numbered_prompt() {
+        let args = install_args_template();
+
+        let mut confirm_calls = 0usize;
+        let mut prompt_calls = 0usize;
+        let selected = select_candidate_index(
+            &args,
+            3,
+            || {
+                confirm_calls += 1;
+                true
+            },
+            |_| {
+                prompt_calls += 1;
+                Some(2)
+            },
+        );
+
+        let skipped = select_candidate_index(
+            &args,
+            3,
+            || {
+                confirm_calls += 1;
+                true
+            },
+            |_| {
+                prompt_calls += 1;
+                None
+            },
+        );
+
+        assert_eq!(selected, CandidateSelection::Selected(2));
+        assert_eq!(skipped, CandidateSelection::Skipped);
+        assert_eq!(confirm_calls, 0);
+        assert_eq!(prompt_calls, 2);
     }
 
     fn install_args_template() -> InstallArgs {

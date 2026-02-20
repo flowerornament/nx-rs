@@ -13,12 +13,20 @@ use crate::commands::search::cmd_search;
 use crate::commands::secret::cmd_secret;
 use crate::commands::system::{cmd_rebuild, cmd_test, cmd_undo, cmd_update, cmd_upgrade};
 use crate::domain::config::ConfigFiles;
+use crate::infra::self_refresh::maybe_refresh_before_system_command;
 use crate::output::printer::Printer;
 use crate::output::style::OutputStyle;
 
 pub fn execute(cli: Cli) -> i32 {
     let style = OutputStyle::from_flags(cli.plain, cli.unicode, cli.minimal);
     let printer = Printer::new(style);
+    let needs_refresh = matches!(
+        cli.command,
+        CommandKind::Rebuild(_) | CommandKind::Upgrade(_)
+    );
+    if let Some(code) = maybe_refresh_before_system_command(needs_refresh, &printer) {
+        return code;
+    }
 
     let repo_root = match find_repo_root() {
         Ok(path) => path,

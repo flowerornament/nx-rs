@@ -69,3 +69,9 @@ Update rules for future agents:
 - `installed` JSON format: corrected to show query strings as top-level keys, not nested.
 - Config scan vs finder scan: clarified `default.nix` excluded from purpose routing but included in package discovery via finder's independent glob.
 - Section 15 (pre-Rust toolchain setup) removed as completed planning artifact.
+
+12. Local cargo-installed nx can auto-refresh on system commands.
+- When `nx` resolves to `~/.local/share/cargo/bin/nx`, `rebuild` and `upgrade` now preflight-check whether local `nx-rs` sources are newer than the binary.
+- If stale, nx runs `cargo install --path <nx-rs-root> --force`, prints a re-run hint, and exits without executing the system command payload.
+- Auto-refresh is opt-out via `NX_RS_AUTO_REFRESH=0` (also accepts `false`/`no`).
+- Verified on 2026-02-19 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.

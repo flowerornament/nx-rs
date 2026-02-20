@@ -21,13 +21,7 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString>,
 {
-    let preprocessed = match cli::preprocess_args(args) {
-        Ok(v) => v,
-        Err(msg) => {
-            eprintln!("error: {msg}");
-            return ExitCode::from(2);
-        }
-    };
+    let preprocessed = cli::preprocess_args(args);
     let parsed = match cli::Cli::try_parse_from(preprocessed) {
         Ok(parsed) => parsed,
         Err(err) => {

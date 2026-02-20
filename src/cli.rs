@@ -236,151 +236,63 @@ pub struct UpgradeArgs {
     pub passthrough: Vec<String>,
 }
 
-/// Levenshtein edit distance between two strings (two-row DP).
-fn levenshtein(a: &str, b: &str) -> usize {
-    let b_len = b.chars().count();
-    let mut prev: Vec<usize> = (0..=b_len).collect();
-    let mut curr = vec![0; b_len + 1];
-
-    for (i, ca) in a.chars().enumerate() {
-        curr[0] = i + 1;
-        for (j, cb) in b.chars().enumerate() {
-            let cost = usize::from(ca != cb);
-            curr[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(curr[j] + 1);
-        }
-        std::mem::swap(&mut prev, &mut curr);
-    }
-
-    prev[b_len]
-}
-
-/// Find the closest known command within edit distance <= 2.
-fn closest_command(input: &str) -> Option<&'static str> {
-    KNOWN_COMMANDS
-        .iter()
-        .filter_map(|&cmd| {
-            let d = levenshtein(input, cmd);
-            (d > 0 && d <= 2).then_some((d, cmd))
-        })
-        .min_by_key(|(d, _)| *d)
-        .map(|(_, cmd)| cmd)
-}
-
-pub fn preprocess_args<I, T>(args: I) -> Result<Vec<OsString>, String>
+pub fn preprocess_args<I, T>(args: I) -> Vec<OsString>
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString>,
 {
     let mut out: Vec<OsString> = args.into_iter().map(Into::into).collect();
     if out.len() < 2 {
-        return Ok(out);
+        return out;
     }
 
     let first = out[1].to_string_lossy();
     if first.starts_with('-') || KNOWN_COMMANDS.contains(&first.as_ref()) {
-        return Ok(out);
-    }
-
-    // Not a known command — check for typo before treating as package name
-    if let Some(suggestion) = closest_command(&first) {
-        return Err(format!(
-            "unknown command '{first}'. Did you mean '{suggestion}'?"
-        ));
+        return out;
     }
 
     out.insert(1, OsString::from("install"));
-    Ok(out)
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // --- levenshtein ---
-
-    #[test]
-    fn levenshtein_identical() {
-        assert_eq!(levenshtein("rebuild", "rebuild"), 0);
-    }
-
-    #[test]
-    fn levenshtein_single_insert() {
-        assert_eq!(levenshtein("rebild", "rebuild"), 1);
-    }
-
-    #[test]
-    fn levenshtein_double_insert() {
-        assert_eq!(levenshtein("rebuiild", "rebuild"), 1);
-    }
-
-    #[test]
-    fn levenshtein_swap() {
-        assert_eq!(levenshtein("upgade", "upgrade"), 1);
-    }
-
-    #[test]
-    fn levenshtein_distant() {
-        assert!(levenshtein("xyz", "rebuild") > 2);
-    }
-
-    // --- closest_command ---
-
-    #[test]
-    fn closest_command_finds_rebuild() {
-        assert_eq!(closest_command("rebuiild"), Some("rebuild"));
-    }
-
-    #[test]
-    fn closest_command_finds_upgrade() {
-        assert_eq!(closest_command("upgade"), Some("upgrade"));
-    }
-
-    #[test]
-    fn closest_command_rejects_distant() {
-        assert_eq!(closest_command("ripgrep"), None);
-    }
-
-    #[test]
-    fn closest_command_rejects_exact() {
-        // Exact match should not fire (distance == 0)
-        assert_eq!(closest_command("rebuild"), None);
-    }
-
     // --- preprocess_args ---
 
     #[test]
-    fn preprocess_args_typo_errors() {
-        let result = preprocess_args(["nx", "rebuiild"]);
-        assert!(result.is_err());
-        let msg = result.unwrap_err();
-        assert!(msg.contains("rebuiild"), "error should contain typo");
-        assert!(msg.contains("rebuild"), "error should suggest correction");
+    fn preprocess_args_typo_like_token_inserts_install() {
+        let result = preprocess_args(["nx", "upgade", "--dry-run"]);
+        assert_eq!(result[1], OsString::from("install"));
+        assert_eq!(result[2], OsString::from("upgade"));
+        assert_eq!(result[3], OsString::from("--dry-run"));
     }
 
     #[test]
     fn preprocess_args_package_name_inserts_install() {
-        let result = preprocess_args(["nx", "ripgrep"]).unwrap();
+        let result = preprocess_args(["nx", "ripgrep"]);
         assert_eq!(result[1], OsString::from("install"));
         assert_eq!(result[2], OsString::from("ripgrep"));
     }
 
     #[test]
     fn preprocess_args_known_command_passes_through() {
-        let result = preprocess_args(["nx", "rebuild"]).unwrap();
+        let result = preprocess_args(["nx", "rebuild"]);
         assert_eq!(result[1], OsString::from("rebuild"));
         assert_eq!(result.len(), 2);
     }
 
     #[test]
     fn preprocess_args_secret_alias_passes_through() {
-        let result = preprocess_args(["nx", "secrets"]).unwrap();
+        let result = preprocess_args(["nx", "secrets"]);
         assert_eq!(result[1], OsString::from("secrets"));
         assert_eq!(result.len(), 2);
     }
 
     #[test]
     fn preprocess_args_flag_passes_through() {
-        let result = preprocess_args(["nx", "--help"]).unwrap();
+        let result = preprocess_args(["nx", "--help"]);
         assert_eq!(result[1], OsString::from("--help"));
     }
 }

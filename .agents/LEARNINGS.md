@@ -75,3 +75,9 @@ Update rules for future agents:
 - If stale, nx runs `cargo install --path <nx-rs-root> --force`, prints a re-run hint, and exits without executing the system command payload.
 - Auto-refresh is opt-out via `NX_RS_AUTO_REFRESH=0` (also accepts `false`/`no`).
 - Verified on 2026-02-19 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+
+13. CLI default-install preprocessing should not special-case typo-like subcommands.
+- Rust CLI now mirrors Python `run_cli` behavior: first non-flag token that is not a known command is always treated as a package name by injecting `install`.
+- The prior typo-suggestion rejection path (for near-miss command names like `upgade`) was removed to avoid semantic drift from SPEC/Python.
+- Parity harness prepends global flags (`--plain --minimal`) before case args, so this preprocessing path is best locked by `src/cli.rs` unit tests unless the harness adds per-case flag control.
+- Verified on 2026-02-20 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.

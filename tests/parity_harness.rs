@@ -23,6 +23,8 @@ const PARITY_RUST_BIN_ENV: &str = "NX_RUST_PARITY_BIN";
 struct CaseSpec {
     id: String,
     args: Vec<String>,
+    #[serde(default = "default_true")]
+    inject_global_flags: bool,
     #[serde(default)]
     stdin: Option<String>,
     #[serde(default)]
@@ -767,8 +769,10 @@ fn run_target_case(
     prepare_home_for_case(home_dir.path(), case.setup)?;
 
     let mut command = Command::new(cli_bin);
+    if case.inject_global_flags {
+        command.args(["--plain", "--minimal"]);
+    }
     command
-        .args(["--plain", "--minimal"])
         .args(&case.args)
         .current_dir(repo_root)
         .env("B2NIX_REPO_ROOT", repo_root)

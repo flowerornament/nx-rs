@@ -153,6 +153,15 @@
     "rust_parity": true
   },
   {
+    "id": "implicit_install_unqualified_token_stubbed",
+    "args": ["nxrsdryrun", "--dry-run"],
+    "setup": "stub_install_sources",
+    "inject_global_flags": false,
+    "python_parity": false,
+    "python_parity_reason": "Case targets Rust CLI preprocessing route coverage; Python output spacing diverges in this flow and is covered by existing explicit-install parity cases.",
+    "rust_parity": true
+  },
+  {
     "id": "install_dry_run_installed",
     "args": ["install", "--dry-run", "ripgrep"],
     "rust_parity": true

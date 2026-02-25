@@ -15,7 +15,8 @@ pub fn cmd_secret(args: &SecretArgs, ctx: &AppContext) -> i32 {
 }
 
 fn cmd_secret_add(args: &SecretAddArgs, ctx: &AppContext) -> i32 {
-    if !is_valid_secret_key(&args.key) {
+    let key = args.key_name();
+    if !is_valid_secret_key(key) {
         ctx.printer.error(
             "Invalid secret key. Use lowercase letters, digits, and underscores; start with a letter.",
         );
@@ -31,7 +32,7 @@ fn cmd_secret_add(args: &SecretAddArgs, ctx: &AppContext) -> i32 {
         }
     };
 
-    let outcome = match add_secret_workflow(&ctx.repo_root, &args.key, &value, run_sops_set) {
+    let outcome = match add_secret_workflow(&ctx.repo_root, key, &value, run_sops_set) {
         Ok(outcome) => outcome,
         Err(err) => {
             ctx.printer.error(&format!("secret add failed: {err:#}"));
@@ -39,8 +40,7 @@ fn cmd_secret_add(args: &SecretAddArgs, ctx: &AppContext) -> i32 {
         }
     };
 
-    ctx.printer
-        .success(&format!("Secret key '{}' added", args.key));
+    ctx.printer.success(&format!("Secret key '{key}' added"));
     if outcome.secret_names_changed {
         ctx.printer.detail("Updated home/secrets.nix secretNames.");
     } else {
@@ -49,7 +49,7 @@ fn cmd_secret_add(args: &SecretAddArgs, ctx: &AppContext) -> i32 {
     }
     ctx.printer.detail(&format!(
         "Run `nx rebuild` so new shells expose ${}.",
-        to_env_var_name(&args.key)
+        to_env_var_name(key)
     ));
 
     0

@@ -22,24 +22,36 @@ const KNOWN_COMMANDS: &[&str] = &[
     "upgrade",
 ];
 
+const ROOT_HELP: &str = "Run `nx <command> --help` for command-specific usage and examples.";
+const SECRET_HELP: &str = "Examples:\n  nx secret add redacted_api_key --value '<token>'\n  printf '%s' '<token>' | nx secret add redacted_api_key --value-stdin";
+const SECRET_ADD_HELP: &str = "Examples:
+  nx secret add redacted_api_key --value '<token>'
+  nx secret add --name redacted_api_key --value '<token>'
+  printf '%s' '<token>' | nx secret add redacted_api_key --value-stdin
+
+Notes:
+  - `--` stops option parsing; do not put it before `--name` or `--value`.
+  - Prefer `--value-stdin` for sensitive values to avoid shell history leaks.";
+
 #[derive(Debug, Clone, Parser)]
 #[command(
     name = "nx",
     about = "Multi-source package installer for nix-darwin",
     disable_help_subcommand = true,
-    arg_required_else_help = true
+    arg_required_else_help = true,
+    after_long_help = ROOT_HELP
 )]
 #[allow(clippy::struct_excessive_bools)] // CLI flag surface intentionally mirrors SPEC switches.
 pub struct Cli {
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help = "Use plain output formatting")]
     pub plain: bool,
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help = "Force Unicode/emoji output")]
     pub unicode: bool,
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help = "Minimal output (less context)")]
     pub minimal: bool,
-    #[arg(long, short = 'v', global = true)]
+    #[arg(long, short = 'v', global = true, help = "Verbose output")]
     pub verbose: bool,
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help = "JSON output when supported")]
     pub json: bool,
     #[command(subcommand)]
     pub command: CommandKind,
@@ -135,7 +147,10 @@ pub struct RemoveArgs {
 }
 
 #[derive(Debug, Clone, Parser)]
-#[command(about = "Manage encrypted secrets via sops")]
+#[command(
+    about = "Manage encrypted secrets via sops",
+    after_long_help = SECRET_HELP
+)]
 pub struct SecretArgs {
     #[command(subcommand)]
     pub command: SecretCommand,
@@ -148,12 +163,24 @@ pub enum SecretCommand {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(after_long_help = SECRET_ADD_HELP)]
 pub struct SecretAddArgs {
     #[arg(
         value_name = "KEY",
-        help = "Secret key name (lowercase letters, digits, underscores)"
+        help = "Secret key name (lowercase letters, digits, underscores)",
+        required_unless_present = "name",
+        conflicts_with = "name"
     )]
-    pub key: String,
+    pub key: Option<String>,
+    #[arg(
+        long,
+        visible_alias = "key",
+        value_name = "KEY",
+        help = "Secret key name (alternative to positional KEY)",
+        required_unless_present = "key",
+        conflicts_with = "key"
+    )]
+    pub name: Option<String>,
     #[arg(
         long,
         value_name = "VALUE",
@@ -169,6 +196,16 @@ pub struct SecretAddArgs {
         conflicts_with = "value"
     )]
     pub value_stdin: bool,
+}
+
+impl SecretAddArgs {
+    #[must_use]
+    pub fn key_name(&self) -> &str {
+        self.key
+            .as_deref()
+            .or(self.name.as_deref())
+            .expect("clap enforces required secret key")
+    }
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -258,6 +295,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
 
     // --- preprocess_args ---
 
@@ -294,5 +332,84 @@ mod tests {
     fn preprocess_args_flag_passes_through() {
         let result = preprocess_args(["nx", "--help"]);
         assert_eq!(result[1], OsString::from("--help"));
+    }
+
+    #[test]
+    fn secret_add_parses_positional_key() {
+        let cli = Cli::try_parse_from(["nx", "secret", "add", "redacted_api_key", "--value", "v"])
+            .expect("secret add should parse with positional key");
+        let CommandKind::Secret(SecretArgs {
+            command: SecretCommand::Add(add_args),
+        }) = cli.command
+        else {
+            panic!("expected secret command");
+        };
+        assert_eq!(add_args.key_name(), "redacted_api_key");
+    }
+
+    #[test]
+    fn secret_add_parses_name_flag_key() {
+        let cli = Cli::try_parse_from([
+            "nx",
+            "secret",
+            "add",
+            "--name",
+            "redacted_api_key",
+            "--value",
+            "v",
+        ])
+        .expect("secret add should parse with --name");
+        let CommandKind::Secret(SecretArgs {
+            command: SecretCommand::Add(add_args),
+        }) = cli.command
+        else {
+            panic!("expected secret command");
+        };
+        assert_eq!(add_args.key_name(), "redacted_api_key");
+    }
+
+    #[test]
+    fn secret_add_parses_key_alias_flag() {
+        let cli = Cli::try_parse_from([
+            "nx",
+            "secret",
+            "add",
+            "--key",
+            "redacted_api_key",
+            "--value",
+            "v",
+        ])
+        .expect("secret add should parse with --key alias");
+        let CommandKind::Secret(SecretArgs {
+            command: SecretCommand::Add(add_args),
+        }) = cli.command
+        else {
+            panic!("expected secret command");
+        };
+        assert_eq!(add_args.key_name(), "redacted_api_key");
+    }
+
+    #[test]
+    fn secret_add_help_includes_examples_and_double_dash_note() {
+        let mut cmd = Cli::command();
+        let mut help = Vec::<u8>::new();
+        cmd.write_long_help(&mut help)
+            .expect("root help should render");
+        let help = String::from_utf8(help).expect("help should be utf8");
+        assert!(help.contains("Run `nx <command> --help`"));
+
+        let mut secret_add_cmd = Cli::command();
+        let secret_add = secret_add_cmd
+            .find_subcommand_mut("secret")
+            .expect("secret command should exist")
+            .find_subcommand_mut("add")
+            .expect("secret add command should exist");
+        let mut add_help = Vec::<u8>::new();
+        secret_add
+            .write_long_help(&mut add_help)
+            .expect("secret add help should render");
+        let add_help = String::from_utf8(add_help).expect("help should be utf8");
+        assert!(add_help.contains("nx secret add --name redacted_api_key"));
+        assert!(add_help.contains("`--` stops option parsing"));
     }
 }

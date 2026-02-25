@@ -59,20 +59,15 @@ pub fn execute(cli: Cli) -> i32 {
 
 fn find_repo_root() -> anyhow::Result<PathBuf> {
     if let Some(env_root) = env::var_os("B2NIX_REPO_ROOT") {
-        let env_path = PathBuf::from(env_root);
-        return Ok(std::fs::canonicalize(&env_path).unwrap_or(env_path));
+        let path = PathBuf::from(env_root);
+        // Keep Python parity: accept unresolved paths when canonicalization fails.
+        return Ok(std::fs::canonicalize(&path).unwrap_or(path));
     }
 
+    let git_root = git_repo_root();
     let home_config = dirs_home().join(".nix-config");
-    if home_config.exists() {
-        return Ok(home_config);
-    }
 
-    if let Some(root) = git_repo_root() {
-        return Ok(root);
-    }
-
-    bail!("Could not find nix-config repository")
+    resolve_repo_root(None, git_root, home_config)
 }
 
 fn git_repo_root() -> Option<PathBuf> {
@@ -90,6 +85,80 @@ fn git_repo_root() -> Option<PathBuf> {
     candidate.join("flake.nix").exists().then_some(candidate)
 }
 
+fn resolve_repo_root(
+    env_root: Option<PathBuf>,
+    git_root: Option<PathBuf>,
+    home_config: PathBuf,
+) -> anyhow::Result<PathBuf> {
+    if let Some(env_path) = env_root {
+        return Ok(env_path);
+    }
+    if let Some(root) = git_root {
+        return Ok(root);
+    }
+    if home_config.exists() {
+        return Ok(home_config);
+    }
+    bail!("Could not find nix-config repository")
+}
+
 pub fn dirs_home() -> PathBuf {
     env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_repo_root;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    #[test]
+    fn resolve_repo_root_prefers_env_var() {
+        let home = TempDir::new().expect("temp dir should be created");
+        let home_config = home.path().join(".nix-config");
+        std::fs::create_dir_all(&home_config).expect("home config should exist");
+        let env_root = PathBuf::from("/tmp/env-root");
+        let git_root = PathBuf::from("/tmp/git-root");
+
+        let resolved = resolve_repo_root(Some(env_root.clone()), Some(git_root), home_config)
+            .expect("resolve");
+
+        assert_eq!(resolved, env_root);
+    }
+
+    #[test]
+    fn resolve_repo_root_prefers_git_root_over_home_default() {
+        let home = TempDir::new().expect("temp dir should be created");
+        let home_config = home.path().join(".nix-config");
+        std::fs::create_dir_all(&home_config).expect("home config should exist");
+        let git_root = PathBuf::from("/tmp/git-root");
+
+        let resolved =
+            resolve_repo_root(None, Some(git_root.clone()), home_config).expect("resolve");
+
+        assert_eq!(resolved, git_root);
+    }
+
+    #[test]
+    fn resolve_repo_root_falls_back_to_home_default() {
+        let home = TempDir::new().expect("temp dir should be created");
+        let home_config = home.path().join(".nix-config");
+        std::fs::create_dir_all(&home_config).expect("home config should exist");
+
+        let resolved = resolve_repo_root(None, None, home_config.clone()).expect("resolve");
+
+        assert_eq!(resolved, home_config);
+    }
+
+    #[test]
+    fn resolve_repo_root_errors_without_any_source() {
+        let home = TempDir::new().expect("temp dir should be created");
+        let missing_home_config = home.path().join(".nix-config");
+
+        let err = resolve_repo_root(None, None, missing_home_config).expect_err("must fail");
+        assert!(
+            err.to_string()
+                .contains("Could not find nix-config repository")
+        );
+    }
 }

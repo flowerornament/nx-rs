@@ -81,3 +81,8 @@ Update rules for future agents:
 - The prior typo-suggestion rejection path (for near-miss command names like `upgade`) was removed to avoid semantic drift from SPEC/Python.
 - Parity harness prepends global flags (`--plain --minimal`) before case args, so this preprocessing path is best locked by `src/cli.rs` unit tests unless the harness adds per-case flag control.
 - Verified on 2026-02-20 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+
+14. Rebuild command shape must stay direct under sudo to preserve sudoers `NOPASSWD` compatibility.
+- SPEC/Python contract for rebuild is `sudo /run/current-system/sw/bin/darwin-rebuild switch --flake <repo_root> [passthrough...]`.
+- Wrapping rebuild as `sudo bash -lc ...` can bypass host rules scoped to `/run/current-system/sw/bin/darwin-rebuild` and reintroduce password prompts.
+- Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.

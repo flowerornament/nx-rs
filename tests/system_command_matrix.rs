@@ -230,15 +230,20 @@ const TEST_UNITTEST_FAIL_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("python3", ExpectedCwd::RepoRoot, TEST_UNITTEST_ARGS),
 ];
 
-const REBUILD_SUDO_BASH_CMD: &str = "ulimit -n 8192 2>/dev/null; exec /run/current-system/sw/bin/darwin-rebuild switch --flake <REPO_ROOT> --show-trace foo";
-
 const REBUILD_SUCCESS_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("git", ExpectedCwd::RepoRoot, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", ExpectedCwd::RepoRoot, REBUILD_FLAKE_ARGS),
     ExpectedCall::new(
         "sudo",
         ExpectedCwd::RepoRoot,
-        &["bash", "-lc", REBUILD_SUDO_BASH_CMD],
+        &[
+            "/run/current-system/sw/bin/darwin-rebuild",
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--show-trace",
+            "foo",
+        ],
     ),
     ExpectedCall::new(
         "darwin-rebuild",
@@ -270,7 +275,14 @@ const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new(
         "sudo",
         ExpectedCwd::RepoRoot,
-        &["bash", "-lc", REBUILD_SUDO_BASH_CMD],
+        &[
+            "/run/current-system/sw/bin/darwin-rebuild",
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--show-trace",
+            "foo",
+        ],
     ),
     ExpectedCall::new(
         "darwin-rebuild",

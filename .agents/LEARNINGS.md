@@ -160,3 +160,9 @@ Update rules for future agents:
 - `darwin-rebuild switch --flake .` now fails without root on this host; use `sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .` for cutover and rollback rebuild steps.
 - Verification should use a clean login shell environment to avoid inherited PATH contamination from long-lived sessions.
 - Verified on 2026-02-28 with evidence bundle `.agents/reports/flake-cutover/20260228T075202Z/` against `~/.nix-config`.
+
+27. Post-cutover rollback rehearsal is two-way reversible on this host with explicit snapshot restore.
+- In `nx-rs-s52.4`, applying pre-cutover backups from `.agents/reports/flake-cutover/20260228T075202Z/` changed only `~/.nix-config/home/shell.nix` relative to the current post-cutover state; `flake.nix` and `packages/nix/cli.nix` remained identical.
+- After rollback apply + `sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .`, clean login env resolution flipped to cargo-first (`~/.local/share/cargo/bin/nx` before `/etc/profiles/per-user/morgan/bin/nx`) and smoke checks still passed against `B2NIX_REPO_ROOT=~/.nix-config`.
+- Restoring pre-drill snapshots + rebuild returned resolution to flake-first (`/etc/profiles/per-user/morgan/bin/nx` before cargo path), with an empty before-vs-final `git status --porcelain` diff in `~/.nix-config`.
+- Verified on 2026-02-28 with evidence bundle `.agents/reports/flake-rollback-drill/20260228T081016Z/`.

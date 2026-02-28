@@ -1,0 +1,5 @@
+  ast-grep
+  bat
+  beam27Packages.elixir_1_20
+  bindfs
+  bun

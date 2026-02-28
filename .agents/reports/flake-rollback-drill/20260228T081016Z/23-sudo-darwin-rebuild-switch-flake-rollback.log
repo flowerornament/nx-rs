@@ -1,0 +1,28 @@
+setting up user launchd services...
+Using neurosnap/tap
+Using smart-mcp-proxy/mcpproxy
+Using steipete/tap
+Using steveyegge/beads
+Using wedow/tools
+Using crystalline
+Using deno
+Using golangci-lint
+Using mcptools
+Using neurosnap/tap/zmx
+Using nim
+Using opencode
+Using serialosc
+Using smart-mcp-proxy/mcpproxy/mcpproxy
+Using steveyegge/beads/bd
+Using vercel-cli
+Using wedow/tools/ticket
+Using yt-dlp
+Using claude-code
+Using codex
+Using flashspace
+Using fuse-t
+Using ghostty
+Using gitx
+Using resilio-sync
+Using codexbar
+`brew bundle` complete! 26 Brewfile dependencies now installed.

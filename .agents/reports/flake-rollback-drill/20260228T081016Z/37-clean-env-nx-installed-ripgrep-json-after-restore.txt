@@ -1,0 +1,1 @@
+{"ripgrep": {"match": "ripgrep", "location": "/Users/morgan/.nix-config/packages/nix/cli.nix:18"}}

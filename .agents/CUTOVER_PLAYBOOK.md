@@ -205,6 +205,28 @@ Executed: **2026-02-28 UTC**
   - `nx installed ripgrep --json`
 - Archived transcripts/reports: `.agents/reports/flake-cutover/20260228T075202Z/`
 
+### Latest Post-Cutover Smoke + Rollback Drill Result
+
+Executed: **2026-02-28 UTC**
+
+- Post-cutover clean-env smoke matrix passed against `B2NIX_REPO_ROOT=~/.nix-config`:
+  - `nx --plain --minimal status`
+  - `nx --plain --minimal where ripgrep`
+  - `nx --plain --minimal list --plain | head -5`
+  - `nx --plain --minimal installed ripgrep --json`
+- Shadow/canary gate re-run passed with explicit Python entrypoint override:
+  - `PY_NX="$HOME/code/nx-python/nx" scripts/cutover/validate_shadow_canary.sh`
+- Rollback rehearsal applied pre-cutover backups from `.agents/reports/flake-cutover/20260228T075202Z/` and rebuilt successfully with root.
+- During rollback apply, only `~/.nix-config/home/shell.nix` changed relative to current post-cutover state.
+- Clean-env verification after rollback resolved `nx` to cargo-first path:
+  - `/Users/morgan/.local/share/cargo/bin/nx`
+  - then `/etc/profiles/per-user/morgan/bin/nx`
+- Restore rehearsal reapplied post-cutover snapshots, rebuilt successfully, and clean-env verification returned to flake-first resolution:
+  - `/etc/profiles/per-user/morgan/bin/nx`
+  - then `/Users/morgan/.local/share/cargo/bin/nx`
+- `~/.nix-config` git status returned to the exact pre-drill state (empty before-vs-final porcelain diff).
+- Archived transcripts/reports: `.agents/reports/flake-rollback-drill/20260228T081016Z/`
+
 ## Rollback (Flake-Based)
 
 If the Rust `nx` has issues after cutover:

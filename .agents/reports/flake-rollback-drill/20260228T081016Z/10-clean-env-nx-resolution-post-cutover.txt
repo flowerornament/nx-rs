@@ -1,0 +1,3 @@
+/etc/profiles/per-user/morgan/bin/nx
+nx is /etc/profiles/per-user/morgan/bin/nx
+nx is /Users/morgan/.local/share/cargo/bin/nx

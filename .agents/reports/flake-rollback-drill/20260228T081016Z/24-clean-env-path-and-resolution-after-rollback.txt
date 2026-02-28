@@ -1,0 +1,4 @@
+/Users/morgan/.local/bin:/Users/morgan/.local/share/cargo/bin:/Users/morgan/.local/share/bun/bin:/Users/morgan/.nimble/bin:/Users/morgan/.nix-profile/bin:/etc/profiles/per-user/morgan/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/opt/homebrew/sbin
+/Users/morgan/.local/share/cargo/bin/nx
+nx is /Users/morgan/.local/share/cargo/bin/nx
+nx is /etc/profiles/per-user/morgan/bin/nx

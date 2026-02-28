@@ -55,8 +55,8 @@ Update rules for future agents:
 - Re-verified on 2026-02-12 with `just cutover-validate`: shadow matrix, canary matrix, and mutation safety all passed.
 
 10. Parity harness coverage includes Rust-only search, stubbed upgrade brew path, expanded Rust info JSON parity, missing-arg parser failures, and interactive undo-confirm flow.
-- `tests/fixtures/parity/cases.json` currently has 60 cases.
-- 56 cases run in Python parity target; 60 cases run in Rust parity target.
+- `tests/fixtures/parity/cases.json` currently has 61 cases.
+- 57 cases run in Python parity target; 61 cases run in Rust parity target.
 - Four `search_*` cases are Rust-only (`python_parity=false`) with stubbed baselines.
 - `info_json_found` and `info_json_sources_not_installed` are now enabled for Rust parity with Python-shaped source metadata output.
 - `upgrade_brew_stubbed_no_updates` verifies brew-phase parity with deterministic `brew outdated --json` stubs.
@@ -96,4 +96,9 @@ Update rules for future agents:
 - Added parity setup mode `stub_upgrade_flake_changed` plus fixture cases `upgrade_flake_changed_commits_lockfile` and `upgrade_flake_changed_skip_commit`.
 - Rust upgrade output for changed flake inputs now matches Python shape in plain/minimal mode, including the GitHub compare failure warning when comparison fetch fails.
 - Rust commit step now uses Python-style message generation for flake changes (`Update flake (<inputs...>)`) and success text (`Committed: ...`), with system matrix assertions updated to lock the command arguments and marker output.
+- Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+
+17. Upgrade passthrough-args contract now has explicit parity and invocation coverage.
+- Added parity fixture case `upgrade_flake_passthrough_stubbed` to lock Python/Rust behavior for `upgrade -- ...` forwarding to `nix flake update`.
+- Added `upgrade_passthrough_flake_update_args` to `tests/system_command_matrix.rs` to assert exact flake-update argv (`flake update --commit-lock-file foo`) under deterministic stubs.
 - Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.

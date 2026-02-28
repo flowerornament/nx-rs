@@ -58,6 +58,16 @@ const UPGRADE_SKIP_COMMIT_ARGS: &[&str] = &[
     "--skip-commit",
     "--no-ai",
 ];
+const UPGRADE_PASSTHROUGH_ARGS: &[&str] = &[
+    "upgrade",
+    "--skip-brew",
+    "--skip-rebuild",
+    "--skip-commit",
+    "--no-ai",
+    "--",
+    "--commit-lock-file",
+    "foo",
+];
 
 const INFO_FOUND_STDOUT: &[&str] = &[
     "ripgrep (installed (nxs))",
@@ -356,6 +366,12 @@ const UPGRADE_FAILURE_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
     &["flake", "update"],
 )];
 
+const UPGRADE_PASSTHROUGH_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
+    "nix",
+    ExpectedCwd::RepoRoot,
+    &["flake", "update", "--commit-lock-file", "foo"],
+)];
+
 const MATRIX_CASES: &[MatrixCase] = &[
     MatrixCase {
         id: "install_missing_args_parser_error",
@@ -542,6 +558,14 @@ const MATRIX_CASES: &[MatrixCase] = &[
         mode: StubMode::UpgradeFlakeChanged,
         expected_exit: 0,
         expected_calls: Some(UPGRADE_SKIP_COMMIT_CALLS),
+        stdout_contains: &[],
+    },
+    MatrixCase {
+        id: "upgrade_passthrough_flake_update_args",
+        cli_args: UPGRADE_PASSTHROUGH_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 0,
+        expected_calls: Some(UPGRADE_PASSTHROUGH_CALLS),
         stdout_contains: &[],
     },
     MatrixCase {

@@ -358,6 +358,12 @@
     "rust_parity": true
   },
   {
+    "id": "upgrade_flake_passthrough_stubbed",
+    "args": ["upgrade", "--skip-brew", "--skip-rebuild", "--skip-commit", "--no-ai", "--", "--commit-lock-file", "foo"],
+    "setup": "stub_system_success",
+    "rust_parity": true
+  },
+  {
     "id": "upgrade_flake_stubbed",
     "args": ["upgrade", "--skip-brew", "--skip-rebuild", "--skip-commit"],
     "setup": "stub_system_success",

@@ -1,5 +1,3 @@
-#![allow(clippy::missing_errors_doc)] // test utilities don't need doc sections
-
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
@@ -7,6 +5,11 @@ use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+/// Recursively copy a directory tree from `src` into `dst`.
+///
+/// # Errors
+///
+/// Returns an error if any directory entry cannot be read, created, or copied.
 pub fn copy_tree(src: &Path, dst: &Path) -> Result<(), Box<dyn Error>> {
     for entry in fs::read_dir(src)? {
         let entry = entry?;
@@ -27,6 +30,11 @@ pub fn copy_tree(src: &Path, dst: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Write `content` to `path` and mark it executable (`0o755`).
+///
+/// # Errors
+///
+/// Returns an error if writing the file, reading metadata, or setting permissions fails.
 pub fn write_executable(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
     fs::write(path, content)?;
     let mut perms = fs::metadata(path)?.permissions();
@@ -46,6 +54,11 @@ pub fn normalize_file_content(input: &str) -> String {
         .to_string()
 }
 
+/// Snapshot all non-ignored files under `repo_root` with normalized text content.
+///
+/// # Errors
+///
+/// Returns an error if walking directories or reading file contents fails.
 pub fn snapshot_repo_files(
     repo_root: &Path,
     ignore: &dyn Fn(&str) -> bool,

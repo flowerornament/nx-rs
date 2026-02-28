@@ -1185,12 +1185,12 @@ mod tests {
         cache
             .as_mut()
             .expect("cache should exist")
-            .set(&source_result(
+            .set_many(&[source_result(
                 "ripgrep",
                 PackageSource::Nxs,
                 Some("ripgrep"),
                 0.95,
-            ))
+            )])
             .expect("cache set should succeed");
 
         let args = info_args();

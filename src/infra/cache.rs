@@ -124,19 +124,6 @@ impl MultiSourceCache {
         results
     }
 
-    /// Cache a single search result (writes to disk immediately).
-    ///
-    /// Skips results with no `attr`.
-    #[allow(dead_code)] // retained for targeted cache mutation paths and cache unit coverage
-    pub fn set(&mut self, result: &SourceResult) -> anyhow::Result<()> {
-        if result.attr.as_deref().is_none_or(str::is_empty) {
-            return Ok(());
-        }
-        let key = self.cache_key(&result.name, result.source);
-        self.entries.insert(key, entry_to_value(result));
-        self.save()
-    }
-
     /// Cache multiple results, keeping only the highest confidence per (name, source).
     ///
     /// Single disk write at the end.
@@ -162,35 +149,6 @@ impl MultiSourceCache {
 
         self.save()
     }
-
-    /// Remove cached entries for a package, optionally filtered by source.
-    #[allow(dead_code)] // retained for targeted cache invalidation paths and cache unit coverage
-    pub fn invalidate(&mut self, name: &str, source: Option<PackageSource>) -> anyhow::Result<()> {
-        let normalized = normalize_name(name);
-        let source_str = source.map(PackageSource::as_str);
-        let before = self.entries.len();
-
-        self.entries.retain(|k, _| {
-            let mut parts = k.splitn(3, '|');
-            let (Some(cached_name), Some(cached_source)) = (parts.next(), parts.next()) else {
-                return true;
-            };
-            !(cached_name == normalized && source_str.is_none_or(|s| cached_source == s))
-        });
-
-        if self.entries.len() < before {
-            self.save()?;
-        }
-        Ok(())
-    }
-
-    /// Clear entire cache.
-    #[allow(dead_code)] // retained for explicit cache reset operations and cache unit coverage
-    pub fn clear(&mut self) -> anyhow::Result<()> {
-        self.entries.clear();
-        self.save()
-    }
-
     // -- Internal --
 
     fn cache_key(&self, name: &str, source: PackageSource) -> String {
@@ -366,7 +324,7 @@ mod tests {
 
         let mut cache = make_cache(&repo, &home);
         cache
-            .set(&result("ripgrep", PackageSource::Homebrew, "ripgrep", 0.8))
+            .set_many(&[result("ripgrep", PackageSource::Homebrew, "ripgrep", 0.8)])
             .unwrap();
 
         // Homebrew-only should return empty (guardrail)
@@ -385,7 +343,7 @@ mod tests {
 
         let mut cache = make_cache(&repo, &home);
         cache
-            .set(&result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9))
+            .set_many(&[result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9)])
             .unwrap();
 
         let results = cache.get_all("ripgrep");
@@ -447,7 +405,7 @@ mod tests {
             ("py-yaml", "pyyaml", "python3Packages.pyyaml"),
         ] {
             cache
-                .set(&SourceResult {
+                .set_many(&[SourceResult {
                     name: alias.to_string(),
                     source: PackageSource::Nxs,
                     attr: Some(attr.to_string()),
@@ -456,7 +414,7 @@ mod tests {
                     description: "alias normalization".to_string(),
                     requires_flake_mod: false,
                     flake_url: None,
-                })
+                }])
                 .unwrap();
 
             // Look up with the canonical name — should find the aliased entry.
@@ -489,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn invalidate_by_name() {
+    fn set_many_skips_result_without_attr() {
         let tmp = TempDir::new().unwrap();
         let repo = tmp.path().join("repo");
         fs::create_dir_all(&repo).unwrap();
@@ -500,79 +458,13 @@ mod tests {
 
         let mut cache = make_cache(&repo, &home);
         cache
-            .set(&result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9))
-            .unwrap();
-        cache
-            .set(&result("ripgrep", PackageSource::Homebrew, "ripgrep", 0.8))
-            .unwrap();
-
-        cache.invalidate("ripgrep", None).unwrap();
-        assert!(cache.get("ripgrep", PackageSource::Nxs).is_none());
-        assert!(cache.get("ripgrep", PackageSource::Homebrew).is_none());
-    }
-
-    #[test]
-    fn invalidate_by_source() {
-        let tmp = TempDir::new().unwrap();
-        let repo = tmp.path().join("repo");
-        fs::create_dir_all(&repo).unwrap();
-        write_flake_lock(&repo);
-
-        let home = tmp.path().join("home");
-        fs::create_dir_all(&home).unwrap();
-
-        let mut cache = make_cache(&repo, &home);
-        cache
-            .set(&result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9))
-            .unwrap();
-        cache
-            .set(&result("ripgrep", PackageSource::Homebrew, "ripgrep", 0.8))
-            .unwrap();
-
-        cache
-            .invalidate("ripgrep", Some(PackageSource::Homebrew))
-            .unwrap();
-        assert!(cache.get("ripgrep", PackageSource::Nxs).is_some());
-        assert!(cache.get("ripgrep", PackageSource::Homebrew).is_none());
-    }
-
-    #[test]
-    fn clear_empties_cache() {
-        let tmp = TempDir::new().unwrap();
-        let repo = tmp.path().join("repo");
-        fs::create_dir_all(&repo).unwrap();
-        write_flake_lock(&repo);
-
-        let home = tmp.path().join("home");
-        fs::create_dir_all(&home).unwrap();
-
-        let mut cache = make_cache(&repo, &home);
-        cache
-            .set(&result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9))
-            .unwrap();
-        cache.clear().unwrap();
-        assert!(cache.get_all("ripgrep").is_empty());
-    }
-
-    #[test]
-    fn set_skips_result_without_attr() {
-        let tmp = TempDir::new().unwrap();
-        let repo = tmp.path().join("repo");
-        fs::create_dir_all(&repo).unwrap();
-        write_flake_lock(&repo);
-
-        let home = tmp.path().join("home");
-        fs::create_dir_all(&home).unwrap();
-
-        let mut cache = make_cache(&repo, &home);
-        cache
-            .set(&SourceResult::new("ripgrep", PackageSource::Nxs))
+            .set_many(&[SourceResult::new("ripgrep", PackageSource::Nxs)])
             .unwrap(); // attr is None
         assert!(cache.get("ripgrep", PackageSource::Nxs).is_none());
     }
 
     #[test]
-    fn set_surfaces_write_error() {
+    fn set_many_surfaces_write_error() {
         let tmp = TempDir::new().unwrap();
         let repo = tmp.path().join("repo");
         fs::create_dir_all(&repo).unwrap();
@@ -583,7 +475,7 @@ mod tests {
 
         let mut cache = MultiSourceCache::load_with_cache_dir(&repo, &cache_dir).unwrap();
         let err = cache
-            .set(&result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9))
+            .set_many(&[result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9)])
             .expect_err("writing into a directory path should fail");
 
         assert!(err.to_string().contains("writing cache file"));
@@ -616,7 +508,7 @@ mod tests {
         // Write via one instance
         let mut cache1 = make_cache(&repo, &home);
         cache1
-            .set(&result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9))
+            .set_many(&[result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9)])
             .unwrap();
 
         // Read via a fresh instance

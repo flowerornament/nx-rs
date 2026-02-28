@@ -14,7 +14,7 @@ use crate::domain::plan::{
     InsertionMode, InstallPlan, build_install_plan, nix_manifest_candidates,
 };
 use crate::domain::source::{
-    PackageSource, SourcePreferences, SourceResult, detect_language_package,
+    ExplicitSourceTarget, PackageSource, SourcePreferences, SourceResult, detect_language_package,
 };
 use crate::infra::ai_engine::{
     AiEngine, ClaudeEngine, CommandOutcome, build_edit_prompt, build_routing_context,
@@ -472,8 +472,7 @@ fn source_prefs_from_args(args: &InstallArgs) -> SourcePreferences {
         bleeding_edge: args.bleeding_edge,
         nur: args.nur,
         force_source: args.source.clone(),
-        is_cask: args.cask,
-        is_mas: args.mas,
+        explicit_target: ExplicitSourceTarget::from_flags(args.cask, args.mas),
     }
 }
 
@@ -1048,8 +1047,7 @@ mod tests {
         let prefs = source_prefs_from_args(&args);
         assert!(!prefs.bleeding_edge);
         assert!(!prefs.nur);
-        assert!(!prefs.is_cask);
-        assert!(!prefs.is_mas);
+        assert_eq!(prefs.explicit_target, ExplicitSourceTarget::Any);
         assert!(prefs.force_source.is_none());
     }
 
@@ -1071,7 +1069,28 @@ mod tests {
             model: None,
         };
         let prefs = source_prefs_from_args(&args);
-        assert!(prefs.is_cask);
+        assert_eq!(prefs.explicit_target, ExplicitSourceTarget::Cask);
+    }
+
+    #[test]
+    fn source_prefs_cask_wins_when_both_flags_set() {
+        let args = InstallArgs {
+            packages: vec![],
+            yes: false,
+            dry_run: false,
+            cask: true,
+            mas: true,
+            service: false,
+            rebuild: false,
+            bleeding_edge: false,
+            nur: false,
+            source: None,
+            explain: false,
+            engine: None,
+            model: None,
+        };
+        let prefs = source_prefs_from_args(&args);
+        assert_eq!(prefs.explicit_target, ExplicitSourceTarget::Cask);
     }
 
     #[test]

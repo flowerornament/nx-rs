@@ -85,14 +85,34 @@ impl SourceResult {
 }
 
 /// User preferences for source selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExplicitSourceTarget {
+    #[default]
+    Any,
+    Cask,
+    Mas,
+}
+
+impl ExplicitSourceTarget {
+    /// Preserve current precedence: `--cask` wins when both flags are set.
+    pub const fn from_flags(is_cask: bool, is_mas: bool) -> Self {
+        if is_cask {
+            Self::Cask
+        } else if is_mas {
+            Self::Mas
+        } else {
+            Self::Any
+        }
+    }
+}
+
+/// User preferences for source selection.
 #[derive(Debug, Clone, Default)]
-#[allow(clippy::struct_excessive_bools)] // Source selection is modeled as orthogonal switches.
 pub struct SourcePreferences {
     pub bleeding_edge: bool,
     pub nur: bool,
     pub force_source: Option<String>,
-    pub is_cask: bool,
-    pub is_mas: bool,
+    pub explicit_target: ExplicitSourceTarget,
 }
 
 /// Typed intermediate from `nix search --json` output.
@@ -741,6 +761,22 @@ mod tests {
         assert!(
             v.contains(&"ripgrep".to_string()),
             "should include mapped name"
+        );
+    }
+
+    #[test]
+    fn explicit_source_target_defaults_to_any() {
+        assert_eq!(
+            ExplicitSourceTarget::from_flags(false, false),
+            ExplicitSourceTarget::Any
+        );
+    }
+
+    #[test]
+    fn explicit_source_target_preserves_cask_precedence() {
+        assert_eq!(
+            ExplicitSourceTarget::from_flags(true, true),
+            ExplicitSourceTarget::Cask
         );
     }
 

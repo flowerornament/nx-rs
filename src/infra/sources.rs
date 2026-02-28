@@ -9,8 +9,8 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::domain::source::{
-    NixSearchEntry, OVERLAY_PACKAGES, PackageSource, SourcePreferences, SourceResult,
-    check_platforms, clean_attr_path, deduplicate_results, detect_language_package,
+    ExplicitSourceTarget, NixSearchEntry, OVERLAY_PACKAGES, PackageSource, SourcePreferences,
+    SourceResult, check_platforms, clean_attr_path, deduplicate_results, detect_language_package,
     get_current_system, mapped_name, parse_nix_search_results, score_match, search_name_variants,
     sort_results,
 };
@@ -350,14 +350,19 @@ fn search_forced_source(name: &str, prefs: &SourcePreferences) -> Option<Vec<Sou
     match PackageSource::parse(source) {
         Some(PackageSource::Nxs) => Some(search_nxs(name, false)),
         Some(PackageSource::Nur) => Some(search_nur(name)),
-        Some(PackageSource::Homebrew) => Some(search_homebrew(name, prefs.is_cask, true)),
+        Some(PackageSource::Homebrew) => Some(search_homebrew(
+            name,
+            matches!(prefs.explicit_target, ExplicitSourceTarget::Cask),
+            true,
+        )),
         _ => None,
     }
 }
 
 fn search_explicit_source(name: &str, prefs: &SourcePreferences) -> Option<Vec<SourceResult>> {
-    if prefs.is_cask {
-        return Some(vec![SourceResult {
+    match prefs.explicit_target {
+        ExplicitSourceTarget::Any => None,
+        ExplicitSourceTarget::Cask => Some(vec![SourceResult {
             name: name.to_string(),
             source: PackageSource::Cask,
             attr: Some(name.to_string()),
@@ -366,10 +371,8 @@ fn search_explicit_source(name: &str, prefs: &SourcePreferences) -> Option<Vec<S
             description: "GUI application (cask)".to_string(),
             requires_flake_mod: false,
             flake_url: None,
-        }]);
-    }
-    if prefs.is_mas {
-        return Some(vec![SourceResult {
+        }]),
+        ExplicitSourceTarget::Mas => Some(vec![SourceResult {
             name: name.to_string(),
             source: PackageSource::Mas,
             attr: Some(name.to_string()),
@@ -378,9 +381,8 @@ fn search_explicit_source(name: &str, prefs: &SourcePreferences) -> Option<Vec<S
             description: "Mac App Store app".to_string(),
             requires_flake_mod: false,
             flake_url: None,
-        }]);
+        }]),
     }
-    None
 }
 
 fn search_language_override(name: &str, warn: bool) -> Option<Vec<SourceResult>> {
@@ -732,7 +734,7 @@ mod tests {
     #[test]
     fn explicit_cask_shortcut() {
         let prefs = SourcePreferences {
-            is_cask: true,
+            explicit_target: ExplicitSourceTarget::Cask,
             ..Default::default()
         };
         let results = search_explicit_source("firefox", &prefs).unwrap();
@@ -744,7 +746,7 @@ mod tests {
     #[test]
     fn explicit_mas_shortcut() {
         let prefs = SourcePreferences {
-            is_mas: true,
+            explicit_target: ExplicitSourceTarget::Mas,
             ..Default::default()
         };
         let results = search_explicit_source("Xcode", &prefs).unwrap();

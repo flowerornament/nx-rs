@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 
 use crate::domain::plan::{InsertionMode, InstallPlan};
 
@@ -59,10 +59,9 @@ fn dispatch_insert(content: &str, plan: &InstallPlan) -> Result<(String, Option<
     match plan.insertion_mode {
         InsertionMode::NixManifest => insert_nix_manifest(content, &plan.package_token),
         InsertionMode::LanguageWithPackages => {
-            let lang = plan
-                .language_info
-                .as_ref()
-                .expect("language_info required for LanguageWithPackages");
+            let lang = plan.language_info.as_ref().ok_or_else(|| {
+                anyhow!("invalid install plan: language_info required for LanguageWithPackages")
+            })?;
             insert_language_package(content, &lang.bare_name, &lang.runtime)
         }
         InsertionMode::HomebrewManifest => insert_homebrew_manifest(content, &plan.package_token),
@@ -74,10 +73,9 @@ fn dispatch_remove(content: &str, plan: &InstallPlan) -> Result<(String, Option<
     match plan.insertion_mode {
         InsertionMode::NixManifest => remove_nix_manifest(content, &plan.package_token),
         InsertionMode::LanguageWithPackages => {
-            let lang = plan
-                .language_info
-                .as_ref()
-                .expect("language_info required for LanguageWithPackages");
+            let lang = plan.language_info.as_ref().ok_or_else(|| {
+                anyhow!("invalid install plan: language_info required for LanguageWithPackages")
+            })?;
             remove_language_package(content, &lang.bare_name, &lang.runtime)
         }
         InsertionMode::HomebrewManifest => remove_homebrew_manifest(content, &plan.package_token),
@@ -1144,6 +1142,32 @@ mod tests {
         assert!(apply_edit(&plan).is_err());
     }
 
+    #[test]
+    fn apply_edit_errors_for_language_mode_without_language_info() {
+        use crate::domain::plan::{InsertionMode, InstallPlan};
+        use crate::domain::source::{PackageSource, SourceResult};
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let languages = tmp.path().join("languages.nix");
+        fs::write(
+            &languages,
+            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    (python3.withPackages (ps: with ps; [\n      rich\n    ]))\n  ];\n}\n",
+        )
+        .unwrap();
+
+        let plan = InstallPlan {
+            source_result: SourceResult::new("python3Packages.requests", PackageSource::Nxs),
+            package_token: "python3Packages.requests".to_string(),
+            target_file: languages,
+            insertion_mode: InsertionMode::LanguageWithPackages,
+            language_info: None,
+            routing_warning: None,
+        };
+
+        let err = apply_edit(&plan).expect_err("missing language info should return an error");
+        assert!(err.to_string().contains("language_info required"));
+    }
+
     // --- remove_nix_manifest ---
 
     #[test]
@@ -1481,6 +1505,32 @@ mod tests {
         let outcome = apply_removal(&plan).unwrap();
         assert!(!outcome.file_changed);
         assert!(outcome.line_number.is_none());
+    }
+
+    #[test]
+    fn apply_removal_errors_for_language_mode_without_language_info() {
+        use crate::domain::plan::{InsertionMode, InstallPlan};
+        use crate::domain::source::{PackageSource, SourceResult};
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let languages = tmp.path().join("languages.nix");
+        fs::write(
+            &languages,
+            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    (python3.withPackages (ps: with ps; [\n      rich\n    ]))\n  ];\n}\n",
+        )
+        .unwrap();
+
+        let plan = InstallPlan {
+            source_result: SourceResult::new("python3Packages.rich", PackageSource::Nxs),
+            package_token: "python3Packages.rich".to_string(),
+            target_file: languages,
+            insertion_mode: InsertionMode::LanguageWithPackages,
+            language_info: None,
+            routing_warning: None,
+        };
+
+        let err = apply_removal(&plan).expect_err("missing language info should return an error");
+        assert!(err.to_string().contains("language_info required"));
     }
 
     // --- roundtrip: insert then remove restores original ---

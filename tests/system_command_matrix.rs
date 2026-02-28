@@ -431,6 +431,11 @@ const UPGRADE_CACHE_RETRY_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
 ];
 
+const UPGRADE_NO_CHANGE_NO_COMMIT_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", ExpectedCwd::RepoRoot, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
+];
+
 const UPGRADE_BREW_NO_UPDATES_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", ExpectedCwd::RepoRoot, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
@@ -705,6 +710,14 @@ const MATRIX_CASES: &[MatrixCase] = &[
         expected_exit: 0,
         expected_calls: Some(UPGRADE_SKIP_COMMIT_CALLS),
         stdout_contains: &[],
+    },
+    MatrixCase {
+        id: "upgrade_no_flake_changes_skips_commit",
+        cli_args: UPGRADE_COMMIT_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 0,
+        expected_calls: Some(UPGRADE_NO_CHANGE_NO_COMMIT_CALLS),
+        stdout_contains: &["All flake inputs up to date"],
     },
     MatrixCase {
         id: "upgrade_passthrough_flake_update_args",

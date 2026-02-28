@@ -122,3 +122,8 @@ Update rules for future agents:
   - `upgrade_runs_rebuild_when_not_skipped` to assert `upgrade` runs rebuild preflight (`git ls-files`), flake check (`nix flake check`), and `sudo /run/current-system/sw/bin/darwin-rebuild switch --flake <repo_root>` when `--skip-rebuild` is not set.
   - `upgrade_rebuild_failure_exits_nonzero` to assert a rebuild failure in upgrade flow returns exit code `1`.
 - Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+
+21. Upgrade commit-phase contract now explicitly gates commits on lockfile diffs.
+- Added `upgrade_no_flake_changes_skips_commit` to `tests/system_command_matrix.rs` to assert `upgrade --skip-brew --skip-rebuild --no-ai` runs flake update but does not call `git add/commit` when lock inputs are unchanged.
+- Added parity fixture case `upgrade_flake_unchanged_no_skip_commit` with baseline output `All flake inputs up to date`, locking Python/Rust alignment for no-change/no-`--skip-commit` behavior.
+- Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.

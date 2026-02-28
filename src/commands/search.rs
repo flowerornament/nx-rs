@@ -2,6 +2,7 @@ use crate::cli::SearchArgs;
 use crate::commands::context::AppContext;
 use crate::domain::source::{SourcePreferences, SourceResult};
 use crate::infra::sources::search_all_sources;
+use crate::output::printer::Printer;
 
 pub fn cmd_search(args: &SearchArgs, ctx: &AppContext) -> i32 {
     let prefs = SourcePreferences {
@@ -13,9 +14,9 @@ pub fn cmd_search(args: &SearchArgs, ctx: &AppContext) -> i32 {
     let flake_lock = ctx.repo_root.join("flake.lock");
     let flake_lock_path = flake_lock.exists().then_some(flake_lock.as_path());
 
-    ctx.printer.searching(&args.package);
+    Printer::searching(&args.package);
     let results = search_all_sources(&args.package, &prefs, flake_lock_path);
-    ctx.printer.searching_done();
+    Printer::searching_done();
 
     if results.is_empty() {
         ctx.printer

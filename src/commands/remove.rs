@@ -16,6 +16,7 @@ use crate::infra::ai_engine::{
 use crate::infra::file_edit::{EditOutcome, apply_removal};
 use crate::infra::finder::find_package;
 use crate::infra::shell::run_captured_command;
+use crate::output::printer::Printer;
 
 pub fn cmd_remove(args: &RemoveArgs, ctx: &AppContext) -> i32 {
     if args.packages.is_empty() {
@@ -41,8 +42,7 @@ fn remove_single_package(package: &str, args: &RemoveArgs, ctx: &AppContext) -> 
         Ok(None) => {
             ctx.printer.error(&format!("{package} not found"));
             println!();
-            ctx.printer
-                .detail(&format!("Check installed: nx list | grep -i {package}"));
+            Printer::detail(&format!("Check installed: nx list | grep -i {package}"));
             return Ok(());
         }
         Err(err) => {
@@ -52,7 +52,7 @@ fn remove_single_package(package: &str, args: &RemoveArgs, ctx: &AppContext) -> 
     };
 
     ctx.printer.action(&format!("Removing {package}"));
-    ctx.printer.detail(&format!(
+    Printer::detail(&format!(
         "Location: {}",
         relative_location(&location, &ctx.repo_root)
     ));
@@ -80,8 +80,8 @@ fn remove_with_line(
 
     if !args.yes {
         println!();
-        if !ctx.printer.confirm(&format!("Remove {package}?"), false) {
-            ctx.printer.detail("Cancelled.");
+        if !Printer::confirm(&format!("Remove {package}?"), false) {
+            Printer::detail("Cancelled.");
             return Ok(());
         }
     }
@@ -111,24 +111,22 @@ fn remove_via_ai(
     let prompt = build_remove_prompt(package, &rel_path);
 
     if args.dry_run {
-        ctx.printer
-            .detail(&format!("[DRY RUN] Would run AI to remove {package}"));
+        Printer::detail(&format!("[DRY RUN] Would run AI to remove {package}"));
         println!("\n- Would remove {package}");
         return Ok(());
     }
 
     if !args.yes {
         println!();
-        if !ctx.printer.confirm(&format!("Remove {package}?"), false) {
-            ctx.printer.detail("Cancelled.");
+        if !Printer::confirm(&format!("Remove {package}?"), false) {
+            Printer::detail("Cancelled.");
             return Ok(());
         }
     }
 
     let before_diff = git_diff(&ctx.repo_root);
 
-    ctx.printer
-        .detail(&format!("Analyzing removal of {package}"));
+    Printer::detail(&format!("Analyzing removal of {package}"));
 
     let engine = ClaudeEngine::new(args.model.as_deref());
     let mut deterministic_edit: Option<EditOutcome> = None;

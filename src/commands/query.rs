@@ -45,7 +45,7 @@ pub fn cmd_where(args: &WhereArgs, ctx: &AppContext) -> i32 {
         Ok(None) => {
             ctx.printer.error(&format!("{package} not found"));
             println!();
-            ctx.printer.detail(&format!("Try: nx info {package}"));
+            Printer::detail(&format!("Try: nx info {package}"));
         }
         Err(err) => {
             ctx.printer.error(&format!("where lookup failed: {err}"));
@@ -148,9 +148,9 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
     let flakehub = collect_info_flakehub(package, args.bleeding_edge, search_flakehub);
 
     println!();
-    ctx.printer.detail(&format!("{package} ({status})"));
+    Printer::detail(&format!("{package} ({status})"));
     if let Some(location) = location.as_ref() {
-        ctx.printer.detail(&format!(
+        Printer::detail(&format!(
             "Location: {}",
             relative_location(location, &ctx.repo_root)
         ));
@@ -162,7 +162,7 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
     if location.is_none() && info_sources.is_empty() && flakehub.is_empty() {
         ctx.printer.error(&format!("{package} not found"));
         println!();
-        ctx.printer.detail(&format!("Try: nx {package}"));
+        Printer::detail(&format!("Try: nx {package}"));
         return 0;
     }
 
@@ -670,7 +670,7 @@ fn render_multi_installed(results: &[InstalledResult], ctx: &AppContext) -> i32 
     let all_installed = results.iter().all(|r| r.matched.is_some());
     let installed_count = results.iter().filter(|r| r.matched.is_some()).count();
     println!();
-    ctx.printer.detail(&format!(
+    Printer::detail(&format!(
         "Package Check ({installed_count}/{} installed)",
         results.len()
     ));
@@ -684,7 +684,7 @@ fn render_multi_installed(results: &[InstalledResult], ctx: &AppContext) -> i32 
                 ctx.printer
                     .success(&format!("{} → {}", result.query, found.name));
             }
-            ctx.printer.detail(&format!("  {rel}"));
+            Printer::detail(&format!("  {rel}"));
         } else {
             ctx.printer
                 .warn(&format!("{} is not installed", result.query));

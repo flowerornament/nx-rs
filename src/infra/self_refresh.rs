@@ -37,7 +37,7 @@ pub fn maybe_refresh_before_system_command(needs_refresh: bool, printer: &Printe
     }
 
     printer.action("Refreshing local nx binary");
-    printer.detail(&format!(
+    Printer::detail(&format!(
         "cargo install --path {} --force",
         source_root.display()
     ));
@@ -49,7 +49,7 @@ pub fn maybe_refresh_before_system_command(needs_refresh: bool, printer: &Printe
     {
         Ok(status) if status.success() => {
             printer.success("Local nx binary refreshed");
-            printer.detail("Re-run your command to continue");
+            Printer::detail("Re-run your command to continue");
             Some(0)
         }
         Ok(status) => {

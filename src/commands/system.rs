@@ -38,7 +38,7 @@ pub fn cmd_undo(ctx: &AppContext) -> i32 {
     }
 
     println!();
-    if !ctx.printer.confirm("Revert all changes?", false) {
+    if !Printer::confirm("Revert all changes?", false) {
         println!("  Cancelled.");
         return 0;
     }
@@ -103,7 +103,7 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
     }
 
     if args.dry_run {
-        ctx.printer.detail("Dry run complete - no changes made");
+        Printer::detail("Dry run complete - no changes made");
         return 0;
     }
 
@@ -175,12 +175,10 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<Vec<InputChan
     }
 
     if !diff.added.is_empty() {
-        ctx.printer
-            .detail(&format!("Added: {}", diff.added.join(", ")));
+        Printer::detail(&format!("Added: {}", diff.added.join(", ")));
     }
     if !diff.removed.is_empty() {
-        ctx.printer
-            .detail(&format!("Removed: {}", diff.removed.join(", ")));
+        Printer::detail(&format!("Removed: {}", diff.removed.join(", ")));
     }
 
     Ok(diff.changed)
@@ -938,7 +936,7 @@ fn commit_flake_lock(ctx: &AppContext, flake_changes: &[InputChange]) {
                     .to_ascii_lowercase()
                     .contains("nothing to commit") =>
         {
-            ctx.printer.detail("No changes to commit");
+            Printer::detail("No changes to commit");
         }
         _ => {
             ctx.printer.error("Commit failed");
@@ -989,8 +987,7 @@ pub fn cmd_update(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
     if return_code == 0 {
         println!();
         ctx.printer.success("Flake inputs updated");
-        ctx.printer
-            .detail("Run 'nx rebuild' to rebuild, or 'nx upgrade' for full upgrade");
+        Printer::detail("Run 'nx rebuild' to rebuild, or 'nx upgrade' for full upgrade");
         return 0;
     }
 
@@ -1102,7 +1099,7 @@ fn check_git_preflight(ctx: &AppContext) -> Result<(), i32> {
         ctx.printer.error("Git preflight failed");
         let detail = first_nonempty_output(&output);
         if !detail.is_empty() {
-            ctx.printer.detail(detail);
+            Printer::detail(detail);
         }
         return Err(1);
     }
@@ -1123,12 +1120,12 @@ fn check_git_preflight(ctx: &AppContext) -> Result<(), i32> {
     ctx.printer
         .error("Untracked .nix files would be ignored by flake evaluation");
     println!();
-    ctx.printer.detail("Track these files before rebuild:");
+    Printer::detail("Track these files before rebuild:");
     for rel_path in &untracked {
-        ctx.printer.detail(&format!("- {rel_path}"));
+        Printer::detail(&format!("- {rel_path}"));
     }
     println!();
-    ctx.printer.detail(&format!(
+    Printer::detail(&format!(
         "Run: git -C \"{}\" add <files>",
         ctx.repo_root.display()
     ));

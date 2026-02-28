@@ -26,6 +26,7 @@ use crate::infra::finder::find_package;
 use crate::infra::flake_input::{FlakeInputEdit, add_flake_input};
 use crate::infra::shell::run_captured_command;
 use crate::infra::sources::{check_nix_available, search_all_sources};
+use crate::output::printer::Printer;
 
 pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
     if args.packages.is_empty() {
@@ -79,7 +80,7 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
 fn run_post_install_actions<F>(
     success_count: usize,
     args: &InstallArgs,
-    ctx: &AppContext,
+    _ctx: &AppContext,
     rebuild: F,
 ) where
     F: FnOnce() -> i32,
@@ -89,7 +90,7 @@ fn run_post_install_actions<F>(
     }
 
     println!();
-    ctx.printer.detail("Run: nx rebuild");
+    Printer::detail("Run: nx rebuild");
 
     if args.rebuild {
         let _ = rebuild();
@@ -135,9 +136,9 @@ fn install_one(
 
     println!();
     if args.dry_run {
-        ctx.printer.detail("Analyzing (1)");
+        Printer::detail("Analyzing (1)");
     } else {
-        ctx.printer.detail("Installing (1)");
+        Printer::detail("Installing (1)");
     }
 
     if let Some(warning) = platform_warning {
@@ -266,14 +267,13 @@ fn gate_flake_input(
         ));
         return false;
     };
-    ctx.printer.detail(&format!("URL: {flake_url}"));
+    Printer::detail(&format!("URL: {flake_url}"));
 
     if args.dry_run {
-        ctx.printer
-            .detail(&format!("[DRY RUN] Would add flake input for {package}"));
+        Printer::detail(&format!("[DRY RUN] Would add flake input for {package}"));
         return true; // counted as success in dry-run
     }
-    if !args.yes && !ctx.printer.confirm("Add flake input?", true) {
+    if !args.yes && !Printer::confirm("Add flake input?", true) {
         ctx.printer.warn(&format!("Skipping {package}"));
         return false;
     }
@@ -281,12 +281,11 @@ fn gate_flake_input(
     let flake_path = ctx.repo_root.join("flake.nix");
     match add_flake_input(&flake_path, flake_url, None) {
         Ok(FlakeInputEdit::Added { input_name }) => {
-            ctx.printer.detail(&format!("added input '{input_name}'"));
+            Printer::detail(&format!("added input '{input_name}'"));
             true
         }
         Ok(FlakeInputEdit::AlreadyExists { input_name }) => {
-            ctx.printer
-                .detail(&format!("input '{input_name}' already exists"));
+            Printer::detail(&format!("input '{input_name}' already exists"));
             true
         }
         Err(err) => {
@@ -422,7 +421,7 @@ fn maybe_setup_service_with<F>(
     }
 
     if args.dry_run {
-        ctx.printer.detail(&format!(
+        Printer::detail(&format!(
             "[DRY RUN] Would add launchd.agents.{package_name}"
         ));
         return;
@@ -540,7 +539,7 @@ fn search_for_package(
         let cached = cache.get_all(package);
         if !cached.is_empty() {
             if args.explain {
-                ctx.printer.detail(&format!(
+                Printer::detail(&format!(
                     "Cache hit for '{package}' ({} sources)",
                     cached.len()
                 ));
@@ -607,7 +606,7 @@ fn resolve_search_candidates(
                     resolve_platform_candidate(&candidates[selected_index], candidates, ctx)
                 }
                 CandidateSelection::Skipped => {
-                    ctx.printer.detail("Cancelled.");
+                    Printer::detail("Cancelled.");
                     Some(SearchResolution::Skipped)
                 }
             }
@@ -622,7 +621,7 @@ fn resolve_search_candidates(
 fn choose_candidate_selection(
     args: &InstallArgs,
     candidates: &[&SourceResult],
-    ctx: &AppContext,
+    _ctx: &AppContext,
 ) -> CandidateSelection {
     select_candidate_index(
         args,
@@ -630,8 +629,7 @@ fn choose_candidate_selection(
         || {
             let candidate = &candidates[0];
             let attr = candidate.attr.as_deref().unwrap_or(&candidate.name);
-            ctx.printer
-                .confirm(&format!("Install {attr} ({})?", candidate.source), true)
+            Printer::confirm(&format!("Install {attr} ({})?", candidate.source), true)
         },
         prompt_source_choice,
     )
@@ -744,10 +742,10 @@ fn unique_source_candidate_indices(candidates: &[SourceResult]) -> Vec<usize> {
     indices
 }
 
-fn show_unknown_group(package: &str, ctx: &AppContext) {
+fn show_unknown_group(package: &str, _ctx: &AppContext) {
     println!();
-    ctx.printer.detail("unknown/not found:");
-    ctx.printer.detail(&format!("  - {package}"));
+    Printer::detail("unknown/not found:");
+    Printer::detail(&format!("  - {package}"));
 }
 
 fn show_resolution_groups(
@@ -758,7 +756,7 @@ fn show_resolution_groups(
 ) {
     if !installable.is_empty() {
         println!();
-        ctx.printer.detail("Found (1)");
+        Printer::detail("Found (1)");
 
         if installable.len() == 1 {
             let candidate = installable[0];
@@ -768,19 +766,17 @@ fn show_resolution_groups(
             } else {
                 format!(" - {}", truncate_text(&candidate.description, 50))
             };
-            ctx.printer
-                .detail(&format!("{package} via {source}{detail}"));
+            Printer::detail(&format!("{package} via {source}{detail}"));
         } else {
-            ctx.printer.detail(package);
+            Printer::detail(package);
             for (idx, candidate) in installable.iter().enumerate() {
                 let source = format_source_display(candidate.source, candidate.attr.as_deref());
-                ctx.printer.detail(&format!("  {}. {source}", idx + 1));
+                Printer::detail(&format!("  {}. {source}", idx + 1));
                 if let Some(version) = candidate.version.as_deref() {
-                    ctx.printer
-                        .detail(&format!("         Version:     {version}"));
+                    Printer::detail(&format!("         Version:     {version}"));
                 }
                 if !candidate.description.is_empty() {
-                    ctx.printer.detail(&format!(
+                    Printer::detail(&format!(
                         "         Description: {}",
                         truncate_text(&candidate.description, 60)
                     ));
@@ -790,8 +786,8 @@ fn show_resolution_groups(
     }
 
     if let Some(location) = installed {
-        ctx.printer.detail("already installed:");
-        ctx.printer.detail(&format!(
+        Printer::detail("already installed:");
+        Printer::detail(&format!(
             "  - {package} ({})",
             relative_location(location, &ctx.repo_root)
         ));

@@ -7,6 +7,7 @@ use anyhow::{Context, bail, ensure};
 
 use crate::cli::{SecretAddArgs, SecretArgs, SecretCommand};
 use crate::commands::context::AppContext;
+use crate::output::printer::Printer;
 
 pub fn cmd_secret(args: &SecretArgs, ctx: &AppContext) -> i32 {
     match &args.command {
@@ -42,12 +43,11 @@ fn cmd_secret_add(args: &SecretAddArgs, ctx: &AppContext) -> i32 {
 
     ctx.printer.success(&format!("Secret key '{key}' added"));
     if outcome.secret_names_changed {
-        ctx.printer.detail("Updated home/secrets.nix secretNames.");
+        Printer::detail("Updated home/secrets.nix secretNames.");
     } else {
-        ctx.printer
-            .detail("home/secrets.nix already contained this key.");
+        Printer::detail("home/secrets.nix already contained this key.");
     }
-    ctx.printer.detail(&format!(
+    Printer::detail(&format!(
         "Run `nx rebuild` so new shells expose ${}.",
         to_env_var_name(key)
     ));

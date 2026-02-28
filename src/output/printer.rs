@@ -14,7 +14,6 @@ pub struct Printer {
     style: OutputStyle,
 }
 
-#[allow(clippy::unused_self)] // methods that don't yet use self will when style-aware output lands
 impl Printer {
     pub const fn new(style: OutputStyle) -> Self {
         Self { style }
@@ -43,25 +42,25 @@ impl Printer {
         );
     }
 
-    pub fn searching(&self, name: &str) {
+    pub fn searching(name: &str) {
         eprint!("  Searching for {name}...");
     }
 
-    pub fn searching_done(&self) {
+    pub fn searching_done() {
         eprintln!(" done");
     }
 
-    pub fn detail(&self, text: &str) {
+    pub fn detail(text: &str) {
         println!("  {text}");
     }
 
-    pub fn stream_line(&self, text: &str, indent: &str, width: usize) {
+    pub fn stream_line(text: &str, indent: &str, width: usize) {
         for segment in wrapped_segments(text, width.saturating_sub(indent.len()).max(20)) {
             println!("{indent}{segment}");
         }
     }
 
-    pub fn confirm(&self, prompt: &str, default_yes: bool) -> bool {
+    pub fn confirm(prompt: &str, default_yes: bool) -> bool {
         let suffix = if default_yes { " [Y/n]: " } else { " [y/N]: " };
         print!("  {prompt}{suffix}");
         let _ = io::stdout().flush();

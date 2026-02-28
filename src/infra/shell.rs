@@ -40,7 +40,7 @@ pub fn run_indented_command(
     program: &str,
     args: &[&str],
     cwd: Option<&Path>,
-    printer: &Printer,
+    _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<i32> {
     let mut command = Command::new(program);
@@ -74,7 +74,7 @@ pub fn run_indented_command(
         if trimmed.is_empty() {
             println!();
         } else {
-            printer.stream_line(trimmed, indent, 80);
+            Printer::stream_line(trimmed, indent, 80);
         }
     }
 
@@ -90,7 +90,7 @@ pub fn run_indented_command_collecting(
     program: &str,
     args: &[&str],
     cwd: Option<&Path>,
-    printer: &Printer,
+    _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<(i32, String)> {
     let mut command = Command::new(program);
@@ -129,7 +129,7 @@ pub fn run_indented_command_collecting(
         if trimmed.is_empty() {
             println!();
         } else {
-            printer.stream_line(trimmed, indent, 80);
+            Printer::stream_line(trimmed, indent, 80);
         }
     }
 

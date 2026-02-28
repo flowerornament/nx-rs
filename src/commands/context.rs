@@ -29,4 +29,8 @@ impl AppContext {
             flags,
         }
     }
+
+    pub const fn wants_json(&self, local_json_flag: bool) -> bool {
+        local_json_flag || self.flags.json
+    }
 }

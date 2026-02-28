@@ -133,17 +133,30 @@ fn find_package_exact(name: &str, repo_root: &Path) -> anyhow::Result<Option<Pac
 fn finder_index(repo_root: &Path) -> anyhow::Result<Arc<FinderIndex>> {
     let repo_key = canonical_repo_key(repo_root);
     let snapshots = collect_file_snapshots(&repo_key)?;
+
+    {
+        let cache = FINDER_INDEX_CACHE
+            .lock()
+            .expect("finder index cache lock should not be poisoned");
+        if let Some(entry) = cache.by_repo.get(&repo_key)
+            && entry.index.snapshots == snapshots
+        {
+            return Ok(Arc::clone(&entry.index));
+        }
+    }
+
+    // Build outside the cache lock to avoid serializing disk IO across callers.
+    let built_index = Arc::new(build_finder_index(&snapshots)?);
+
     let mut cache = FINDER_INDEX_CACHE
         .lock()
         .expect("finder index cache lock should not be poisoned");
-
     if let Some(entry) = cache.by_repo.get(&repo_key)
         && entry.index.snapshots == snapshots
     {
         return Ok(Arc::clone(&entry.index));
     }
 
-    let index = Arc::new(build_finder_index(&snapshots)?);
     let rebuilds = cache
         .by_repo
         .get(&repo_key)
@@ -153,10 +166,10 @@ fn finder_index(repo_root: &Path) -> anyhow::Result<Arc<FinderIndex>> {
         repo_key,
         FinderIndexEntry {
             rebuilds,
-            index: Arc::clone(&index),
+            index: Arc::clone(&built_index),
         },
     );
-    Ok(index)
+    Ok(built_index)
 }
 
 fn canonical_repo_key(repo_root: &Path) -> PathBuf {

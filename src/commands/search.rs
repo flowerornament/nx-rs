@@ -23,7 +23,7 @@ pub fn cmd_search(args: &SearchArgs, ctx: &AppContext) -> i32 {
         return 1;
     }
 
-    if args.json || ctx.flags.json {
+    if ctx.wants_json(args.json) {
         return render_json(&results);
     }
 

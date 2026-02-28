@@ -1,0 +1,42 @@
+$ PY_NX=/Users/morgan/code/nx-python/nx just cutover-validate
+# nx-rs Cutover Validation Report
+
+- Executed: 2026-02-28 06:12:10 PST
+- Workspace: /Users/morgan/code/nx-rs
+- nix-config root: /Users/morgan/.nix-config
+- Python nx: /Users/morgan/code/nx-python/nx
+- Rust nx-rs: /Users/morgan/code/nx-rs/target/debug/nx
+- Sample installed package used in checks: ripgrep
+
+## Shadow Matrix (Python vs Rust)
+
+| Case | Command Args | Python Exit | Rust Exit | Stdout Match | Stderr Match | Pass |
+| --- | --- | --- | --- | --- | --- | --- |
+| where_found | where ripgrep | 0 | 0 | yes | yes | yes |
+| where_not_found | where not-a-real-package-nxrs-cutover | 0 | 0 | yes | yes | yes |
+| list_plain | list --plain | 0 | 0 | yes | yes | yes |
+| status | status | 0 | 0 | yes | yes | yes |
+| installed_json | installed ripgrep --json | 0 | 0 | yes | yes | yes |
+| info_json_not_found | info not-a-real-package-nxrs-cutover --json | 0 | 0 | yes | yes | yes |
+| install_dry_run | install --dry-run ripgrep | 0 | 0 | yes | yes | yes |
+| remove_dry_run | remove --dry-run ripgrep | 0 | 0 | yes | yes | yes |
+
+Shadow matrix all pass: yes
+
+## Canary Matrix (PATH-preferred nx-rs)
+
+| Case | Command | Exit | Pass |
+| --- | --- | --- | --- |
+| status | nx --plain --minimal status | 0 | yes |
+| where_found | nx --plain --minimal where ripgrep | 0 | yes |
+| installed_json | nx --plain --minimal installed ripgrep --json | 0 | yes |
+
+Canary matrix all pass: yes
+
+## Mutation Safety
+
+Git status unchanged after all checks: yes
+
+## Overall Gate
+
+All gates pass (shadow + canary + mutation safety): yes

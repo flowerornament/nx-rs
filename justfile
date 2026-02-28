@@ -27,6 +27,8 @@ help:
     @echo "  just parity-check-python # Explicit Python parity check"
     @echo "  just test-system     # Run system command integration matrix with stubs"
     @echo "  just cutover-validate # Run manual shadow/canary validation against ~/.nix-config"
+    @echo "  just maintenance-gates-weekly # Weekly SLO maintenance bundle + archived evidence"
+    @echo "  just maintenance-gates-monthly # Monthly SLO maintenance bundle + archived evidence"
     @echo "  just parity-capture  # Refresh parity baselines from Python reference"
     @echo
     @echo "Raw Commands"
@@ -104,6 +106,14 @@ test-system:
 # Run cutover shadow/canary validation against ~/.nix-config.
 cutover-validate:
     @scripts/cutover/validate_shadow_canary.sh
+
+# Run weekly maintenance gate bundle and archive evidence under .agents/reports/maintenance-gates/<UTC timestamp>/.
+maintenance-gates-weekly:
+    @scripts/cutover/run_maintenance_gates.sh weekly
+
+# Run monthly maintenance gate bundle (includes Python-target parity) and archive evidence.
+maintenance-gates-monthly:
+    @scripts/cutover/run_maintenance_gates.sh monthly
 
 # Validate parity fixtures against captured Python baselines.
 parity-check:

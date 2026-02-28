@@ -139,12 +139,14 @@ Recurring check cadence:
 1. On each merge to `main` (or before release cut):
    - `just ci`
 2. Weekly maintenance gate (recommended: first workday of week):
-   - `just ci`
-   - `just parity-check-rust`
-   - `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`
+   - `just maintenance-gates-weekly`
 3. Monthly maintenance gate (recommended: first workday of month):
-   - `just parity-check` (Python-target parity validation)
-   - `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`
+   - `just maintenance-gates-monthly`
+
+Maintenance bundle behavior:
+- Both commands archive command transcripts and a summary at `.agents/reports/maintenance-gates/<UTC timestamp>/`.
+- Weekly bundle runs: `just ci`, `just parity-check-rust`, and `just cutover-validate`.
+- Monthly bundle runs the weekly bundle plus `just parity-check` (Python-target parity).
 
 Failure response policy:
 

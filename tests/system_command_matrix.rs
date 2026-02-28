@@ -313,6 +313,15 @@ const UNDO_CONFIRMED_CALLS: &[ExpectedCall] = &[
     ),
 ];
 
+const UNDO_CANCELLED_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", ExpectedCwd::RepoRoot, &["status", "--porcelain"]),
+    ExpectedCall::new(
+        "git",
+        ExpectedCwd::RepoRoot,
+        &["diff", "--stat", "packages/nix/cli.nix"],
+    ),
+];
+
 const NO_CALLS: &[ExpectedCall] = &[];
 
 const UPGRADE_COMMIT_CALLS: &[ExpectedCall] = &[
@@ -403,6 +412,14 @@ const MATRIX_CASES: &[MatrixCase] = &[
         expected_exit: 0,
         expected_calls: Some(UNDO_CONFIRMED_CALLS),
         stdout_contains: &["Undo Changes (1 files)", "Reverted 1 files"],
+    },
+    MatrixCase {
+        id: "undo_dirty_cancelled_short_circuit",
+        cli_args: UNDO_BASE_ARGS,
+        mode: StubMode::UndoDirty,
+        expected_exit: 0,
+        expected_calls: Some(UNDO_CANCELLED_CALLS),
+        stdout_contains: &["Undo Changes (1 files)", "Cancelled."],
     },
     MatrixCase {
         id: "update_success_passthrough",
@@ -663,6 +680,7 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &MatrixCase) -> Result<(), Bo
 fn case_stdin(case_id: &str) -> Option<&'static str> {
     match case_id {
         "undo_dirty_confirmed_reverts" => Some("y\n"),
+        "undo_dirty_cancelled_short_circuit" => Some("n\n"),
         _ => None,
     }
 }

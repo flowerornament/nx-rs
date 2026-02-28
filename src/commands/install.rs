@@ -948,6 +948,7 @@ mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use crate::commands::context::GlobalFlags;
     use crate::domain::config::ConfigFiles;
     use crate::domain::source::PackageSource;
     use crate::infra::ai_engine::RouteDecision;
@@ -980,6 +981,7 @@ mod tests {
             root.to_path_buf(),
             Printer::new(OutputStyle::from_flags(true, false, false)),
             ConfigFiles::discover(root),
+            GlobalFlags::default(),
         )
     }
 

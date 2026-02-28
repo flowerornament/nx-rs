@@ -45,6 +45,9 @@ const INFO_MISSING_ARGS: &[&str] = &["info"];
 const INSTALLED_MISSING_ARGS: &[&str] = &["installed"];
 const INFO_FOUND_ARGS: &[&str] = &["info", "ripgrep"];
 const INFO_JSON_FOUND_ARGS: &[&str] = &["info", "ripgrep", "--json"];
+const LIST_JSON_GLOBAL_ARGS: &[&str] = &["--json", "list"];
+const INFO_JSON_GLOBAL_ARGS: &[&str] = &["--json", "info", "ripgrep"];
+const INSTALLED_JSON_GLOBAL_ARGS: &[&str] = &["--json", "installed", "ripgrep"];
 const INFO_BLEEDING_EDGE_ARGS: &[&str] = &["info", "ripgrep", "--bleeding-edge"];
 const INFO_JSON_HM_MODULE_ARGS: &[&str] = &["info", "git", "--json"];
 const INFO_JSON_DARWIN_SERVICE_ARGS: &[&str] = &["info", "yabai", "--json"];
@@ -118,6 +121,9 @@ const INFO_JSON_DARWIN_SERVICE_STDOUT: &[&str] = &[
     "\"path\": \"services.yabai\"",
     "\"enabled\": false",
 ];
+const LIST_JSON_GLOBAL_STDOUT: &[&str] = &["\"nxs\": [", "\"ripgrep\"", "\"services\": ["];
+const INSTALLED_JSON_GLOBAL_STDOUT: &[&str] =
+    &["\"ripgrep\": {\"match\": \"ripgrep\", \"location\": \""];
 
 const UPGRADE_FLAKE_LOCK_OLD: &str = r#"{
   "nodes": {
@@ -809,6 +815,30 @@ const MATRIX_CASES: &[MatrixCase] = &[
         expected_exit: 0,
         expected_calls: None,
         stdout_contains: INFO_JSON_DARWIN_SERVICE_STDOUT,
+    },
+    MatrixCase {
+        id: "list_global_json_flag_renders_json",
+        cli_args: LIST_JSON_GLOBAL_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 0,
+        expected_calls: None,
+        stdout_contains: LIST_JSON_GLOBAL_STDOUT,
+    },
+    MatrixCase {
+        id: "info_global_json_flag_renders_json",
+        cli_args: INFO_JSON_GLOBAL_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 0,
+        expected_calls: None,
+        stdout_contains: INFO_JSON_FOUND_STDOUT,
+    },
+    MatrixCase {
+        id: "installed_global_json_flag_renders_json",
+        cli_args: INSTALLED_JSON_GLOBAL_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 0,
+        expected_calls: None,
+        stdout_contains: INSTALLED_JSON_GLOBAL_STDOUT,
     },
 ];
 

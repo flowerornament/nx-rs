@@ -412,4 +412,73 @@ mod tests {
         assert!(add_help.contains("nx secret add --name redacted_api_key"));
         assert!(add_help.contains("`--` stops option parsing"));
     }
+
+    #[test]
+    fn global_json_and_unicode_flags_parse_at_root() {
+        let cli =
+            Cli::try_parse_from(["nx", "--json", "--unicode", "info", "ripgrep"]).expect("parse");
+        assert!(cli.json);
+        assert!(cli.unicode);
+    }
+
+    #[test]
+    fn install_parses_explain_engine_and_model_options() {
+        let cli = Cli::try_parse_from([
+            "nx",
+            "install",
+            "ripgrep",
+            "--explain",
+            "--engine",
+            "claude",
+            "--model",
+            "sonnet",
+        ])
+        .expect("parse install flags");
+
+        let CommandKind::Install(args) = cli.command else {
+            panic!("expected install command");
+        };
+        assert!(args.explain);
+        assert_eq!(args.engine.as_deref(), Some("claude"));
+        assert_eq!(args.model.as_deref(), Some("sonnet"));
+    }
+
+    #[test]
+    fn remove_parses_model_option() {
+        let cli = Cli::try_parse_from(["nx", "remove", "ripgrep", "--model", "sonnet"])
+            .expect("parse remove model");
+        let CommandKind::Remove(args) = cli.command else {
+            panic!("expected remove command");
+        };
+        assert_eq!(args.model.as_deref(), Some("sonnet"));
+    }
+
+    #[test]
+    fn list_parses_verbose_option() {
+        let cli = Cli::try_parse_from(["nx", "list", "--verbose"]).expect("parse list verbose");
+        let CommandKind::List(args) = cli.command else {
+            panic!("expected list command");
+        };
+        assert!(args.verbose);
+    }
+
+    #[test]
+    fn info_parses_verbose_option() {
+        let cli = Cli::try_parse_from(["nx", "info", "ripgrep", "--verbose"])
+            .expect("parse info verbose");
+        let CommandKind::Info(args) = cli.command else {
+            panic!("expected info command");
+        };
+        assert!(args.verbose);
+    }
+
+    #[test]
+    fn upgrade_parses_verbose_option() {
+        let cli =
+            Cli::try_parse_from(["nx", "upgrade", "--verbose"]).expect("parse upgrade verbose");
+        let CommandKind::Upgrade(args) = cli.command else {
+            panic!("expected upgrade command");
+        };
+        assert!(args.verbose);
+    }
 }

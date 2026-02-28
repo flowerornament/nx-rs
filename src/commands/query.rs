@@ -76,7 +76,7 @@ pub fn cmd_list(args: &ListArgs, ctx: &AppContext) -> i32 {
         None
     };
 
-    if args.json {
+    if args.json || ctx.flags.json {
         return render_list_json(source, &buckets, &ctx.printer);
     }
 
@@ -109,7 +109,7 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
     let mut cache = MultiSourceCache::load(&ctx.repo_root).ok();
     let info_sources = collect_info_sources(package, args, &ctx.repo_root, &mut cache);
 
-    if args.json {
+    if args.json || ctx.flags.json {
         let sources = info_sources
             .into_iter()
             .map(info_source_json_from_result)
@@ -570,7 +570,7 @@ pub fn cmd_installed(args: &InstalledArgs, ctx: &AppContext) -> i32 {
         }
     }
 
-    if args.json {
+    if args.json || ctx.flags.json {
         return render_installed_json(&results, &ctx.printer);
     }
 

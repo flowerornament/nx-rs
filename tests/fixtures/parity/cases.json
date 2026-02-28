@@ -191,6 +191,30 @@
     "rust_parity": true
   },
   {
+    "id": "install_yes_mutates_stubbed",
+    "args": ["install", "--yes", "nxrsdryrun"],
+    "setup": "stub_install_sources",
+    "python_parity": false,
+    "python_parity_reason": "Case validates Rust non-dry-run deterministic install engine path; Python parity harness requires external AI tooling for this mutation flow.",
+    "rust_parity": true
+  },
+  {
+    "id": "install_yes_rebuild_stubbed",
+    "args": ["install", "--yes", "--rebuild", "nxrsdryrun"],
+    "setup": "stub_install_sources",
+    "python_parity": false,
+    "python_parity_reason": "Case validates Rust post-install rebuild trigger under deterministic stubs; Python parity harness requires external AI tooling for this mutation flow.",
+    "rust_parity": true
+  },
+  {
+    "id": "install_flake_input_claude_yes_stubbed",
+    "args": ["install", "--yes", "--engine", "claude", "--bleeding-edge", "nxrsmulti"],
+    "setup": "stub_install_sources",
+    "python_parity": false,
+    "python_parity_reason": "Case validates Rust flake-input modification gate and mutation path with deterministic stubs; Python parity harness requires external Claude tooling for this non-dry-run path.",
+    "rust_parity": true
+  },
+  {
     "id": "install_missing_arg",
     "args": ["install"],
     "rust_parity": true

@@ -109,9 +109,21 @@ pub fn build_install_plan(sr: &SourceResult, config: &ConfigFiles) -> Result<Ins
 
 /// Collect nix manifest files that could host a package (for AI routing).
 ///
-/// All files from `ConfigFiles::discover` are already `.nix` files.
+/// Candidates are constrained to the fallback manifest's parent directory and
+/// exclude the language manifest to preserve routing safety invariants.
 pub fn nix_manifest_candidates(config: &ConfigFiles) -> Vec<PathBuf> {
-    config.all_files().to_vec()
+    let fallback = config.packages();
+    let Some(parent) = fallback.parent() else {
+        return vec![fallback];
+    };
+    let language_manifest = config.languages();
+
+    config
+        .all_files()
+        .iter()
+        .filter(|path| path.parent() == Some(parent) && **path != language_manifest)
+        .cloned()
+        .collect()
 }
 
 /// Detect MCP tool packages by naming convention (`*-mcp` or `mcp-*`).
@@ -157,6 +169,7 @@ mod tests {
             "packages/nix/languages.nix",
             "# nx: language runtimes\n[]",
         );
+        write_nix(root, "packages/nix/editors.nix", "# nx: editors\n[]");
         write_nix(
             root,
             "packages/homebrew/brews.nix",
@@ -343,10 +356,29 @@ mod tests {
     // --- nix_manifest_candidates
 
     #[test]
-    fn candidates_lists_all_nix_files() {
-        let (_tmp, config) = test_config();
+    fn candidates_include_cli_siblings_and_exclude_languages() {
+        let (tmp, config) = test_config();
         let candidates = nix_manifest_candidates(&config);
-        assert!(candidates.len() >= 5);
+        assert!(
+            candidates
+                .iter()
+                .all(|p| p.starts_with(tmp.path().join("packages/nix")))
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|p| p.ends_with("packages/nix/cli.nix"))
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|p| p.ends_with("packages/nix/editors.nix"))
+        );
+        assert!(
+            !candidates
+                .iter()
+                .any(|p| p.ends_with("packages/nix/languages.nix"))
+        );
         assert!(candidates.iter().all(|p| p.extension().unwrap() == "nix"));
     }
 }

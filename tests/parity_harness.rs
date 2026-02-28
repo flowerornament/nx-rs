@@ -430,6 +430,8 @@ fn install_system_stubs(repo_root: &Path) -> Result<(), Box<dyn Error>> {
     write_brew_stub(&stub_bin)?;
     write_ruff_stub(&stub_bin)?;
     write_mypy_stub(&stub_bin)?;
+    write_ai_stub(&stub_bin, "codex")?;
+    write_ai_stub(&stub_bin, "claude")?;
     support::write_executable(&stub_bin.join("gh"), "#!/bin/sh\nexit 1\n")?;
 
     Ok(())
@@ -750,6 +752,14 @@ fi
 echo "stub mypy ok"
 exit 0
 "#,
+    )?;
+    Ok(())
+}
+
+fn write_ai_stub(stub_bin: &Path, program: &str) -> Result<(), Box<dyn Error>> {
+    support::write_executable(
+        &stub_bin.join(program),
+        &format!("#!/bin/sh\necho \"stub {program} unavailable\" >&2\nexit 1\n",),
     )?;
     Ok(())
 }

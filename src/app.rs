@@ -5,7 +5,7 @@ use std::process::Command;
 use anyhow::bail;
 
 use crate::cli::{Cli, CommandKind};
-use crate::commands::context::AppContext;
+use crate::commands::context::{AppContext, GlobalFlags};
 use crate::commands::install::cmd_install;
 use crate::commands::query::{cmd_info, cmd_installed, cmd_list, cmd_status, cmd_where};
 use crate::commands::remove::cmd_remove;
@@ -18,6 +18,7 @@ use crate::output::printer::Printer;
 use crate::output::style::OutputStyle;
 
 pub fn execute(cli: Cli) -> i32 {
+    let global_flags = GlobalFlags { json: cli.json };
     let style = OutputStyle::from_flags(cli.plain, cli.unicode, cli.minimal);
     let printer = Printer::new(style);
     let needs_refresh = matches!(
@@ -37,7 +38,7 @@ pub fn execute(cli: Cli) -> i32 {
     };
 
     let config_files = ConfigFiles::discover(&repo_root);
-    let ctx = AppContext::new(repo_root, printer, config_files);
+    let ctx = AppContext::new(repo_root, printer, config_files, global_flags);
 
     match cli.command {
         CommandKind::Install(args) => cmd_install(&args, &ctx),

@@ -457,6 +457,7 @@ where
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use clap::error::ErrorKind;
     use std::collections::BTreeSet;
 
     // --- preprocess_args ---
@@ -543,6 +544,64 @@ mod tests {
     }
 
     #[test]
+    fn preprocess_args_no_subcommand_keeps_argv_shape() {
+        let result = preprocess_args(["nx"]);
+        assert_eq!(result, vec![OsString::from("nx")]);
+    }
+
+    fn render_root_help() -> String {
+        let mut cmd = Cli::command();
+        let mut help = Vec::<u8>::new();
+        cmd.write_long_help(&mut help)
+            .expect("root help should render");
+        String::from_utf8(help).expect("help should be utf8")
+    }
+
+    fn render_subcommand_help(command: &str) -> String {
+        let mut root = Cli::command();
+        let subcommand = root
+            .find_subcommand_mut(command)
+            .expect("subcommand should exist");
+        let mut help = Vec::<u8>::new();
+        subcommand
+            .write_long_help(&mut help)
+            .expect("subcommand help should render");
+        String::from_utf8(help).expect("help should be utf8")
+    }
+
+    fn render_invocation_help<const N: usize>(args: [&str; N]) -> String {
+        let err = Cli::try_parse_from(args).expect_err("help invocation should not parse");
+        assert_eq!(err.kind(), ErrorKind::DisplayHelp);
+        err.to_string()
+    }
+
+    #[test]
+    fn no_args_requests_help_instead_of_install_inference() {
+        let err = Cli::try_parse_from(["nx"]).expect_err("no args should trigger help");
+        assert_eq!(
+            err.kind(),
+            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+    }
+
+    #[test]
+    fn root_help_lists_spec_globals_and_verbose_alias() {
+        let help = render_invocation_help(["nx", "--help"]);
+        assert!(help.contains("Run `nx <command> --help`"));
+
+        for flag in [
+            "--plain",
+            "--unicode",
+            "--minimal",
+            "--verbose",
+            "--json",
+            "-v",
+        ] {
+            assert!(help.contains(flag), "root help should contain flag {flag}");
+        }
+    }
+
+    #[test]
     fn secret_add_parses_positional_key() {
         let cli = Cli::try_parse_from(["nx", "secret", "add", "redacted_api_key", "--value", "v"])
             .expect("secret add should parse with positional key");
@@ -599,11 +658,7 @@ mod tests {
 
     #[test]
     fn secret_add_help_includes_examples_and_double_dash_note() {
-        let mut cmd = Cli::command();
-        let mut help = Vec::<u8>::new();
-        cmd.write_long_help(&mut help)
-            .expect("root help should render");
-        let help = String::from_utf8(help).expect("help should be utf8");
+        let help = render_root_help();
         assert!(help.contains("Run `nx <command> --help`"));
 
         let mut secret_add_cmd = Cli::command();
@@ -697,16 +752,31 @@ mod tests {
     }
 
     #[test]
+    fn list_help_lists_spec_options_and_globals() {
+        let help = render_invocation_help(["nx", "list", "--help"]);
+        for flag in ["--verbose", "--json", "--plain", "--unicode", "--minimal"] {
+            assert!(help.contains(flag), "list help should contain flag {flag}");
+        }
+    }
+
+    #[test]
+    fn info_help_lists_spec_options_and_globals() {
+        let help = render_invocation_help(["nx", "info", "--help"]);
+        for flag in [
+            "--verbose",
+            "--json",
+            "--bleeding-edge",
+            "--plain",
+            "--unicode",
+            "--minimal",
+        ] {
+            assert!(help.contains(flag), "info help should contain flag {flag}");
+        }
+    }
+
+    #[test]
     fn install_help_lists_spec_options_after_flatten_refactor() {
-        let mut root = Cli::command();
-        let install = root
-            .find_subcommand_mut("install")
-            .expect("install command should exist");
-        let mut help = Vec::<u8>::new();
-        install
-            .write_long_help(&mut help)
-            .expect("install help should render");
-        let help = String::from_utf8(help).expect("help should be utf8");
+        let help = render_subcommand_help("install");
 
         for flag in [
             "--yes",
@@ -731,15 +801,7 @@ mod tests {
 
     #[test]
     fn upgrade_help_lists_spec_options_after_flatten_refactor() {
-        let mut root = Cli::command();
-        let upgrade = root
-            .find_subcommand_mut("upgrade")
-            .expect("upgrade command should exist");
-        let mut help = Vec::<u8>::new();
-        upgrade
-            .write_long_help(&mut help)
-            .expect("upgrade help should render");
-        let help = String::from_utf8(help).expect("help should be utf8");
+        let help = render_subcommand_help("upgrade");
 
         for flag in [
             "--dry-run",

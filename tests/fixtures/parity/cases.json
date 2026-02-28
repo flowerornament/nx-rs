@@ -311,6 +311,12 @@
     "rust_parity": true
   },
   {
+    "id": "upgrade_flake_failure",
+    "args": ["upgrade", "--no-ai"],
+    "setup": "stub_update_fail",
+    "rust_parity": true
+  },
+  {
     "id": "upgrade_brew_stubbed_no_updates",
     "args": ["upgrade", "--skip-rebuild", "--skip-commit", "--no-ai"],
     "setup": "stub_system_success",

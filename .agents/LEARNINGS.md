@@ -55,8 +55,8 @@ Update rules for future agents:
 - Re-verified on 2026-02-12 with `just cutover-validate`: shadow matrix, canary matrix, and mutation safety all passed.
 
 10. Parity harness coverage includes Rust-only search, stubbed upgrade brew path, expanded Rust info JSON parity, missing-arg parser failures, and interactive undo-confirm flow.
-- `tests/fixtures/parity/cases.json` currently has 59 cases.
-- 55 cases run in Python parity target; 59 cases run in Rust parity target.
+- `tests/fixtures/parity/cases.json` currently has 60 cases.
+- 56 cases run in Python parity target; 60 cases run in Rust parity target.
 - Four `search_*` cases are Rust-only (`python_parity=false`) with stubbed baselines.
 - `info_json_found` and `info_json_sources_not_installed` are now enabled for Rust parity with Python-shaped source metadata output.
 - `upgrade_brew_stubbed_no_updates` verifies brew-phase parity with deterministic `brew outdated --json` stubs.
@@ -85,4 +85,9 @@ Update rules for future agents:
 14. Rebuild command shape must stay direct under sudo to preserve sudoers `NOPASSWD` compatibility.
 - SPEC/Python contract for rebuild is `sudo /run/current-system/sw/bin/darwin-rebuild switch --flake <repo_root> [passthrough...]`.
 - Wrapping rebuild as `sudo bash -lc ...` can bypass host rules scoped to `/run/current-system/sw/bin/darwin-rebuild` and reintroduce password prompts.
+- Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+
+15. Upgrade failure-path parity now explicitly covers flake-phase short-circuit behavior.
+- Added `upgrade_flake_failure` parity fixture (`upgrade --no-ai` with `stub_update_fail`) to lock Python/Rust alignment on exit code `1` and no mutation when `nix flake update` fails.
+- Added `upgrade_flake_failure_short_circuit` in `tests/system_command_matrix.rs` to assert `upgrade` stops after the failed flake update command and does not continue to downstream phases.
 - Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.

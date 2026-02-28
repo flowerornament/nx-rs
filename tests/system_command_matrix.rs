@@ -49,6 +49,7 @@ const INFO_BLEEDING_EDGE_ARGS: &[&str] = &["info", "ripgrep", "--bleeding-edge"]
 const INFO_JSON_HM_MODULE_ARGS: &[&str] = &["info", "git", "--json"];
 const INFO_JSON_DARWIN_SERVICE_ARGS: &[&str] = &["info", "yabai", "--json"];
 const UPGRADE_COMMIT_ARGS: &[&str] = &["upgrade", "--skip-brew", "--skip-rebuild", "--no-ai"];
+const UPGRADE_FAILURE_ARGS: &[&str] = &["upgrade", "--no-ai"];
 const UPGRADE_SKIP_COMMIT_ARGS: &[&str] = &[
     "upgrade",
     "--skip-brew",
@@ -339,6 +340,12 @@ const UPGRADE_SKIP_COMMIT_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
     &["flake", "update"],
 )];
 
+const UPGRADE_FAILURE_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
+    "nix",
+    ExpectedCwd::RepoRoot,
+    &["flake", "update"],
+)];
+
 const MATRIX_CASES: &[MatrixCase] = &[
     MatrixCase {
         id: "install_missing_args_parser_error",
@@ -482,6 +489,14 @@ const MATRIX_CASES: &[MatrixCase] = &[
         mode: StubMode::DarwinRebuildFail,
         expected_exit: 1,
         expected_calls: Some(REBUILD_DARWIN_FAIL_CALLS),
+        stdout_contains: &[],
+    },
+    MatrixCase {
+        id: "upgrade_flake_failure_short_circuit",
+        cli_args: UPGRADE_FAILURE_ARGS,
+        mode: StubMode::UpdateFail,
+        expected_exit: 1,
+        expected_calls: Some(UPGRADE_FAILURE_CALLS),
         stdout_contains: &[],
     },
     MatrixCase {

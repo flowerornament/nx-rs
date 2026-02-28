@@ -116,46 +116,15 @@ Evidence trail:
 - `just ci` green (fmt + clippy + test + check) on 2026-02-27 PST / 2026-02-28 UTC (transcript archived in the same gate bundle directory).
 - Legacy in-tree copy decommissioned and quarantined.
 
-## Steady-State Maintenance SLOs
+## Post-Cutover Validation Policy
 
-This section defines post-cutover operational guardrails to catch behavior drift early.
+Parity with Python was a cutover acceptance criterion and is treated as complete.
 
-Owner model:
-- Primary owner: repo assignee for active maintenance task(s) in `bd` (currently Flower Ornament).
-- Backup owner: next available maintainer in `bd` ready queue if primary is unavailable.
+Operating policy:
 
-Service-level objectives:
-
-| SLO | Target |
-| --- | --- |
-| CI gate freshness | `just ci` passes on every merge to `main`; no unresolved `main` CI failure older than 24 hours |
-| Parity freshness | `just parity-check-rust` runs at least weekly (every 7 days) and passes |
-| Cross-implementation parity freshness | `just parity-check` (Python target) runs at least monthly (every 31 days) and passes |
-| Cutover safety freshness | `PY_NX="$HOME/code/nx-python/nx" just cutover-validate` runs at least weekly (every 7 days) and passes |
-| Drift response | Any failed parity/cutover gate is triaged within 24 hours and remediated (fix or rollback decision) within 72 hours |
-
-Recurring check cadence:
-
-1. On each merge to `main` (or before release cut):
-   - `just ci`
-2. Weekly maintenance gate (recommended: first workday of week):
-   - `just maintenance-gates-weekly`
-3. Monthly maintenance gate (recommended: first workday of month):
-   - `just maintenance-gates-monthly`
-
-Maintenance bundle behavior:
-- Both commands archive command transcripts and a summary at `.agents/reports/maintenance-gates/<UTC timestamp>/`.
-- Weekly bundle runs: `just ci`, `just parity-check-rust`, and `just cutover-validate`.
-- Monthly bundle runs the weekly bundle plus `just parity-check` (Python-target parity).
-
-Failure response policy:
-
-1. Open/claim a `bd` issue immediately for any red gate; include failing command and timestamp.
-2. Preserve evidence logs under `.agents/reports/maintenance-gates/<UTC timestamp>/`.
-3. If failure indicates behavior divergence vs Python reference, treat as parity regression:
-   - block cutover/release decisions until resolved
-   - either ship a Rust fix or execute rollback steps from this playbook
-4. Close incident issue only after green rerun of the failed gate(s).
+1. Normal development and release work uses `just ci` as the standing quality gate.
+2. `just parity-check-rust`, `just parity-check`, and `just cutover-validate` remain available as ad hoc forensic tools when debugging suspected behavior drift or doing exceptional migration/recovery work.
+3. There is no recurring weekly/monthly parity validation schedule.
 
 ## Flake Cutover Procedure
 

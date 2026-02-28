@@ -172,18 +172,8 @@ Update rules for future agents:
 - Documented extension policy in SPEC §14 and updated `.agents/spec_traceability_matrix_v1.tsv` §2.1 notes to treat these as deliberate compatibility extensions rather than unresolved drift.
 - Verified on 2026-02-28 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
 
-29. Post-cutover steady-state maintenance now has explicit SLOs, cadence, and failure-response ownership.
-- `.agents/CUTOVER_PLAYBOOK.md` now defines operational SLO targets for CI freshness, Rust parity cadence, Python parity cadence, and weekly cutover safety validation.
-- The recurring maintenance gates are standardized to `just ci`, `just parity-check-rust`, `just parity-check` (monthly), and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
-- Failure policy is documented as 24h triage + 72h remediation decision (fix or rollback), with evidence archived under `.agents/reports/maintenance-gates/<UTC timestamp>/`.
-- Verified on 2026-02-28 via policy documentation update in this repo.
-
-30. Maintenance-gate cadence now has executable weekly/monthly bundle automation with archived evidence.
-- Added `scripts/cutover/run_maintenance_gates.sh` with cadence modes:
-  - `weekly`: runs `just ci`, `just parity-check-rust`, and `just cutover-validate`.
-  - `monthly`: runs the weekly bundle plus `just parity-check` (Python-target parity).
-- Added `just maintenance-gates-weekly` and `just maintenance-gates-monthly`; each run writes logs and `00-summary.md` under `.agents/reports/maintenance-gates/<UTC timestamp>/`.
-- Verified on 2026-02-28 with:
-  - Weekly bundle report: `.agents/reports/maintenance-gates/20260228T141351Z/00-summary.md`
-  - Monthly bundle report: `.agents/reports/maintenance-gates/20260228T141041Z/00-summary.md`
-  - Required strict gates also green: `cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic`.
+29. Post-cutover policy treats Python parity as a completed one-time acceptance goal.
+- Recurring weekly/monthly maintenance cadence was removed from `.agents/CUTOVER_PLAYBOOK.md`; standard ongoing gate is `just ci`.
+- `just parity-check-rust`, `just parity-check`, and `just cutover-validate` remain available for ad hoc forensic/recovery validation only.
+- Historical maintenance-gate artifacts remain preserved under `.agents/reports/maintenance-gates/`.
+- Verified on 2026-02-28 with `just ci`, `cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.

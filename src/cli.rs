@@ -565,6 +565,54 @@ mod tests {
         flags
     }
 
+    fn declared_long_flags_for_subcommand(command: &str) -> BTreeSet<String> {
+        let mut root = Cli::command();
+        let subcommand = root
+            .find_subcommand_mut(command)
+            .expect("subcommand should exist");
+        let mut flags: BTreeSet<_> = subcommand
+            .get_arguments()
+            .filter_map(|arg| arg.get_long().map(str::to_owned))
+            .collect();
+        flags.remove("help");
+        flags.remove("version");
+        flags
+    }
+
+    fn declared_short_flags_for_subcommand(command: &str) -> BTreeSet<char> {
+        let mut root = Cli::command();
+        let subcommand = root
+            .find_subcommand_mut(command)
+            .expect("subcommand should exist");
+        let mut flags: BTreeSet<_> = subcommand
+            .get_arguments()
+            .filter_map(clap::Arg::get_short)
+            .collect();
+        flags.remove(&'h');
+        flags.remove(&'V');
+        flags
+    }
+
+    fn root_long_flags() -> BTreeSet<String> {
+        let mut flags: BTreeSet<_> = Cli::command()
+            .get_arguments()
+            .filter_map(|arg| arg.get_long().map(str::to_owned))
+            .collect();
+        flags.remove("help");
+        flags.remove("version");
+        flags
+    }
+
+    fn root_short_flags() -> BTreeSet<char> {
+        let mut flags: BTreeSet<_> = Cli::command()
+            .get_arguments()
+            .filter_map(clap::Arg::get_short)
+            .collect();
+        flags.remove(&'h');
+        flags.remove(&'V');
+        flags
+    }
+
     fn assert_subcommand_local_long_flags(command: &str, expected: &[&str]) {
         let expected: BTreeSet<_> = expected.iter().map(|flag| (*flag).to_owned()).collect();
         let actual = local_long_flags_for_subcommand(command);
@@ -604,18 +652,6 @@ mod tests {
         String::from_utf8(help).expect("help should be utf8")
     }
 
-    fn render_subcommand_help(command: &str) -> String {
-        let mut root = Cli::command();
-        let subcommand = root
-            .find_subcommand_mut(command)
-            .expect("subcommand should exist");
-        let mut help = Vec::<u8>::new();
-        subcommand
-            .write_long_help(&mut help)
-            .expect("subcommand help should render");
-        String::from_utf8(help).expect("help should be utf8")
-    }
-
     fn render_invocation_help<const N: usize>(args: [&str; N]) -> String {
         let err = Cli::try_parse_from(args).expect_err("help invocation should not parse");
         assert_eq!(err.kind(), ErrorKind::DisplayHelp);
@@ -636,16 +672,14 @@ mod tests {
         let help = render_invocation_help(["nx", "--help"]);
         assert!(help.contains("Run `nx <command> --help`"));
 
-        for flag in [
-            "--plain",
-            "--unicode",
-            "--minimal",
-            "--verbose",
-            "--json",
-            "-v",
-        ] {
-            assert!(help.contains(flag), "root help should contain flag {flag}");
-        }
+        let expected_longs: BTreeSet<_> = ["plain", "unicode", "minimal", "verbose", "json"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(root_long_flags(), expected_longs);
+
+        let expected_shorts: BTreeSet<_> = ['v'].into_iter().collect();
+        assert_eq!(root_short_flags(), expected_shorts);
     }
 
     #[test]
@@ -799,70 +833,83 @@ mod tests {
     }
 
     #[test]
-    fn list_help_lists_spec_options_and_globals() {
-        let help = render_invocation_help(["nx", "list", "--help"]);
-        for flag in ["--verbose", "--json", "--plain", "--unicode", "--minimal"] {
-            assert!(help.contains(flag), "list help should contain flag {flag}");
-        }
+    fn list_exposes_spec_options_and_globals_via_metadata() {
+        let expected_longs: BTreeSet<_> = ["verbose", "json", "plain"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(declared_long_flags_for_subcommand("list"), expected_longs);
+
+        let expected_shorts: BTreeSet<char> = BTreeSet::new();
+        assert_eq!(declared_short_flags_for_subcommand("list"), expected_shorts);
     }
 
     #[test]
-    fn info_help_lists_spec_options_and_globals() {
-        let help = render_invocation_help(["nx", "info", "--help"]);
-        for flag in [
-            "--verbose",
-            "--json",
-            "--bleeding-edge",
-            "--plain",
-            "--unicode",
-            "--minimal",
-        ] {
-            assert!(help.contains(flag), "info help should contain flag {flag}");
-        }
+    fn info_exposes_spec_options_and_globals_via_metadata() {
+        let expected_longs: BTreeSet<_> = ["verbose", "json", "bleeding-edge"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(declared_long_flags_for_subcommand("info"), expected_longs);
+
+        let expected_shorts: BTreeSet<char> = BTreeSet::new();
+        assert_eq!(declared_short_flags_for_subcommand("info"), expected_shorts);
     }
 
     #[test]
-    fn install_help_lists_spec_options_after_flatten_refactor() {
-        let help = render_subcommand_help("install");
+    fn install_exposes_spec_options_via_metadata() {
+        let expected_longs: BTreeSet<_> = [
+            "yes",
+            "dry-run",
+            "cask",
+            "mas",
+            "service",
+            "rebuild",
+            "bleeding-edge",
+            "nur",
+            "source",
+            "explain",
+            "engine",
+            "model",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        assert_eq!(
+            declared_long_flags_for_subcommand("install"),
+            expected_longs
+        );
 
-        for flag in [
-            "--yes",
-            "--dry-run",
-            "--cask",
-            "--mas",
-            "--service",
-            "--rebuild",
-            "--bleeding-edge",
-            "--nur",
-            "--source",
-            "--explain",
-            "--engine",
-            "--model",
-        ] {
-            assert!(
-                help.contains(flag),
-                "install help should contain flag {flag}"
-            );
-        }
+        let expected_shorts: BTreeSet<_> = ['y', 'n'].into_iter().collect();
+        assert_eq!(
+            declared_short_flags_for_subcommand("install"),
+            expected_shorts
+        );
     }
 
     #[test]
-    fn upgrade_help_lists_spec_options_after_flatten_refactor() {
-        let help = render_subcommand_help("upgrade");
+    fn upgrade_exposes_spec_options_via_metadata() {
+        let expected_longs: BTreeSet<_> = [
+            "dry-run",
+            "verbose",
+            "skip-rebuild",
+            "skip-commit",
+            "skip-brew",
+            "no-ai",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        assert_eq!(
+            declared_long_flags_for_subcommand("upgrade"),
+            expected_longs
+        );
 
-        for flag in [
-            "--dry-run",
-            "--verbose",
-            "--skip-rebuild",
-            "--skip-commit",
-            "--skip-brew",
-            "--no-ai",
-        ] {
-            assert!(
-                help.contains(flag),
-                "upgrade help should contain flag {flag}"
-            );
-        }
+        let expected_shorts: BTreeSet<_> = ['n', 'v'].into_iter().collect();
+        assert_eq!(
+            declared_short_flags_for_subcommand("upgrade"),
+            expected_shorts
+        );
     }
 
     #[test]

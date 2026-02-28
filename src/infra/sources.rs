@@ -3,6 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -408,9 +409,72 @@ fn search_language_override(name: &str, warn: bool) -> Option<Vec<SourceResult>>
 
 // --- Parallel Search + Orchestration
 
+#[derive(Debug)]
+struct SearchBatch {
+    source: &'static str,
+    results: Vec<SourceResult>,
+    failed: bool,
+}
+
+enum SearchCallResult {
+    Results(Vec<SourceResult>),
+    Failed,
+}
+
+type SearchByNameFn = fn(&str) -> SearchCallResult;
+type SearchByNameAndPathFn = fn(&str, &Path) -> SearchCallResult;
+
+#[derive(Clone, Copy)]
+struct SearchFns {
+    nxs: SearchByNameFn,
+    flake_inputs: SearchByNameAndPathFn,
+    nur: SearchByNameFn,
+}
+
+#[derive(Clone, Copy)]
+struct ParallelSearchOptions {
+    warn_on_timeout: bool,
+    timeout: Duration,
+}
+
+fn search_nxs_primary(name: &str) -> SearchCallResult {
+    SearchCallResult::Results(search_nxs(name, false))
+}
+
+fn search_flake_inputs_primary(name: &str, lock_path: &Path) -> SearchCallResult {
+    SearchCallResult::Results(search_flake_inputs(name, lock_path))
+}
+
+fn search_nur_primary(name: &str) -> SearchCallResult {
+    SearchCallResult::Results(search_nur(name))
+}
+
+fn spawn_search_worker(
+    tx: mpsc::Sender<SearchBatch>,
+    source: &'static str,
+    search: impl FnOnce() -> SearchCallResult + Send + 'static,
+) {
+    let _join_handle = thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(search));
+        let batch = match result {
+            Ok(SearchCallResult::Results(results)) => SearchBatch {
+                source,
+                results,
+                failed: false,
+            },
+            Ok(SearchCallResult::Failed) | Err(_) => SearchBatch {
+                source,
+                results: Vec::new(),
+                failed: true,
+            },
+        };
+        let _ = tx.send(batch);
+    });
+}
+
 /// Execute parallel searches across enabled sources.
 ///
-/// Uses `std::thread::scope` + `mpsc::channel` + `recv_timeout(45s)`.
+/// Uses detached workers + `mpsc::channel` + `recv_timeout`.
 /// Individual source failures are logged but don't fail the whole search.
 fn parallel_search(
     name: &str,
@@ -418,60 +482,95 @@ fn parallel_search(
     flake_lock_path: Option<&Path>,
     warn_on_timeout: bool,
 ) -> Vec<SourceResult> {
-    let (tx, rx) = mpsc::channel::<Vec<SourceResult>>();
-    let mut expected = 0_u32;
+    let options = ParallelSearchOptions {
+        warn_on_timeout,
+        timeout: Duration::from_secs(45),
+    };
+    let search_fns = SearchFns {
+        nxs: search_nxs_primary,
+        flake_inputs: search_flake_inputs_primary,
+        nur: search_nur_primary,
+    };
 
-    std::thread::scope(|s| {
-        // Always search nxs
+    parallel_search_with(
+        name,
+        prefs,
+        flake_lock_path,
+        options,
+        |message| eprintln!("{message}"),
+        search_fns,
+    )
+}
+
+fn parallel_search_with(
+    name: &str,
+    prefs: &SourcePreferences,
+    flake_lock_path: Option<&Path>,
+    options: ParallelSearchOptions,
+    mut warn: impl FnMut(&str),
+    search_fns: SearchFns,
+) -> Vec<SourceResult> {
+    let (tx, rx) = mpsc::channel::<SearchBatch>();
+    let mut expected = 0_usize;
+    let source_name = name.to_string();
+
+    // Always search nxs
+    {
         let tx_nxs = tx.clone();
-        s.spawn(move || {
-            let results = std::panic::catch_unwind(|| search_nxs(name, false));
-            let _ = tx_nxs.send(results.unwrap_or_default());
+        let name = source_name.clone();
+        spawn_search_worker(tx_nxs, "nxs", move || (search_fns.nxs)(&name));
+        expected += 1;
+    }
+
+    // Optional flake-input search
+    if let Some(lock_path) = flake_lock_path {
+        let tx_flake = tx.clone();
+        let name = source_name.clone();
+        let lock_path = lock_path.to_path_buf();
+        spawn_search_worker(tx_flake, "flake-input", move || {
+            (search_fns.flake_inputs)(&name, &lock_path)
         });
         expected += 1;
+    }
 
-        // Optional flake-input search
-        if let Some(lock_path) = flake_lock_path {
-            let tx_flake = tx.clone();
-            s.spawn(move || {
-                let results = std::panic::catch_unwind(|| search_flake_inputs(name, lock_path));
-                let _ = tx_flake.send(results.unwrap_or_default());
-            });
-            expected += 1;
-        }
+    // Optional NUR search
+    if prefs.nur || prefs.bleeding_edge {
+        let tx_nur = tx.clone();
+        let name = source_name;
+        spawn_search_worker(tx_nur, "nur", move || (search_fns.nur)(&name));
+        expected += 1;
+    }
 
-        // Optional NUR search
-        if prefs.nur || prefs.bleeding_edge {
-            let tx_nur = tx.clone();
-            s.spawn(move || {
-                let results = std::panic::catch_unwind(|| search_nur(name));
-                let _ = tx_nur.send(results.unwrap_or_default());
-            });
-            expected += 1;
-        }
+    drop(tx);
 
-        drop(tx); // close sender so rx terminates when all threads done
-
-        let mut all_results = Vec::new();
-        let timeout = Duration::from_secs(45);
-
-        for _ in 0..expected {
-            match rx.recv_timeout(timeout) {
-                Ok(batch) => all_results.extend(batch),
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if warn_on_timeout {
-                        eprintln!(
-                            "warning: timed out waiting for one or more search sources for '{name}'; using partial results"
-                        );
+    let mut all_results = Vec::new();
+    for _ in 0..expected {
+        match rx.recv_timeout(options.timeout) {
+            Ok(batch) => {
+                if batch.failed {
+                    if options.warn_on_timeout {
+                        warn(&format!(
+                            "warning: {src} search failed for '{name}'; using partial results",
+                            src = batch.source
+                        ));
                     }
-                    break;
+                    continue;
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                all_results.extend(batch.results);
             }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if options.warn_on_timeout {
+                    warn(&format!(
+                        "warning: timed out waiting for one or more search sources for '{name}'; using partial results"
+                    ));
+                }
+                break;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
+    }
 
-        all_results
-    })
+    all_results
 }
 
 /// Search all enabled sources for a package.
@@ -538,6 +637,8 @@ mod tests {
     use super::*;
     use std::fmt::Write as FmtWrite;
     use std::io::Write;
+    use std::thread::sleep;
+    use std::time::{Duration, Instant};
 
     // --- search_flake_inputs ---
 
@@ -650,5 +751,163 @@ mod tests {
     #[test]
     fn command_available_missing_program() {
         assert!(!command_available("__nx_definitely_not_a_command__"));
+    }
+
+    // --- parallel_search_with ---
+
+    fn stub_result(source: PackageSource, attr: &str) -> SourceResult {
+        SourceResult {
+            name: "ripgrep".to_string(),
+            source,
+            attr: Some(attr.to_string()),
+            version: None,
+            confidence: 1.0,
+            description: "stub".to_string(),
+            requires_flake_mod: false,
+            flake_url: None,
+        }
+    }
+
+    fn stub_nxs_slow(_name: &str) -> SearchCallResult {
+        sleep(Duration::from_millis(250));
+        SearchCallResult::Results(vec![stub_result(PackageSource::Nxs, "slow-nxs")])
+    }
+
+    fn stub_nur_fast(_name: &str) -> SearchCallResult {
+        SearchCallResult::Results(vec![stub_result(PackageSource::Nur, "fast-nur")])
+    }
+
+    fn stub_nxs_failed(_name: &str) -> SearchCallResult {
+        SearchCallResult::Failed
+    }
+
+    fn stub_flake_empty(_name: &str, _path: &Path) -> SearchCallResult {
+        SearchCallResult::Results(Vec::new())
+    }
+
+    #[test]
+    fn parallel_search_timeout_returns_partial_results_and_warns() {
+        let prefs = SourcePreferences {
+            nur: true,
+            ..Default::default()
+        };
+        let mut warnings = Vec::new();
+        let started = Instant::now();
+
+        let results = parallel_search_with(
+            "ripgrep",
+            &prefs,
+            None,
+            ParallelSearchOptions {
+                warn_on_timeout: true,
+                timeout: Duration::from_millis(40),
+            },
+            |message| warnings.push(message.to_string()),
+            SearchFns {
+                nxs: stub_nxs_slow,
+                flake_inputs: stub_flake_empty,
+                nur: stub_nur_fast,
+            },
+        );
+
+        assert!(started.elapsed() < Duration::from_millis(200));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].source, PackageSource::Nur);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("timed out waiting")),
+            "expected timeout warning, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn parallel_search_timeout_quiet_suppresses_warning() {
+        let prefs = SourcePreferences {
+            nur: true,
+            ..Default::default()
+        };
+        let mut warnings = Vec::new();
+
+        let results = parallel_search_with(
+            "ripgrep",
+            &prefs,
+            None,
+            ParallelSearchOptions {
+                warn_on_timeout: false,
+                timeout: Duration::from_millis(40),
+            },
+            |message| warnings.push(message.to_string()),
+            SearchFns {
+                nxs: stub_nxs_slow,
+                flake_inputs: stub_flake_empty,
+                nur: stub_nur_fast,
+            },
+        );
+
+        assert_eq!(results.len(), 1);
+        assert!(warnings.is_empty(), "warnings should be suppressed");
+    }
+
+    #[test]
+    fn parallel_search_source_failure_keeps_other_results_and_warns() {
+        let prefs = SourcePreferences {
+            nur: true,
+            ..Default::default()
+        };
+        let mut warnings = Vec::new();
+
+        let results = parallel_search_with(
+            "ripgrep",
+            &prefs,
+            None,
+            ParallelSearchOptions {
+                warn_on_timeout: true,
+                timeout: Duration::from_millis(200),
+            },
+            |message| warnings.push(message.to_string()),
+            SearchFns {
+                nxs: stub_nxs_failed,
+                flake_inputs: stub_flake_empty,
+                nur: stub_nur_fast,
+            },
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].source, PackageSource::Nur);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("nxs search failed")),
+            "expected source-failure warning, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn parallel_search_source_failure_quiet_suppresses_warning() {
+        let prefs = SourcePreferences {
+            nur: true,
+            ..Default::default()
+        };
+        let mut warnings = Vec::new();
+
+        let results = parallel_search_with(
+            "ripgrep",
+            &prefs,
+            None,
+            ParallelSearchOptions {
+                warn_on_timeout: false,
+                timeout: Duration::from_millis(200),
+            },
+            |message| warnings.push(message.to_string()),
+            SearchFns {
+                nxs: stub_nxs_failed,
+                flake_inputs: stub_flake_empty,
+                nur: stub_nur_fast,
+            },
+        );
+
+        assert_eq!(results.len(), 1);
+        assert!(warnings.is_empty(), "warnings should be suppressed");
     }
 }

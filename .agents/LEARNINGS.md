@@ -127,3 +127,12 @@ Update rules for future agents:
 - Added `upgrade_no_flake_changes_skips_commit` to `tests/system_command_matrix.rs` to assert `upgrade --skip-brew --skip-rebuild --no-ai` runs flake update but does not call `git add/commit` when lock inputs are unchanged.
 - Added parity fixture case `upgrade_flake_unchanged_no_skip_commit` with baseline output `All flake inputs up to date`, locking Python/Rust alignment for no-change/no-`--skip-commit` behavior.
 - Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+
+22. Source-search timeout/failure contract is now deterministic and non-blocking.
+- `src/infra/sources.rs` parallel search now uses detached worker threads plus `recv_timeout`, so timeout returns partial results immediately instead of waiting for slow workers.
+- Added deterministic unit coverage for SPEC §6.3 semantics:
+  - timeout returns partial results and emits warning when warnings are enabled
+  - quiet path suppresses timeout warning
+  - individual source failure preserves other source results and emits warning
+  - quiet path suppresses source-failure warning
+- Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.

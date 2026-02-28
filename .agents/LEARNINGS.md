@@ -171,3 +171,9 @@ Update rules for future agents:
 - Locked CLI parser coverage in `src/cli.rs` for `search`, `uninstall`, and `secret`/`secrets` passthrough behavior plus a command-set boundary test (`known_commands_match_spec_plus_intentional_extensions`).
 - Documented extension policy in SPEC §14 and updated `.agents/spec_traceability_matrix_v1.tsv` §2.1 notes to treat these as deliberate compatibility extensions rather than unresolved drift.
 - Verified on 2026-02-28 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+
+29. Post-cutover steady-state maintenance now has explicit SLOs, cadence, and failure-response ownership.
+- `.agents/CUTOVER_PLAYBOOK.md` now defines operational SLO targets for CI freshness, Rust parity cadence, Python parity cadence, and weekly cutover safety validation.
+- The recurring maintenance gates are standardized to `just ci`, `just parity-check-rust`, `just parity-check` (monthly), and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+- Failure policy is documented as 24h triage + 72h remediation decision (fix or rollback), with evidence archived under `.agents/reports/maintenance-gates/<UTC timestamp>/`.
+- Verified on 2026-02-28 via policy documentation update in this repo.

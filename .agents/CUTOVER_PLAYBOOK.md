@@ -116,6 +116,45 @@ Evidence trail:
 - `just ci` green (fmt + clippy + test + check) on 2026-02-27 PST / 2026-02-28 UTC (transcript archived in the same gate bundle directory).
 - Legacy in-tree copy decommissioned and quarantined.
 
+## Steady-State Maintenance SLOs
+
+This section defines post-cutover operational guardrails to catch behavior drift early.
+
+Owner model:
+- Primary owner: repo assignee for active maintenance task(s) in `bd` (currently Flower Ornament).
+- Backup owner: next available maintainer in `bd` ready queue if primary is unavailable.
+
+Service-level objectives:
+
+| SLO | Target |
+| --- | --- |
+| CI gate freshness | `just ci` passes on every merge to `main`; no unresolved `main` CI failure older than 24 hours |
+| Parity freshness | `just parity-check-rust` runs at least weekly (every 7 days) and passes |
+| Cross-implementation parity freshness | `just parity-check` (Python target) runs at least monthly (every 31 days) and passes |
+| Cutover safety freshness | `PY_NX="$HOME/code/nx-python/nx" just cutover-validate` runs at least weekly (every 7 days) and passes |
+| Drift response | Any failed parity/cutover gate is triaged within 24 hours and remediated (fix or rollback decision) within 72 hours |
+
+Recurring check cadence:
+
+1. On each merge to `main` (or before release cut):
+   - `just ci`
+2. Weekly maintenance gate (recommended: first workday of week):
+   - `just ci`
+   - `just parity-check-rust`
+   - `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`
+3. Monthly maintenance gate (recommended: first workday of month):
+   - `just parity-check` (Python-target parity validation)
+   - `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`
+
+Failure response policy:
+
+1. Open/claim a `bd` issue immediately for any red gate; include failing command and timestamp.
+2. Preserve evidence logs under `.agents/reports/maintenance-gates/<UTC timestamp>/`.
+3. If failure indicates behavior divergence vs Python reference, treat as parity regression:
+   - block cutover/release decisions until resolved
+   - either ship a Rust fix or execute rollback steps from this playbook
+4. Close incident issue only after green rerun of the failed gate(s).
+
 ## Flake Cutover Procedure
 
 The production cutover uses nix flakes. nx-rs exposes a `flake.nix` that builds the `nx` binary.

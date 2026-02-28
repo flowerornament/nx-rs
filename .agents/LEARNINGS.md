@@ -148,3 +148,8 @@ Update rules for future agents:
 - General-nix routing candidates now enforce SPEC §7.4 invariants by constraining to fallback-manifest siblings and excluding `packages/nix/languages.nix`.
 - Added Rust parity fixtures: `install_yes_mutates_stubbed`, `install_yes_rebuild_stubbed`, and `install_flake_input_claude_yes_stubbed`; plus system-matrix cases for root `--json` handler propagation.
 - Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+
+25. SPEC §11 cache-corruption retry contract now has explicit deletion evidence.
+- `tests/system_command_matrix.rs` now seeds `$HOME/.cache/nix/fetcher-cache-v4.sqlite` for `upgrade_flake_update_cache_corruption_retries_once` and asserts the file is deleted after the retry path runs.
+- This closes the remaining SPEC §11 traceability gap for `stream_nix_update` cache-corruption handling in `.agents/spec_traceability_matrix_v1.tsv`.
+- Verified on 2026-02-28 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.

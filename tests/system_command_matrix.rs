@@ -14,6 +14,7 @@ use tempfile::TempDir;
 const LOG_FILE_NAME: &str = ".system-command-log.tsv";
 const STUB_DIR_NAME: &str = ".system-stubs";
 const REPO_ROOT_TOKEN: &str = "<REPO_ROOT>";
+const FETCHER_CACHE_RELATIVE: &str = ".cache/nix/fetcher-cache-v4.sqlite";
 
 const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
     "-C",
@@ -882,6 +883,7 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &MatrixCase) -> Result<(), Bo
     let before = snapshot_repo_files(repo_root.path())?;
 
     let home_dir = TempDir::new()?;
+    seed_home_state_if_needed(home_dir.path(), case.mode)?;
     let mut command = Command::new(nx_bin);
     command
         .args(["--plain", "--minimal"])
@@ -929,6 +931,7 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &MatrixCase) -> Result<(), Bo
     }
 
     assert_repo_state(case, &before, &after, &stdout, &stderr);
+    assert_home_state(case, home_dir.path(), &stdout, &stderr);
 
     Ok(())
 }
@@ -1072,6 +1075,17 @@ fn seed_flake_lock_if_needed(repo_root: &Path, mode: StubMode) -> Result<(), Box
     Ok(())
 }
 
+fn seed_home_state_if_needed(home_dir: &Path, mode: StubMode) -> Result<(), Box<dyn Error>> {
+    if matches!(mode, StubMode::UpgradeCacheCorruption) {
+        let cache_path = fetcher_cache_path(home_dir);
+        if let Some(parent) = cache_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(cache_path, "cache placeholder\n")?;
+    }
+    Ok(())
+}
+
 fn install_stubs(stub_dir: &Path) -> Result<(), Box<dyn Error>> {
     for program in [
         "git",
@@ -1121,6 +1135,26 @@ fn assert_repo_state(
         "case {} mutated unexpected repository files\nstdout:\n{}\nstderr:\n{}",
         case.id, stdout, stderr
     );
+}
+
+fn assert_home_state(case: &MatrixCase, home_dir: &Path, stdout: &str, stderr: &str) {
+    if case.id != "upgrade_flake_update_cache_corruption_retries_once" {
+        return;
+    }
+
+    let cache_path = fetcher_cache_path(home_dir);
+    assert!(
+        !cache_path.exists(),
+        "case {} did not clear fetcher cache at {}\nstdout:\n{}\nstderr:\n{}",
+        case.id,
+        cache_path.display(),
+        stdout,
+        stderr
+    );
+}
+
+fn fetcher_cache_path(home_dir: &Path) -> PathBuf {
+    home_dir.join(FETCHER_CACHE_RELATIVE)
 }
 
 fn changed_paths(

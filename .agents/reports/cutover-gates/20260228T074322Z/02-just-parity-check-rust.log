@@ -1,0 +1,14 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running tests/parity_harness.rs (target/debug/deps/parity_harness-e8e74e6258651630)
+
+running 7 tests
+test normalize_rebuild_ulimit_wrapper_leaves_other_commands_unchanged ... ok
+test normalize_confirm_prompt_newline_collapses_multiline_success ... ok
+test normalize_confirm_prompt_newline_handles_space_before_linebreak ... ok
+test normalize_unittest_timing_leaves_other_lines_unchanged ... ok
+test normalize_unittest_timing_stabilizes_elapsed_seconds ... ok
+test normalize_rebuild_ulimit_wrapper_collapses_to_direct_stub_command ... ok
+test parity_harness ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 57.72s
+

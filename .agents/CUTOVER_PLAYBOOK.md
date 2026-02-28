@@ -52,7 +52,7 @@ scripts/cutover/validate_shadow_canary.sh
 
 ## Latest Execution Result
 
-Executed: **2026-02-27 22:36:15 PST** (2026-02-28 UTC)
+Executed: **2026-02-27 23:45:38 PST** (2026-02-28 UTC)
 
 Shadow matrix:
 
@@ -78,6 +78,7 @@ Canary matrix:
 Mutation safety:
 
 - Git status unchanged: **yes**
+- Archived pre-cutover gate bundle transcripts/reports: `.agents/reports/cutover-gates/20260228T074322Z/`
 
 Historical note:
 - Legacy in-tree copy was previously moved from `~/.nix-config/scripts/nx-rs` to `/tmp/nx-rs-legacy-20260212-032055`.
@@ -109,10 +110,10 @@ SPEC v1.0 remains reconciled to Python source audit, with clause-level closure t
 As of **2026-02-27 PST** (2026-02-28 UTC): **GO** for full production PATH replacement.
 
 Evidence trail:
-- Shadow/canary cutover validation passed (2026-02-27 22:36:15 PST).
+- Shadow/canary cutover validation passed (2026-02-27 23:45:38 PST), archived at `.agents/reports/cutover-gates/20260228T074322Z/`.
 - Dual-target parity harness verified (`60/60` Python target; `68/68` Rust target) on 2026-02-27 PST / 2026-02-28 UTC.
 - SPEC reconciled to v1.0 against Python source audit (2026-02-16).
-- `just ci` green (fmt + clippy + test + check) on 2026-02-27 PST / 2026-02-28 UTC.
+- `just ci` green (fmt + clippy + test + check) on 2026-02-27 PST / 2026-02-28 UTC (transcript archived in the same gate bundle directory).
 - Legacy in-tree copy decommissioned and quarantined.
 
 ## Flake Cutover Procedure

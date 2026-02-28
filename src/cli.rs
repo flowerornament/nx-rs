@@ -537,6 +537,53 @@ mod tests {
         assert_eq!(extensions, expected_extensions);
     }
 
+    fn clap_command_names_and_aliases() -> BTreeSet<String> {
+        Cli::command()
+            .get_subcommands()
+            .flat_map(|subcommand| {
+                std::iter::once(subcommand.get_name())
+                    .chain(subcommand.get_all_aliases())
+                    .map(str::to_owned)
+            })
+            .collect()
+    }
+
+    fn local_long_flags_for_subcommand(command: &str) -> BTreeSet<String> {
+        let mut root = Cli::command();
+        let subcommand = root
+            .find_subcommand_mut(command)
+            .expect("subcommand should exist");
+        let mut flags: BTreeSet<_> = subcommand
+            .get_arguments()
+            .filter_map(|arg| arg.get_long().map(str::to_owned))
+            .collect();
+
+        for inherited in ["help", "plain", "unicode", "minimal", "verbose", "json"] {
+            flags.remove(inherited);
+        }
+
+        flags
+    }
+
+    fn assert_subcommand_local_long_flags(command: &str, expected: &[&str]) {
+        let expected: BTreeSet<_> = expected.iter().map(|flag| (*flag).to_owned()).collect();
+        let actual = local_long_flags_for_subcommand(command);
+        assert_eq!(
+            actual, expected,
+            "unexpected local long-flag set for `{command}`"
+        );
+    }
+
+    #[test]
+    fn known_commands_stay_in_sync_with_clap_subcommand_surface() {
+        let known_commands: BTreeSet<_> = KNOWN_COMMANDS
+            .iter()
+            .map(|command| (*command).to_owned())
+            .collect();
+        let clap_commands = clap_command_names_and_aliases();
+        assert_eq!(known_commands, clap_commands);
+    }
+
     #[test]
     fn preprocess_args_flag_passes_through() {
         let result = preprocess_args(["nx", "--help"]);
@@ -816,5 +863,17 @@ mod tests {
                 "upgrade help should contain flag {flag}"
             );
         }
+    }
+
+    #[test]
+    fn remaining_spec_subcommands_expose_expected_local_long_flags() {
+        assert_subcommand_local_long_flags("remove", &["yes", "dry-run", "model"]);
+        assert_subcommand_local_long_flags("where", &[]);
+        assert_subcommand_local_long_flags("installed", &["show-location"]);
+        assert_subcommand_local_long_flags("status", &[]);
+        assert_subcommand_local_long_flags("undo", &[]);
+        assert_subcommand_local_long_flags("update", &[]);
+        assert_subcommand_local_long_flags("test", &[]);
+        assert_subcommand_local_long_flags("rebuild", &[]);
     }
 }

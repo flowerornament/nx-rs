@@ -27,12 +27,16 @@ where
         Err(err) => {
             let code = err.exit_code();
             let _ = err.print();
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            return ExitCode::from(code.min(255) as u8);
+            return exit_code_from_i32(code);
         }
     };
 
     let code = app::execute(parsed);
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    ExitCode::from(code.clamp(0, 255) as u8)
+    exit_code_from_i32(code)
+}
+
+fn exit_code_from_i32(code: i32) -> ExitCode {
+    let clamped = code.clamp(i32::from(u8::MIN), i32::from(u8::MAX));
+    let exit_code = u8::try_from(clamped).unwrap_or(u8::MAX);
+    ExitCode::from(exit_code)
 }

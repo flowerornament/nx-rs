@@ -163,12 +163,10 @@ fn remove_via_ai(
 }
 
 fn report_success(package: &str, file_path: &Path, ctx: &AppContext) {
-    #[allow(clippy::map_unwrap_or)] // map+unwrap_or_else reads better than map_or_else here
     let file_name = file_path
         .file_name()
         .and_then(|name| name.to_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| file_path.display().to_string());
+        .map_or_else(|| file_path.display().to_string(), str::to_string);
     println!("* {file_name}");
     println!();
     ctx.printer

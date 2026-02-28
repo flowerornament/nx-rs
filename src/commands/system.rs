@@ -1068,6 +1068,13 @@ fn first_nonempty_output(output: &CapturedCommand) -> &str {
     output.stdout.trim()
 }
 
+fn has_nix_extension(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext == "nix")
+}
+
 fn check_git_preflight(ctx: &AppContext) -> Result<(), i32> {
     ctx.printer.action("Checking tracked nix files");
     let repo = ctx.repo_root.display().to_string();
@@ -1100,12 +1107,11 @@ fn check_git_preflight(ctx: &AppContext) -> Result<(), i32> {
         return Err(1);
     }
 
-    #[allow(clippy::case_sensitive_file_extension_comparisons)] // .nix is always lowercase
     let mut untracked: Vec<&str> = output
         .stdout
         .lines()
         .map(str::trim)
-        .filter(|line| line.ends_with(".nix"))
+        .filter(|line| has_nix_extension(line))
         .collect();
     untracked.sort_unstable();
 
@@ -1244,6 +1250,19 @@ mod tests {
     }
 
     // --- git_modified_files ---
+
+    #[test]
+    fn has_nix_extension_accepts_lowercase_nix_files() {
+        assert!(has_nix_extension("home/default.nix"));
+        assert!(has_nix_extension("packages/cli.nix"));
+    }
+
+    #[test]
+    fn has_nix_extension_rejects_non_nix_or_uppercase_extensions() {
+        assert!(!has_nix_extension("home/default.NIX"));
+        assert!(!has_nix_extension("home/default.nix.bak"));
+        assert!(!has_nix_extension("home/default"));
+    }
 
     #[test]
     fn modified_files_empty_on_clean_tree() {

@@ -310,11 +310,11 @@ pub fn score_match(search_name: &str, attr: &str, pname: &str) -> f64 {
         } else {
             parts.len().saturating_sub(1)
         };
-        #[allow(clippy::cast_precision_loss)] // depth is always small (< 10)
-        f64::min(
-            MAX_NESTING_PENALTY,
-            depth as f64 * NESTING_PENALTY_PER_LEVEL,
-        )
+        let depth_penalty = match u32::try_from(depth) {
+            Ok(depth) => f64::from(depth) * NESTING_PENALTY_PER_LEVEL,
+            Err(_) => MAX_NESTING_PENALTY,
+        };
+        f64::min(MAX_NESTING_PENALTY, depth_penalty)
     };
 
     let search_lower = search_name.to_lowercase();

@@ -45,7 +45,6 @@ pub enum SnippetMode {
     Remove,
 }
 
-#[allow(clippy::similar_names)] // content vs context are descriptive
 pub fn show_snippet(
     file_path: &Path,
     line_num: usize,
@@ -57,23 +56,21 @@ pub fn show_snippet(
         return;
     }
 
-    let Ok(content) = fs::read_to_string(file_path) else {
+    let Ok(file_content) = fs::read_to_string(file_path) else {
         return;
     };
 
-    let lines: Vec<&str> = content.lines().collect();
+    let lines: Vec<&str> = file_content.lines().collect();
     let start = line_num.saturating_sub(context + 1);
     let end = usize::min(lines.len(), line_num + context);
     if start >= end {
         return;
     }
 
-    #[allow(clippy::map_unwrap_or)] // map+unwrap_or_else reads better than map_or_else here
     let file_name = file_path
         .file_name()
         .and_then(|name| name.to_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| file_path.display().to_string());
+        .map_or_else(|| file_path.display().to_string(), str::to_string);
     let header_suffix = if preview { " (preview)" } else { "" };
 
     println!();
@@ -131,12 +128,10 @@ pub fn show_dry_run_preview(
         .unwrap_or_default();
     let simulated = format!("{}{}", inferred_indent, simulated_line.trim_start());
 
-    #[allow(clippy::map_unwrap_or)] // map+unwrap_or_else reads better than map_or_else here
     let file_name = file_path
         .file_name()
         .and_then(|name| name.to_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| file_path.display().to_string());
+        .map_or_else(|| file_path.display().to_string(), str::to_string);
 
     println!();
     println!("  ┌── {file_name} (preview) ───");

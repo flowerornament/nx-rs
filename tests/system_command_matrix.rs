@@ -51,6 +51,9 @@ const INFO_JSON_DARWIN_SERVICE_ARGS: &[&str] = &["info", "yabai", "--json"];
 const UPGRADE_COMMIT_ARGS: &[&str] = &["upgrade", "--skip-brew", "--skip-rebuild", "--no-ai"];
 const UPGRADE_FAILURE_ARGS: &[&str] = &["upgrade", "--no-ai"];
 const UPGRADE_DRY_RUN_SKIP_BREW_ARGS: &[&str] = &["upgrade", "--dry-run", "--skip-brew", "--no-ai"];
+const UPGRADE_REBUILD_ARGS: &[&str] = &["upgrade", "--skip-brew", "--skip-commit", "--no-ai"];
+const UPGRADE_REBUILD_FAILURE_ARGS: &[&str] =
+    &["upgrade", "--skip-brew", "--skip-commit", "--no-ai"];
 const UPGRADE_SKIP_COMMIT_ARGS: &[&str] = &[
     "upgrade",
     "--skip-brew",
@@ -434,6 +437,50 @@ const UPGRADE_BREW_NO_UPDATES_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("brew", ExpectedCwd::RepoRoot, &["outdated", "--json"]),
 ];
 
+const UPGRADE_REBUILD_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", ExpectedCwd::RepoRoot, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
+    ExpectedCall::new("git", ExpectedCwd::RepoRoot, REBUILD_PREFLIGHT_ARGS),
+    ExpectedCall::new("nix", ExpectedCwd::RepoRoot, REBUILD_FLAKE_ARGS),
+    ExpectedCall::new(
+        "sudo",
+        ExpectedCwd::RepoRoot,
+        &[
+            "/run/current-system/sw/bin/darwin-rebuild",
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+        ],
+    ),
+    ExpectedCall::new(
+        "darwin-rebuild",
+        ExpectedCwd::RepoRoot,
+        &["switch", "--flake", REPO_ROOT_TOKEN],
+    ),
+];
+
+const UPGRADE_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", ExpectedCwd::RepoRoot, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
+    ExpectedCall::new("git", ExpectedCwd::RepoRoot, REBUILD_PREFLIGHT_ARGS),
+    ExpectedCall::new("nix", ExpectedCwd::RepoRoot, REBUILD_FLAKE_ARGS),
+    ExpectedCall::new(
+        "sudo",
+        ExpectedCwd::RepoRoot,
+        &[
+            "/run/current-system/sw/bin/darwin-rebuild",
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+        ],
+    ),
+    ExpectedCall::new(
+        "darwin-rebuild",
+        ExpectedCwd::RepoRoot,
+        &["switch", "--flake", REPO_ROOT_TOKEN],
+    ),
+];
+
 const UPGRADE_BREW_WITH_UPDATES_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", ExpectedCwd::RepoRoot, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
@@ -626,6 +673,22 @@ const MATRIX_CASES: &[MatrixCase] = &[
             "Dry Run (no changes will be made)",
             "Dry run complete - no changes made",
         ],
+    },
+    MatrixCase {
+        id: "upgrade_runs_rebuild_when_not_skipped",
+        cli_args: UPGRADE_REBUILD_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 0,
+        expected_calls: Some(UPGRADE_REBUILD_CALLS),
+        stdout_contains: &[],
+    },
+    MatrixCase {
+        id: "upgrade_rebuild_failure_exits_nonzero",
+        cli_args: UPGRADE_REBUILD_FAILURE_ARGS,
+        mode: StubMode::DarwinRebuildFail,
+        expected_exit: 1,
+        expected_calls: Some(UPGRADE_REBUILD_FAILURE_CALLS),
+        stdout_contains: &[],
     },
     MatrixCase {
         id: "upgrade_flake_changed_commits_lockfile",

@@ -116,3 +116,9 @@ Update rules for future agents:
   - `upgrade_brew_with_updates_dry_run_skips_upgrade` to assert dry-run still inspects outdated/metadata but does not execute `brew upgrade`.
 - Deterministic stubs now cover `brew outdated --json`, `brew info --json=v2`, and `brew upgrade` in the system matrix harness.
 - Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+
+20. Upgrade rebuild-phase contract coverage now locks run and failure semantics when rebuild is not skipped.
+- `tests/system_command_matrix.rs` now includes:
+  - `upgrade_runs_rebuild_when_not_skipped` to assert `upgrade` runs rebuild preflight (`git ls-files`), flake check (`nix flake check`), and `sudo /run/current-system/sw/bin/darwin-rebuild switch --flake <repo_root>` when `--skip-rebuild` is not set.
+  - `upgrade_rebuild_failure_exits_nonzero` to assert a rebuild failure in upgrade flow returns exit code `1`.
+- Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.

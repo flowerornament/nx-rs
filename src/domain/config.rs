@@ -8,7 +8,7 @@ use walkdir::WalkDir;
 /// Purpose-based routing to `.nix` config files.
 ///
 /// Discovers files by scanning `# nx:` comment tags on the first line,
-/// then provides accessors that resolve by keyword match with deterministic fallbacks.
+/// then provides SPEC-defined accessors that resolve by keyword match with deterministic fallbacks.
 pub struct ConfigFiles {
     repo_root: PathBuf,
     by_purpose: BTreeMap<String, PathBuf>,
@@ -113,36 +113,9 @@ impl ConfigFiles {
             .unwrap_or_else(|| self.repo_root.join("packages/homebrew/casks.nix"))
     }
 
-    #[allow(dead_code)] // retained for explicit tap routing outside current command paths
     pub fn homebrew_taps(&self) -> PathBuf {
         self.find_by_keywords(&["taps manifest"])
             .unwrap_or_else(|| self.repo_root.join("packages/homebrew/taps.nix"))
-    }
-
-    // -- Secondary accessors --
-
-    #[allow(dead_code)] // retained for explicit shell config routing helpers
-    pub fn shell(&self) -> PathBuf {
-        self.find_by_keywords(&["shell"])
-            .unwrap_or_else(|| self.repo_root.join("home/shell.nix"))
-    }
-
-    #[allow(dead_code)] // retained for explicit editor config routing helpers
-    pub fn editors(&self) -> PathBuf {
-        self.find_by_keywords(&["editor"])
-            .unwrap_or_else(|| self.repo_root.join("home/editors.nix"))
-    }
-
-    #[allow(dead_code)] // retained for explicit git config routing helpers
-    pub fn git(&self) -> PathBuf {
-        self.find_by_keywords(&["git", "version control"])
-            .unwrap_or_else(|| self.repo_root.join("home/git.nix"))
-    }
-
-    #[allow(dead_code)] // retained for explicit terminal config routing helpers
-    pub fn terminal(&self) -> PathBuf {
-        self.find_by_keywords(&["terminal", "multiplexer"])
-            .unwrap_or_else(|| self.repo_root.join("home/terminal.nix"))
     }
 
     // -- Internal --
@@ -231,17 +204,28 @@ mod tests {
     }
 
     #[test]
-    fn ambiguous_keyword_matches_use_deterministic_winner() {
+    fn ambiguous_taps_keyword_matches_use_deterministic_winner() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        write_nix(root, "home/shell-a.nix", "# nx: shell aliases\n{}");
-        write_nix(root, "home/shell-z.nix", "# nx: shell profile\n{}");
+        write_nix(
+            root,
+            "packages/homebrew/taps-a.nix",
+            "# nx: taps manifest alpha\n[]",
+        );
+        write_nix(
+            root,
+            "packages/homebrew/taps-z.nix",
+            "# nx: taps manifest zulu\n[]",
+        );
 
         let cf = ConfigFiles::discover(root);
 
         // BTreeMap ordering yields a stable winner for ambiguous keyword matches.
-        assert_eq!(cf.shell(), root.join("home/shell-a.nix"));
+        assert_eq!(
+            cf.homebrew_taps(),
+            root.join("packages/homebrew/taps-a.nix")
+        );
     }
 
     #[test]
@@ -265,10 +249,6 @@ mod tests {
             root.join("packages/homebrew/casks.nix")
         );
         assert_eq!(cf.homebrew_taps(), root.join("packages/homebrew/taps.nix"));
-        assert_eq!(cf.shell(), root.join("home/shell.nix"));
-        assert_eq!(cf.editors(), root.join("home/editors.nix"));
-        assert_eq!(cf.git(), root.join("home/git.nix"));
-        assert_eq!(cf.terminal(), root.join("home/terminal.nix"));
     }
 
     #[test]

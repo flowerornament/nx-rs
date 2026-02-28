@@ -252,6 +252,12 @@ fn resolve_routing_run_result(
 pub fn build_routing_context(config: &ConfigFiles) -> String {
     let mut lines = vec!["Nix config file structure:".to_string()];
     let repo_root = config.repo_root();
+    let taps_manifest = config.homebrew_taps();
+    let taps_rel = taps_manifest
+        .strip_prefix(repo_root)
+        .unwrap_or(taps_manifest.as_path())
+        .to_string_lossy()
+        .to_string();
 
     for (purpose, path) in config.by_purpose() {
         let rel = path
@@ -280,7 +286,7 @@ pub fn build_routing_context(config: &ConfigFiles) -> String {
     lines.push("- MCP tools (*-mcp, mcp-*) always go in packages/nix/cli.nix".to_string());
     lines.push("- Homebrew formulas go in packages/homebrew/brews.nix".to_string());
     lines.push("- GUI apps (casks) go in packages/homebrew/casks.nix".to_string());
-    lines.push("- Homebrew taps go in packages/homebrew/taps.nix".to_string());
+    lines.push(format!("- Homebrew taps go in {taps_rel}"));
     lines.push(String::new());
     lines.push("Language packages (add to withPackages, not as standalone):".to_string());
     lines.push(
@@ -788,6 +794,7 @@ mod tests {
         assert!(context.contains("Routing rules:"));
         assert!(context.contains("CLI tools go in packages/nix/cli.nix"));
         assert!(context.contains("MCP tools"));
+        assert!(context.contains("Homebrew taps go in packages/homebrew/taps.nix"));
     }
 
     #[test]

@@ -82,6 +82,14 @@ const UPGRADE_CACHE_RETRY_ARGS: &[&str] = &[
     "--skip-commit",
     "--no-ai",
 ];
+const UPGRADE_BREW_ARGS: &[&str] = &["upgrade", "--skip-rebuild", "--skip-commit", "--no-ai"];
+const UPGRADE_DRY_RUN_BREW_ARGS: &[&str] = &[
+    "upgrade",
+    "--dry-run",
+    "--skip-rebuild",
+    "--skip-commit",
+    "--no-ai",
+];
 const GH_AUTH_TOKEN_ARGS: &[&str] = &["auth", "token"];
 const GH_NIXPKGS_COMPARE_ARGS: &[&str] = &["api", "repos/NixOS/nixpkgs/compare/aaaaaaa...bbbbbbb"];
 const UPGRADE_TOKEN_OPTION: &str = "github.com=ghp_system_matrix_token";
@@ -162,6 +170,7 @@ enum StubMode {
     UpgradeFlakeChanged,
     UpgradeWithToken,
     UpgradeCacheCorruption,
+    UpgradeBrewOutdated,
     UndoDirty,
 }
 
@@ -180,6 +189,7 @@ impl StubMode {
             Self::UpgradeFlakeChanged => "upgrade_flake_changed",
             Self::UpgradeWithToken => "upgrade_with_token",
             Self::UpgradeCacheCorruption => "upgrade_cache_corruption",
+            Self::UpgradeBrewOutdated => "upgrade_brew_outdated",
             Self::UndoDirty => "undo_dirty",
         }
     }
@@ -418,6 +428,33 @@ const UPGRADE_CACHE_RETRY_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
 ];
 
+const UPGRADE_BREW_NO_UPDATES_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", ExpectedCwd::RepoRoot, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
+    ExpectedCall::new("brew", ExpectedCwd::RepoRoot, &["outdated", "--json"]),
+];
+
+const UPGRADE_BREW_WITH_UPDATES_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", ExpectedCwd::RepoRoot, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
+    ExpectedCall::new("brew", ExpectedCwd::RepoRoot, &["outdated", "--json"]),
+    ExpectedCall::new(
+        "brew",
+        ExpectedCwd::RepoRoot,
+        &["info", "--json=v2", "ripgrep"],
+    ),
+    ExpectedCall::new("brew", ExpectedCwd::RepoRoot, &["upgrade", "ripgrep"]),
+];
+
+const UPGRADE_DRY_RUN_BREW_WITH_UPDATES_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("brew", ExpectedCwd::RepoRoot, &["outdated", "--json"]),
+    ExpectedCall::new(
+        "brew",
+        ExpectedCwd::RepoRoot,
+        &["info", "--json=v2", "ripgrep"],
+    ),
+];
+
 const MATRIX_CASES: &[MatrixCase] = &[
     MatrixCase {
         id: "install_missing_args_parser_error",
@@ -632,6 +669,30 @@ const MATRIX_CASES: &[MatrixCase] = &[
             "Nix cache corruption detected, clearing cache and retrying",
             "Retrying flake update",
         ],
+    },
+    MatrixCase {
+        id: "upgrade_brew_no_updates_short_circuit",
+        cli_args: UPGRADE_BREW_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 0,
+        expected_calls: Some(UPGRADE_BREW_NO_UPDATES_CALLS),
+        stdout_contains: &["All Homebrew packages up to date"],
+    },
+    MatrixCase {
+        id: "upgrade_brew_with_updates_runs_upgrade",
+        cli_args: UPGRADE_BREW_ARGS,
+        mode: StubMode::UpgradeBrewOutdated,
+        expected_exit: 0,
+        expected_calls: Some(UPGRADE_BREW_WITH_UPDATES_CALLS),
+        stdout_contains: &["Homebrew Outdated (1)", "Homebrew packages upgraded"],
+    },
+    MatrixCase {
+        id: "upgrade_brew_with_updates_dry_run_skips_upgrade",
+        cli_args: UPGRADE_DRY_RUN_BREW_ARGS,
+        mode: StubMode::UpgradeBrewOutdated,
+        expected_exit: 0,
+        expected_calls: Some(UPGRADE_DRY_RUN_BREW_WITH_UPDATES_CALLS),
+        stdout_contains: &["Homebrew Outdated (1)"],
     },
     MatrixCase {
         id: "info_found_installed_plain",
@@ -1136,12 +1197,30 @@ case "$program" in
     exit 1
     ;;
   brew)
+    if [ "${1:-}" = "outdated" ] && [ "${2:-}" = "--json" ]; then
+      if [ "$mode" = "upgrade_brew_outdated" ]; then
+        echo '{"formulae":[{"name":"ripgrep","installed_versions":["14.1.0"],"current_version":"14.1.1"}],"casks":[]}'
+        exit 0
+      fi
+      echo '{"formulae":[],"casks":[]}'
+      exit 0
+    fi
+
     if [ "${1:-}" = "info" ] && [ "${2:-}" = "--json=v2" ]; then
       if [ "${3:-}" = "--cask" ]; then
         echo '{"casks":[]}'
         exit 0
       fi
+      if [ "$mode" = "upgrade_brew_outdated" ]; then
+        echo '{"formulae":[{"name":"ripgrep","homepage":"https://github.com/BurntSushi/ripgrep","desc":"Search tool"}]}'
+        exit 0
+      fi
       echo '{"formulae":[]}'
+      exit 0
+    fi
+
+    if [ "${1:-}" = "upgrade" ]; then
+      echo "stub brew upgrade ok"
       exit 0
     fi
     echo "stub brew unsupported: $*" >&2

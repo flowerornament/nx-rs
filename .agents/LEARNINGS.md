@@ -108,3 +108,11 @@ Update rules for future agents:
 - Added `upgrade_flake_update_injects_access_token_option` to assert token-bearing updates include `--option access-tokens github.com=<token>`.
 - Added `upgrade_flake_update_cache_corruption_retries_once` to assert one retry after the known cache-corruption signature (`failed to insert entry: invalid object specified`).
 - Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+
+19. Upgrade brew-phase contract coverage now locks no-update, update, and dry-run invocation semantics.
+- `tests/system_command_matrix.rs` now includes:
+  - `upgrade_brew_no_updates_short_circuit` to assert brew phase runs `brew outdated --json` and exits without `brew upgrade` when nothing is outdated.
+  - `upgrade_brew_with_updates_runs_upgrade` to assert brew phase calls `brew outdated --json`, metadata fetch (`brew info --json=v2`), then `brew upgrade <pkg>`.
+  - `upgrade_brew_with_updates_dry_run_skips_upgrade` to assert dry-run still inspects outdated/metadata but does not execute `brew upgrade`.
+- Deterministic stubs now cover `brew outdated --json`, `brew info --json=v2`, and `brew upgrade` in the system matrix harness.
+- Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.

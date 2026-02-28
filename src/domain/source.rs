@@ -38,7 +38,6 @@ impl PackageSource {
     }
 
     /// Parse from user-facing or serialized string (case-insensitive).
-    #[allow(dead_code)] // retained for source parsing from external cache/CLI strings
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
             "nxs" => Some(Self::Nxs),
@@ -563,6 +562,19 @@ mod tests {
     fn normalize_is_case_insensitive() {
         assert_eq!(normalize_name("Nvim"), "neovim");
         assert_eq!(normalize_name("PY-YAML"), "pyyaml");
+    }
+
+    // --- PackageSource::parse ---
+
+    #[test]
+    fn package_source_parse_accepts_aliases_and_case_insensitive() {
+        assert_eq!(PackageSource::parse("NUR"), Some(PackageSource::Nur));
+        assert_eq!(PackageSource::parse("brew"), Some(PackageSource::Homebrew));
+    }
+
+    #[test]
+    fn package_source_parse_rejects_unknown() {
+        assert_eq!(PackageSource::parse("flakehub"), None);
     }
 
     // --- score_match ---

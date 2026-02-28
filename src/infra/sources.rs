@@ -344,11 +344,13 @@ fn validate_language_override(name: &str) -> (bool, Option<String>) {
 
 fn search_forced_source(name: &str, prefs: &SourcePreferences) -> Option<Vec<SourceResult>> {
     let source = prefs.force_source.as_deref()?;
-    match source {
-        "nxs" => Some(search_nxs(name, false)),
-        "unstable" => Some(search_nxs(name, true)),
-        "nur" => Some(search_nur(name)),
-        "homebrew" | "brew" => Some(search_homebrew(name, prefs.is_cask, true)),
+    if source.eq_ignore_ascii_case("unstable") {
+        return Some(search_nxs(name, true));
+    }
+    match PackageSource::parse(source) {
+        Some(PackageSource::Nxs) => Some(search_nxs(name, false)),
+        Some(PackageSource::Nur) => Some(search_nur(name)),
+        Some(PackageSource::Homebrew) => Some(search_homebrew(name, prefs.is_cask, true)),
         _ => None,
     }
 }
@@ -416,11 +418,7 @@ struct SearchBatch {
     failed: bool,
 }
 
-enum SearchCallResult {
-    Results(Vec<SourceResult>),
-    #[allow(dead_code)] // retained for deterministic failure simulation in orchestration tests
-    Failed,
-}
+type SearchCallResult = Vec<SourceResult>;
 
 type SearchByNameFn = fn(&str) -> SearchCallResult;
 type SearchByNameAndPathFn = fn(&str, &Path) -> SearchCallResult;
@@ -439,15 +437,15 @@ struct ParallelSearchOptions {
 }
 
 fn search_nxs_primary(name: &str) -> SearchCallResult {
-    SearchCallResult::Results(search_nxs(name, false))
+    search_nxs(name, false)
 }
 
 fn search_flake_inputs_primary(name: &str, lock_path: &Path) -> SearchCallResult {
-    SearchCallResult::Results(search_flake_inputs(name, lock_path))
+    search_flake_inputs(name, lock_path)
 }
 
 fn search_nur_primary(name: &str) -> SearchCallResult {
-    SearchCallResult::Results(search_nur(name))
+    search_nur(name)
 }
 
 fn spawn_search_worker(
@@ -458,12 +456,12 @@ fn spawn_search_worker(
     let _join_handle = thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(search));
         let batch = match result {
-            Ok(SearchCallResult::Results(results)) => SearchBatch {
+            Ok(results) => SearchBatch {
                 source,
                 results,
                 failed: false,
             },
-            Ok(SearchCallResult::Failed) | Err(_) => SearchBatch {
+            Err(_) => SearchBatch {
                 source,
                 results: Vec::new(),
                 failed: true,
@@ -711,6 +709,24 @@ mod tests {
         assert!(search_forced_source("ripgrep", &prefs).is_none());
     }
 
+    #[test]
+    fn forced_source_brew_alias_is_parsed() {
+        let prefs = SourcePreferences {
+            force_source: Some("BrEw".to_string()),
+            ..Default::default()
+        };
+        assert!(search_forced_source("ripgrep", &prefs).is_some());
+    }
+
+    #[test]
+    fn forced_source_unstable_is_case_insensitive() {
+        let prefs = SourcePreferences {
+            force_source: Some("UnStable".to_string()),
+            ..Default::default()
+        };
+        assert!(search_forced_source("ripgrep", &prefs).is_some());
+    }
+
     // --- search_explicit_source ---
 
     #[test]
@@ -771,19 +787,19 @@ mod tests {
 
     fn stub_nxs_slow(_name: &str) -> SearchCallResult {
         sleep(Duration::from_millis(250));
-        SearchCallResult::Results(vec![stub_result(PackageSource::Nxs, "slow-nxs")])
+        vec![stub_result(PackageSource::Nxs, "slow-nxs")]
     }
 
     fn stub_nur_fast(_name: &str) -> SearchCallResult {
-        SearchCallResult::Results(vec![stub_result(PackageSource::Nur, "fast-nur")])
+        vec![stub_result(PackageSource::Nur, "fast-nur")]
     }
 
     fn stub_nxs_failed(_name: &str) -> SearchCallResult {
-        SearchCallResult::Failed
+        panic!("stub nxs failure");
     }
 
     fn stub_flake_empty(_name: &str, _path: &Path) -> SearchCallResult {
-        SearchCallResult::Results(Vec::new())
+        Vec::new()
     }
 
     #[test]

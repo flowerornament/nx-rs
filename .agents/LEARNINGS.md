@@ -136,3 +136,9 @@ Update rules for future agents:
   - individual source failure preserves other source results and emits warning
   - quiet path suppresses source-failure warning
 - Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+
+23. SPEC clause-to-evidence traceability now has a machine-readable baseline.
+- Added `.agents/spec_traceability_matrix_v1.tsv` mapping SPEC v1 sections 2-14 to Rust implementation paths and explicit unit/system/parity evidence references.
+- Matrix rows classify each clause as `covered`, `partial`, `missing`, or `covered_by_subclauses`, so follow-up work can target uncovered contracts directly.
+- Tracker alignment: closed `nx-rs-29h.1` and created `nx-rs-29h.5` for uncovered SPEC §4/§12 gaps identified by the matrix.
+- Verified on 2026-02-28 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.

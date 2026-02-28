@@ -138,3 +138,10 @@ bd sync               # sync state (run at session end)
 - Plan before acting
 - Understand the codebase idioms
 - Run `just ci` and fix all issues before finishing (see Quality Gates above)
+
+## Command Module Conventions
+
+- Keep command handlers split by concern under `src/commands/<area>/` when a module starts accumulating unrelated flows.
+- Keep one public command entrypoint per concern module (`cmd_*`) and re-export from the parent `mod.rs` to preserve stable call sites.
+- Keep orchestration functions as ordered phases (`start`/`prepare`/`apply`) and push side effects (shelling out, file edits, prompts) into leaf helpers.
+- Add or update targeted tests when introducing new orchestration boundaries or shared helper contracts.

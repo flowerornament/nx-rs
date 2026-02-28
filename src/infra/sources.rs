@@ -14,6 +14,7 @@ use crate::domain::source::{
     get_current_system, mapped_name, parse_nix_search_results, score_match, search_name_variants,
     sort_results,
 };
+use crate::infra::shell::run_json_command_quiet;
 
 // --- Shell Helpers
 
@@ -27,30 +28,11 @@ fn command_available(name: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Spawn a command and parse its stdout as JSON. Returns `None` on failure.
-///
-/// Timeouts are handled at the scope level (45s `mpsc::recv_timeout` in
-/// `parallel_search`), not per-command.
-fn run_json_command(program: &str, args: &[&str]) -> Option<Value> {
-    let output = Command::new(program)
-        .args(args)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    serde_json::from_slice(&output.stdout).ok()
-}
-
 /// Evaluate a nix attribute, trying each target in order.
 fn eval_nix_attr(targets: &[&str], attr_path: &str) -> Option<Value> {
     for target in targets {
         let full_attr = format!("{target}#{attr_path}");
-        if let Some(val) = run_json_command("nix", &["eval", "--json", &full_attr]) {
+        if let Some(val) = run_json_command_quiet("nix", &["eval", "--json", &full_attr]) {
             return Some(val);
         }
     }
@@ -69,7 +51,7 @@ fn get_homebrew_info_entry(name: &str, is_cask: bool) -> Option<Value> {
     }
     args.push(name);
 
-    let data = run_json_command("brew", &args)?;
+    let data = run_json_command_quiet("brew", &args)?;
     let key = if is_cask { "casks" } else { "formulae" };
     let entries = data.get(key)?.as_array()?;
     let entry = entries.first()?;
@@ -101,7 +83,8 @@ fn search_nix_source(
 
     for search_name in search_name_variants(name) {
         for target in targets {
-            if let Some(data) = run_json_command("nix", &["search", "--json", target, &search_name])
+            if let Some(data) =
+                run_json_command_quiet("nix", &["search", "--json", target, &search_name])
             {
                 for entry in parse_nix_search_results(&data) {
                     if !entry.attr_path.is_empty() && seen_attrs.insert(entry.attr_path.clone()) {

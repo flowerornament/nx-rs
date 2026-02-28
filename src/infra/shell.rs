@@ -5,6 +5,7 @@ use std::sync::mpsc;
 use std::thread;
 
 use anyhow::{Context, anyhow};
+use serde_json::Value;
 
 use crate::output::printer::Printer;
 
@@ -12,6 +13,29 @@ pub struct CapturedCommand {
     pub code: i32,
     pub stdout: String,
     pub stderr: String,
+}
+
+/// Run a command and parse stdout as JSON while suppressing stderr noise.
+pub fn run_json_command_quiet(program: &str, args: &[&str]) -> Option<Value> {
+    let output = Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+/// Capture `git diff` output for change detection.
+pub fn git_diff(cwd: &Path) -> String {
+    run_captured_command("git", &["diff"], Some(cwd))
+        .map(|cmd| cmd.stdout)
+        .unwrap_or_default()
 }
 
 pub fn run_captured_command(
@@ -169,6 +193,7 @@ fn join_reader(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::io;
 
     use crate::output::style::OutputStyle;
@@ -212,5 +237,32 @@ mod tests {
 
         let err = join_reader("stdout", handle).expect_err("panic should be surfaced");
         assert!(err.to_string().contains("stdout reader thread panicked"));
+    }
+
+    #[test]
+    fn run_json_command_quiet_parses_valid_json() {
+        let tmp = tempfile::NamedTempFile::new().expect("temp file should be created");
+        fs::write(tmp.path(), "{\"ok\":true}\n").expect("fixture should be written");
+        let path = tmp.path().to_str().expect("temp path should be utf-8");
+
+        let parsed = run_json_command_quiet("cat", &[path]).expect("json should parse");
+        assert_eq!(
+            parsed.get("ok").and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn run_json_command_quiet_returns_none_on_invalid_json() {
+        let tmp = tempfile::NamedTempFile::new().expect("temp file should be created");
+        fs::write(tmp.path(), "not-json\n").expect("fixture should be written");
+        let path = tmp.path().to_str().expect("temp path should be utf-8");
+
+        assert!(run_json_command_quiet("cat", &[path]).is_none());
+    }
+
+    #[test]
+    fn run_json_command_quiet_returns_none_on_spawn_failure() {
+        assert!(run_json_command_quiet("__nx_missing_command__", &[]).is_none());
     }
 }

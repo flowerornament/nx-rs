@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -20,6 +19,7 @@ use crate::infra::finder::{PackageMatch, find_package, find_package_fuzzy};
 use crate::infra::query_info::{
     ConfigOptionInfo, FlakeHubInfo, darwin_service_info, hm_module_info, search_flakehub,
 };
+use crate::infra::shell::run_json_command_quiet;
 use crate::infra::sources::search_all_sources_quiet;
 use crate::output::json::to_string_compact;
 use crate::output::printer::Printer;
@@ -1004,7 +1004,7 @@ fn brew_cask_metadata(name: &str) -> Option<BrewCaskMetadata> {
 fn eval_nix_attr(attr: &str, suffix: &str) -> Option<Value> {
     for target in ["nxs", "nixpkgs", "github:nixos/nixpkgs/nixos-unstable"] {
         let query = format!("{target}#{attr}.{suffix}");
-        if let Some(value) = run_json_command("nix", &["eval", "--json", &query]) {
+        if let Some(value) = run_json_command_quiet("nix", &["eval", "--json", &query]) {
             return Some(value);
         }
     }
@@ -1018,23 +1018,10 @@ fn brew_info_entry(name: &str, is_cask: bool) -> Option<Value> {
     }
     args.push(name);
     let key = if is_cask { "casks" } else { "formulae" };
-    let data = run_json_command("brew", &args)?;
+    let data = run_json_command_quiet("brew", &args)?;
     data.get(key)
         .and_then(Value::as_array)
         .and_then(|entries| entries.first().cloned())
-}
-
-fn run_json_command(program: &str, args: &[&str]) -> Option<Value> {
-    let output = Command::new(program)
-        .args(args)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    serde_json::from_slice(&output.stdout).ok()
 }
 
 fn json_field_string(value: &Value, key: &str) -> Option<String> {

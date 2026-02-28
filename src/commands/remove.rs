@@ -15,7 +15,7 @@ use crate::infra::ai_engine::{
 };
 use crate::infra::file_edit::{EditOutcome, apply_removal};
 use crate::infra::finder::find_package;
-use crate::infra::shell::run_captured_command;
+use crate::infra::shell::git_diff;
 use crate::output::printer::Printer;
 
 pub fn cmd_remove(args: &RemoveArgs, ctx: &AppContext) -> i32 {
@@ -169,13 +169,6 @@ fn report_success(package: &str, file_path: &Path, ctx: &AppContext) {
     println!();
     ctx.printer
         .success(&format!("{package} removed from {file_name}"));
-}
-
-/// Capture `git diff` output for change detection around AI edits.
-fn git_diff(cwd: &Path) -> String {
-    run_captured_command("git", &["diff"], Some(cwd))
-        .map(|cmd| cmd.stdout)
-        .unwrap_or_default()
 }
 
 fn remove_line_directly(file_path: &Path, line_num: usize) -> anyhow::Result<()> {

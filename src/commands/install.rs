@@ -24,7 +24,7 @@ use crate::infra::cache::MultiSourceCache;
 use crate::infra::file_edit::{EditOutcome, apply_edit};
 use crate::infra::finder::find_package;
 use crate::infra::flake_input::{FlakeInputEdit, add_flake_input};
-use crate::infra::shell::run_captured_command;
+use crate::infra::shell::git_diff;
 use crate::infra::sources::{check_nix_available, search_all_sources};
 use crate::output::printer::Printer;
 
@@ -106,34 +106,67 @@ fn install_one(
     engine: &dyn AiEngine,
     routing_context: &str,
 ) -> bool {
-    // Check if already installed
+    let resolved = match start_install_resolution(package, args, ctx, cache) {
+        InstallStart::Proceed(resolved) => resolved,
+        InstallStart::Completed => return true,
+        InstallStart::Failed => return false,
+    };
+
+    announce_install_phase(args, ctx, resolved.platform_warning.as_deref());
+
+    let Some(prepared) = prepare_install_phase(
+        package,
+        resolved.source_result,
+        args,
+        ctx,
+        engine,
+        routing_context,
+    ) else {
+        return false;
+    };
+
+    apply_install_phase(&prepared, args, ctx, engine)
+}
+
+fn start_install_resolution(
+    package: &str,
+    args: &InstallArgs,
+    ctx: &AppContext,
+    cache: &mut Option<MultiSourceCache>,
+) -> InstallStart {
     match find_package(package, &ctx.repo_root) {
         Ok(Some(location)) => {
             report_already_installed(package, &location, ctx);
-            return true;
+            return InstallStart::Completed;
         }
-        Ok(None) => {} // not installed — proceed
+        Ok(None) => {}
         Err(err) => {
             ctx.printer.error(&format!("install lookup failed: {err}"));
-            return false;
+            return InstallStart::Failed;
         }
     }
 
     let Some(resolution) = search_for_package(package, args, ctx, cache) else {
-        return false;
+        return InstallStart::Failed;
     };
-    let (sr, platform_warning) = match resolution {
+
+    match resolution {
         SearchResolution::Install {
             result,
             platform_warning,
-        } => (result, platform_warning),
+        } => InstallStart::Proceed(ResolvedInstall {
+            source_result: result,
+            platform_warning,
+        }),
         SearchResolution::AlreadyInstalled(location) => {
             report_already_installed(package, &location, ctx);
-            return true;
+            InstallStart::Completed
         }
-        SearchResolution::Skipped => return true,
-    };
+        SearchResolution::Skipped => InstallStart::Completed,
+    }
+}
 
+fn announce_install_phase(args: &InstallArgs, ctx: &AppContext, platform_warning: Option<&str>) {
     println!();
     if args.dry_run() {
         Printer::detail("Analyzing (1)");
@@ -142,24 +175,33 @@ fn install_one(
     }
 
     if let Some(warning) = platform_warning {
-        ctx.printer.warn(&warning);
+        ctx.printer.warn(warning);
     }
+}
 
-    let mut plan = match build_install_plan(&sr, &ctx.config_files) {
-        Ok(p) => p,
+fn prepare_install_phase(
+    package: &str,
+    source_result: SourceResult,
+    args: &InstallArgs,
+    ctx: &AppContext,
+    engine: &dyn AiEngine,
+    routing_context: &str,
+) -> Option<PreparedInstall> {
+    let mut plan = match build_install_plan(&source_result, &ctx.config_files) {
+        Ok(plan) => plan,
         Err(err) => {
             ctx.printer.error(&format!("{package}: {err}"));
-            return false;
+            return None;
         }
     };
 
     refine_routing(&mut plan, engine, routing_context, ctx);
 
     if !gate_flake_input(package, &plan, args, ctx, engine) {
-        return false;
+        return None;
     }
 
-    println!("> Routing {}", sr.name);
+    println!("> Routing {}", source_result.name);
 
     if let Some(ref warning) = plan.routing_warning {
         ctx.printer.warn(warning);
@@ -172,33 +214,61 @@ fn install_one(
         .display()
         .to_string();
 
-    if args.dry_run() {
-        if plan.insertion_mode == InsertionMode::NixManifest
-            && let Some(insert_after_line) = find_preview_insert_after_line(&plan.target_file)
-        {
-            let simulated_line = build_simulated_preview_line(&plan.package_token, &sr.description);
-            show_dry_run_preview(&plan.target_file, insert_after_line, &simulated_line, 1);
-        }
+    Some(PreparedInstall {
+        source_name: source_result.name,
+        source_description: source_result.description,
+        plan,
+        rel_target,
+    })
+}
 
-        println!();
-        if let Some(language_info) = &plan.language_info {
-            ctx.printer.success(&format!(
-                "Would add '{}' to {}.withPackages in {rel_target}",
-                language_info.bare_name, language_info.runtime
-            ));
-        } else {
-            ctx.printer
-                .success(&format!("Would add {} to {rel_target}", plan.package_token));
-        }
-        maybe_setup_service(&sr.name, args, ctx);
+fn apply_install_phase(
+    prepared: &PreparedInstall,
+    args: &InstallArgs,
+    ctx: &AppContext,
+    engine: &dyn AiEngine,
+) -> bool {
+    if args.dry_run() {
+        render_dry_run_install(prepared, ctx);
+        maybe_setup_service(&prepared.source_name, args, ctx);
         return true;
     }
 
-    let installed = execute_edit(&plan, &rel_target, ctx, engine);
+    let installed = execute_edit(&prepared.plan, &prepared.rel_target, ctx, engine);
     if installed {
-        maybe_setup_service(&sr.name, args, ctx);
+        maybe_setup_service(&prepared.source_name, args, ctx);
     }
     installed
+}
+
+fn render_dry_run_install(prepared: &PreparedInstall, ctx: &AppContext) {
+    if prepared.plan.insertion_mode == InsertionMode::NixManifest
+        && let Some(insert_after_line) = find_preview_insert_after_line(&prepared.plan.target_file)
+    {
+        let simulated_line = build_simulated_preview_line(
+            &prepared.plan.package_token,
+            &prepared.source_description,
+        );
+        show_dry_run_preview(
+            &prepared.plan.target_file,
+            insert_after_line,
+            &simulated_line,
+            1,
+        );
+    }
+
+    println!();
+    if let Some(language_info) = &prepared.plan.language_info {
+        ctx.printer.success(&format!(
+            "Would add '{}' to {}.withPackages in {}",
+            language_info.bare_name, language_info.runtime, prepared.rel_target
+        ));
+    } else {
+        ctx.printer.success(&format!(
+            "Would add {} to {}",
+            prepared.plan.package_token, prepared.rel_target
+        ));
+    }
 }
 
 /// Refine routing for general nix packages via AI engine.
@@ -460,12 +530,6 @@ fn build_service_prompt(name: &str, services_file: &str) -> String {
     )
 }
 
-fn git_diff(cwd: &Path) -> String {
-    run_captured_command("git", &["diff"], Some(cwd))
-        .map(|cmd| cmd.stdout)
-        .unwrap_or_default()
-}
-
 /// Map CLI flags to source preferences for search.
 fn source_prefs_from_args(args: &InstallArgs) -> SourcePreferences {
     SourcePreferences {
@@ -503,6 +567,24 @@ enum SearchResolution {
     },
     AlreadyInstalled(PackageLocation),
     Skipped,
+}
+
+enum InstallStart {
+    Proceed(ResolvedInstall),
+    Completed,
+    Failed,
+}
+
+struct ResolvedInstall {
+    source_result: SourceResult,
+    platform_warning: Option<String>,
+}
+
+struct PreparedInstall {
+    source_name: String,
+    source_description: String,
+    plan: InstallPlan,
+    rel_target: String,
 }
 
 #[derive(Debug)]
@@ -1254,6 +1336,52 @@ mod tests {
             packages: vec!["ripgrep".to_string()],
             ..InstallArgs::default()
         }
+    }
+
+    #[test]
+    fn start_install_resolution_completes_when_package_already_installed() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_nix(
+            root,
+            "packages/nix/cli.nix",
+            "{ pkgs, ... }:\n[\n  ripgrep\n]\n",
+        );
+        let ctx = test_context(root);
+        let args = install_args_template();
+        let mut cache = None;
+
+        let state = start_install_resolution("ripgrep", &args, &ctx, &mut cache);
+        assert!(matches!(state, InstallStart::Completed));
+    }
+
+    #[test]
+    fn prepare_install_phase_stops_when_flake_input_engine_is_unsupported() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+        write_nix(
+            root,
+            "packages/nix/cli.nix",
+            "{ pkgs, ... }:\n[\n  bat\n]\n",
+        );
+        let ctx = test_context(root);
+        let args = install_args_template();
+        let mut result = source_result("ripgrep", PackageSource::Nxs, Some("ripgrep"));
+        result.requires_flake_mod = true;
+        result.flake_url = Some("github:nix-community/NUR".to_string());
+
+        let engine = StubEngine {
+            engine_name: "codex",
+            supports_flake: false,
+            run_edit_calls: Arc::new(AtomicUsize::new(0)),
+            run_edit_outcome: CommandOutcome {
+                success: true,
+                output: String::new(),
+            },
+        };
+
+        let prepared = prepare_install_phase("ripgrep", result, &args, &ctx, &engine, "routing");
+        assert!(prepared.is_none());
     }
 
     #[test]

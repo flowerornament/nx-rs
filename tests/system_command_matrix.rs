@@ -50,6 +50,7 @@ const INFO_JSON_HM_MODULE_ARGS: &[&str] = &["info", "git", "--json"];
 const INFO_JSON_DARWIN_SERVICE_ARGS: &[&str] = &["info", "yabai", "--json"];
 const UPGRADE_COMMIT_ARGS: &[&str] = &["upgrade", "--skip-brew", "--skip-rebuild", "--no-ai"];
 const UPGRADE_FAILURE_ARGS: &[&str] = &["upgrade", "--no-ai"];
+const UPGRADE_DRY_RUN_SKIP_BREW_ARGS: &[&str] = &["upgrade", "--dry-run", "--skip-brew", "--no-ai"];
 const UPGRADE_SKIP_COMMIT_ARGS: &[&str] = &[
     "upgrade",
     "--skip-brew",
@@ -498,6 +499,17 @@ const MATRIX_CASES: &[MatrixCase] = &[
         expected_exit: 1,
         expected_calls: Some(UPGRADE_FAILURE_CALLS),
         stdout_contains: &[],
+    },
+    MatrixCase {
+        id: "upgrade_dry_run_skip_brew_short_circuit",
+        cli_args: UPGRADE_DRY_RUN_SKIP_BREW_ARGS,
+        mode: StubMode::Success,
+        expected_exit: 0,
+        expected_calls: Some(NO_CALLS),
+        stdout_contains: &[
+            "Dry Run (no changes will be made)",
+            "Dry run complete - no changes made",
+        ],
     },
     MatrixCase {
         id: "upgrade_flake_changed_commits_lockfile",

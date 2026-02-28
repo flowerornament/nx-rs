@@ -166,3 +166,8 @@ Update rules for future agents:
 - After rollback apply + `sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .`, clean login env resolution flipped to cargo-first (`~/.local/share/cargo/bin/nx` before `/etc/profiles/per-user/morgan/bin/nx`) and smoke checks still passed against `B2NIX_REPO_ROOT=~/.nix-config`.
 - Restoring pre-drill snapshots + rebuild returned resolution to flake-first (`/etc/profiles/per-user/morgan/bin/nx` before cargo path), with an empty before-vs-final `git status --porcelain` diff in `~/.nix-config`.
 - Verified on 2026-02-28 with evidence bundle `.agents/reports/flake-rollback-drill/20260228T081016Z/`.
+
+28. Non-SPEC command surface is now explicitly constrained and documented as intentional additive extensions.
+- Locked CLI parser coverage in `src/cli.rs` for `search`, `uninstall`, and `secret`/`secrets` passthrough behavior plus a command-set boundary test (`known_commands_match_spec_plus_intentional_extensions`).
+- Documented extension policy in SPEC §14 and updated `.agents/spec_traceability_matrix_v1.tsv` §2.1 notes to treat these as deliberate compatibility extensions rather than unresolved drift.
+- Verified on 2026-02-28 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.

@@ -296,6 +296,7 @@ where
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use std::collections::BTreeSet;
 
     // --- preprocess_args ---
 
@@ -322,10 +323,56 @@ mod tests {
     }
 
     #[test]
+    fn preprocess_args_search_command_passes_through() {
+        let result = preprocess_args(["nx", "search", "ripgrep"]);
+        assert_eq!(result[1], OsString::from("search"));
+        assert_eq!(result[2], OsString::from("ripgrep"));
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn preprocess_args_uninstall_alias_passes_through() {
+        let result = preprocess_args(["nx", "uninstall", "ripgrep"]);
+        assert_eq!(result[1], OsString::from("uninstall"));
+        assert_eq!(result[2], OsString::from("ripgrep"));
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
     fn preprocess_args_secret_alias_passes_through() {
         let result = preprocess_args(["nx", "secrets"]);
         assert_eq!(result[1], OsString::from("secrets"));
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn known_commands_match_spec_plus_intentional_extensions() {
+        let spec_commands: BTreeSet<_> = [
+            "install",
+            "remove",
+            "rm",
+            "where",
+            "list",
+            "info",
+            "status",
+            "installed",
+            "undo",
+            "update",
+            "test",
+            "rebuild",
+            "upgrade",
+        ]
+        .into_iter()
+        .collect();
+        let known_commands: BTreeSet<_> = KNOWN_COMMANDS.iter().copied().collect();
+
+        assert!(spec_commands.is_subset(&known_commands));
+
+        let extensions: BTreeSet<_> = known_commands.difference(&spec_commands).copied().collect();
+        let expected_extensions: BTreeSet<_> = ["search", "secret", "secrets", "uninstall"]
+            .into_iter()
+            .collect();
+        assert_eq!(extensions, expected_extensions);
     }
 
     #[test]

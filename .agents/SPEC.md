@@ -479,3 +479,10 @@ Dry-run behavior:
   - rebuild preflight failures
   - missing install attr for nix-based sources
   - invalid `list` source filter
+- Intentional Rust-only additive command surface (non-breaking extensions beyond Python/SPEC §2.1 list):
+  - `search <package>` (+ `--json`, `--bleeding-edge`, `--nur`) for read-only source lookup.
+  - `secret add` (`secret` and alias `secrets`) for sops-backed secret mutation.
+  - `uninstall` alias for `remove`.
+- These extensions must remain additive only:
+  - no changed semantics for SPEC-defined commands/options/exit codes
+  - explicit parser tests must lock extension passthrough and command-set boundaries

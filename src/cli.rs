@@ -70,6 +70,11 @@ impl Cli {
     pub const fn json(&self) -> bool {
         self.output.json
     }
+
+    #[must_use]
+    pub const fn verbose_requested(&self) -> bool {
+        self.output.verbose
+    }
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -625,6 +630,12 @@ mod tests {
     }
 
     #[test]
+    fn global_verbose_flag_parses_at_root() {
+        let cli = Cli::try_parse_from(["nx", "--verbose", "status"]).expect("parse");
+        assert!(cli.verbose_requested());
+    }
+
+    #[test]
     fn install_parses_explain_engine_and_model_options() {
         let cli = Cli::try_parse_from([
             "nx",
@@ -683,5 +694,65 @@ mod tests {
             panic!("expected upgrade command");
         };
         assert!(args.flow.verbose);
+    }
+
+    #[test]
+    fn install_help_lists_spec_options_after_flatten_refactor() {
+        let mut root = Cli::command();
+        let install = root
+            .find_subcommand_mut("install")
+            .expect("install command should exist");
+        let mut help = Vec::<u8>::new();
+        install
+            .write_long_help(&mut help)
+            .expect("install help should render");
+        let help = String::from_utf8(help).expect("help should be utf8");
+
+        for flag in [
+            "--yes",
+            "--dry-run",
+            "--cask",
+            "--mas",
+            "--service",
+            "--rebuild",
+            "--bleeding-edge",
+            "--nur",
+            "--source",
+            "--explain",
+            "--engine",
+            "--model",
+        ] {
+            assert!(
+                help.contains(flag),
+                "install help should contain flag {flag}"
+            );
+        }
+    }
+
+    #[test]
+    fn upgrade_help_lists_spec_options_after_flatten_refactor() {
+        let mut root = Cli::command();
+        let upgrade = root
+            .find_subcommand_mut("upgrade")
+            .expect("upgrade command should exist");
+        let mut help = Vec::<u8>::new();
+        upgrade
+            .write_long_help(&mut help)
+            .expect("upgrade help should render");
+        let help = String::from_utf8(help).expect("help should be utf8");
+
+        for flag in [
+            "--dry-run",
+            "--verbose",
+            "--skip-rebuild",
+            "--skip-commit",
+            "--skip-brew",
+            "--no-ai",
+        ] {
+            assert!(
+                help.contains(flag),
+                "upgrade help should contain flag {flag}"
+            );
+        }
     }
 }

@@ -18,6 +18,8 @@ use crate::output::printer::Printer;
 use crate::output::style::OutputStyle;
 
 pub fn execute(cli: Cli) -> i32 {
+    // Parsed for SPEC compatibility; currently does not alter behavior.
+    let _verbose_compat = cli.verbose_requested();
     let global_flags = GlobalFlags { json: cli.json() };
     let style = OutputStyle::from_flags(cli.plain(), cli.unicode(), cli.minimal());
     let printer = Printer::new(style);

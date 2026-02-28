@@ -346,6 +346,18 @@
     "rust_parity": true
   },
   {
+    "id": "upgrade_flake_changed_commits_lockfile",
+    "args": ["upgrade", "--skip-brew", "--skip-rebuild", "--no-ai"],
+    "setup": "stub_upgrade_flake_changed",
+    "rust_parity": true
+  },
+  {
+    "id": "upgrade_flake_changed_skip_commit",
+    "args": ["upgrade", "--skip-brew", "--skip-rebuild", "--skip-commit", "--no-ai"],
+    "setup": "stub_upgrade_flake_changed",
+    "rust_parity": true
+  },
+  {
     "id": "upgrade_flake_stubbed",
     "args": ["upgrade", "--skip-brew", "--skip-rebuild", "--skip-commit"],
     "setup": "stub_system_success",

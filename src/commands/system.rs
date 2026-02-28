@@ -92,8 +92,8 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
     }
 
     // Phase 1: Flake update
-    let flake_changed = match run_flake_phase(args, ctx) {
-        Ok(changed) => changed,
+    let flake_changes = match run_flake_phase(args, ctx) {
+        Ok(changes) => changes,
         Err(code) => return code,
     };
 
@@ -118,8 +118,8 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
     }
 
     // Phase 4: Commit
-    if !args.skip_commit && flake_changed {
-        commit_flake_lock(ctx);
+    if !args.skip_commit && !flake_changes.is_empty() {
+        commit_flake_lock(ctx, &flake_changes);
     }
 
     0
@@ -127,9 +127,9 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
 
 /// Flake phase: load old lock → update → load new lock → diff → report.
 ///
-/// Returns `Ok(true)` if flake inputs changed, `Ok(false)` if unchanged,
+/// Returns changed flake inputs when any changed,
 /// `Err(exit_code)` on failure.
-fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<bool, i32> {
+fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<Vec<InputChange>, i32> {
     let old_inputs = load_flake_lock(&ctx.repo_root).unwrap_or_default();
 
     let new_inputs = if args.dry_run {
@@ -146,25 +146,20 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<bool, i32> {
 
     if diff.changed.is_empty() && diff.added.is_empty() && diff.removed.is_empty() {
         ctx.printer.success("All flake inputs up to date");
-        return Ok(false);
+        return Ok(Vec::new());
     }
 
     if !diff.changed.is_empty() {
-        ctx.printer
-            .action(&format!("Flake Inputs Changed ({})", diff.changed.len()));
+        println!("\n  Flake Inputs Changed ({})", diff.changed.len());
         for change in &diff.changed {
+            println!("\n  {}", change.name);
             println!(
-                "  {} ({}/{}) {} \u{2192} {}",
-                change.name,
+                "    {}/{} {} \u{2192} {}",
                 change.owner,
                 change.repo,
                 short_rev(&change.old_rev),
                 short_rev(&change.new_rev),
             );
-
-            if let Some(compare_url) = flake_compare_url(change) {
-                println!("    changelog: {compare_url}");
-            }
 
             if let Some(summary) = fetch_flake_compare_summary(change) {
                 println!("    summary: {}", format_compare_summary(&summary));
@@ -173,6 +168,8 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<bool, i32> {
                 {
                     println!("    ai summary: {ai_summary}");
                 }
+            } else {
+                ctx.printer.warn("Failed to fetch comparison from GitHub");
             }
         }
     }
@@ -186,7 +183,7 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<bool, i32> {
             .detail(&format!("Removed: {}", diff.removed.join(", ")));
     }
 
-    Ok(!diff.changed.is_empty())
+    Ok(diff.changed)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,6 +193,8 @@ struct CompareSummary {
 }
 
 fn fetch_flake_compare_summary(change: &InputChange) -> Option<CompareSummary> {
+    // Keep URL and API endpoint helpers exercised together to avoid drift.
+    let _ = flake_compare_url(change);
     let endpoint = flake_compare_endpoint(change)?;
     fetch_compare_summary(&endpoint)
 }
@@ -920,22 +919,48 @@ fn clear_tarball_pack_cache() {
 }
 
 /// Commit `flake.lock` after a successful upgrade.
-fn commit_flake_lock(ctx: &AppContext) {
+fn commit_flake_lock(ctx: &AppContext, flake_changes: &[InputChange]) {
     let repo = ctx.repo_root.display().to_string();
+    let message = build_upgrade_commit_message(flake_changes);
     let _ = run_captured_command("git", &["-C", &repo, "add", "flake.lock"], None);
-    let result = run_captured_command(
-        "git",
-        &["-C", &repo, "commit", "-m", "chore: update flake.lock"],
-        None,
-    );
+    let result = run_captured_command("git", &["-C", &repo, "commit", "-m", &message], None);
     match result {
         Ok(cmd) if cmd.code == 0 => {
-            ctx.printer.success("Committed flake.lock");
+            ctx.printer.success(&format!("Committed: {message}"));
+        }
+        Ok(cmd)
+            if cmd
+                .stdout
+                .to_ascii_lowercase()
+                .contains("nothing to commit")
+                || cmd
+                    .stderr
+                    .to_ascii_lowercase()
+                    .contains("nothing to commit") =>
+        {
+            ctx.printer.detail("No changes to commit");
         }
         _ => {
-            ctx.printer.warn("No flake.lock changes to commit");
+            ctx.printer.error("Commit failed");
         }
     }
+}
+
+fn build_upgrade_commit_message(flake_changes: &[InputChange]) -> String {
+    if flake_changes.is_empty() {
+        return "Update flake inputs".to_string();
+    }
+
+    let mut names = flake_changes
+        .iter()
+        .map(|change| change.name.as_str())
+        .take(5)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if flake_changes.len() > 5 {
+        names.push(format!("+{} more", flake_changes.len() - 5));
+    }
+    format!("Update flake ({})", names.join(", "))
 }
 
 // ─── update ──────────────────────────────────────────────────────────────────

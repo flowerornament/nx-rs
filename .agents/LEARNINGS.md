@@ -91,3 +91,9 @@ Update rules for future agents:
 - Added `upgrade_flake_failure` parity fixture (`upgrade --no-ai` with `stub_update_fail`) to lock Python/Rust alignment on exit code `1` and no mutation when `nix flake update` fails.
 - Added `upgrade_flake_failure_short_circuit` in `tests/system_command_matrix.rs` to assert `upgrade` stops after the failed flake update command and does not continue to downstream phases.
 - Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+
+16. Upgrade flake-change commit path now has Python/Rust parity coverage and aligned output/commit messaging.
+- Added parity setup mode `stub_upgrade_flake_changed` plus fixture cases `upgrade_flake_changed_commits_lockfile` and `upgrade_flake_changed_skip_commit`.
+- Rust upgrade output for changed flake inputs now matches Python shape in plain/minimal mode, including the GitHub compare failure warning when comparison fetch fails.
+- Rust commit step now uses Python-style message generation for flake changes (`Update flake (<inputs...>)`) and success text (`Committed: ...`), with system matrix assertions updated to lock the command arguments and marker output.
+- Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.

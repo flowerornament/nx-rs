@@ -339,7 +339,7 @@ const UPGRADE_COMMIT_CALLS: &[ExpectedCall] = &[
             REPO_ROOT_TOKEN,
             "commit",
             "-m",
-            "chore: update flake.lock",
+            "Update flake (nixpkgs)",
         ],
     ),
 ];
@@ -534,7 +534,7 @@ const MATRIX_CASES: &[MatrixCase] = &[
         mode: StubMode::UpgradeFlakeChanged,
         expected_exit: 0,
         expected_calls: Some(UPGRADE_COMMIT_CALLS),
-        stdout_contains: &["Committed flake.lock"],
+        stdout_contains: &["Committed: Update flake (nixpkgs)"],
     },
     MatrixCase {
         id: "upgrade_flake_changed_skip_commit_gate",

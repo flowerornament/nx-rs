@@ -18,6 +18,25 @@ use tempfile::TempDir;
 const PARITY_CAPTURE_ENV: &str = "NX_PARITY_CAPTURE";
 const PARITY_TARGET_ENV: &str = "NX_PARITY_TARGET";
 const PARITY_RUST_BIN_ENV: &str = "NX_RUST_PARITY_BIN";
+const UPGRADE_FLAKE_LOCK_OLD: &str = r#"{
+  "nodes": {
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1700000000,
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "type": "github"
+      }
+    }
+  }
+}
+"#;
 
 #[derive(Debug, Deserialize)]
 struct CaseSpec {
@@ -58,6 +77,7 @@ enum CaseSetup {
     StubInstallSources,
     StubInstallSourcesCacheHit,
     StubUpgradeBrewOutdated,
+    StubUpgradeFlakeChanged,
     ModifiedTrackedFile,
 }
 
@@ -369,6 +389,12 @@ fn apply_setup(repo_root: &Path, setup: CaseSetup) -> Result<(), Box<dyn Error>>
             materialize_test_layout(repo_root, TestLayout::Failing)?;
             Ok(())
         }
+        CaseSetup::StubUpgradeFlakeChanged => {
+            install_system_stubs(repo_root)?;
+            materialize_test_layout(repo_root, TestLayout::None)?;
+            fs::write(repo_root.join("flake.lock"), UPGRADE_FLAKE_LOCK_OLD)?;
+            Ok(())
+        }
         CaseSetup::ModifiedTrackedFile => {
             let target = repo_root.join("packages/nix/cli.nix");
             fs::OpenOptions::new()
@@ -450,6 +476,28 @@ if [ "$1" = "flake" ] && [ "$2" = "update" ]; then
   if [ "$mode" = "stub_update_fail" ]; then
     echo "stub nix flake update failed"
     exit 1
+  fi
+  if [ "$mode" = "stub_upgrade_flake_changed" ]; then
+    cat <<'JSON' > flake.lock
+{
+  "nodes": {
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1700000001,
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "type": "github"
+      }
+    }
+  }
+}
+JSON
   fi
   echo "stub nix flake update ok"
   exit 0
@@ -862,6 +910,7 @@ fn uses_system_stubs(setup: CaseSetup) -> bool {
             | CaseSetup::StubInstallSources
             | CaseSetup::StubInstallSourcesCacheHit
             | CaseSetup::StubUpgradeBrewOutdated
+            | CaseSetup::StubUpgradeFlakeChanged
     )
 }
 
@@ -879,6 +928,7 @@ fn setup_mode(setup: CaseSetup) -> Option<&'static str> {
         CaseSetup::StubInstallSources => Some("stub_install_sources"),
         CaseSetup::StubInstallSourcesCacheHit => Some("stub_install_sources_cache_hit"),
         CaseSetup::StubUpgradeBrewOutdated => Some("stub_upgrade_brew_outdated"),
+        CaseSetup::StubUpgradeFlakeChanged => Some("stub_upgrade_flake_changed"),
         CaseSetup::None
         | CaseSetup::UntrackedNix
         | CaseSetup::DefaultLaunchdService

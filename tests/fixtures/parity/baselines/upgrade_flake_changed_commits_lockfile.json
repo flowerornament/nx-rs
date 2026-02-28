@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "stdout": "\n> Updating flake inputs\n  stub nix flake update ok\n\n  Flake Inputs Changed (1)\n\n  nixpkgs\n    NixOS/nixpkgs aaaaaaa → bbbbbbb\n! Failed to fetch comparison from GitHub\n+ Committed: Update flake (nixpkgs)",
+  "stderr": "",
+  "file_diff": {
+    "added": {},
+    "removed": [],
+    "modified": {
+      "flake.lock": "{\n  \"nodes\": {\n    \"root\": {\n      \"inputs\": {\n        \"nixpkgs\": \"nixpkgs\"\n      }\n    },\n    \"nixpkgs\": {\n      \"locked\": {\n        \"lastModified\": 1700000001,\n        \"owner\": \"NixOS\",\n        \"repo\": \"nixpkgs\",\n        \"rev\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n        \"type\": \"github\"\n      }\n    }\n  }\n}"
+    }
+  }
+}

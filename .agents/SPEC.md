@@ -3,7 +3,7 @@
 Status: Final v1.0
 Date: 2026-02-16
 Scope: Defines observable behavior of `~/code/nx-python` as migration target for Rust.
-Reconciled against: 37 verified parity cases, Python source audit, and live cutover validation.
+Reconciled against: 68 parity fixtures (60 Python-target + 68 Rust-target), clause-level traceability closure in `.agents/spec_traceability_matrix_v1.tsv` (38 `covered`, 7 `covered_by_subclauses`, 0 `partial`/`missing`), Python source audit, and live cutover validation.
 
 ## 1. Source Of Truth
 
@@ -479,4 +479,3 @@ Dry-run behavior:
   - rebuild preflight failures
   - missing install attr for nix-based sources
   - invalid `list` source filter
-

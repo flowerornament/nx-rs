@@ -54,15 +54,15 @@ Update rules for future agents:
 - Legacy directory was moved to `/tmp/nx-rs-legacy-20260212-032055`.
 - Re-verified on 2026-02-12 with `just cutover-validate`: shadow matrix, canary matrix, and mutation safety all passed.
 
-10. Parity harness coverage includes Rust-only search, stubbed upgrade brew path, expanded Rust info JSON parity, missing-arg parser failures, and interactive undo-confirm flow.
-- `tests/fixtures/parity/cases.json` currently has 61 cases.
-- 57 cases run in Python parity target; 61 cases run in Rust parity target.
-- Four `search_*` cases are Rust-only (`python_parity=false`) with stubbed baselines.
+10. Parity harness coverage includes Rust-only search/install deterministic flows, stubbed upgrade brew path, expanded Rust info JSON parity, missing-arg parser failures, and interactive undo-confirm flow.
+- `tests/fixtures/parity/cases.json` currently has 68 cases.
+- 60 cases run in Python parity target; 68 cases run in Rust parity target.
+- Eight cases are Rust-only (`python_parity=false`): `search_found_stubbed`, `search_not_found_stubbed`, `search_json_found_stubbed`, `search_bleeding_edge_stubbed`, `implicit_install_unqualified_token_stubbed`, `install_yes_mutates_stubbed`, `install_yes_rebuild_stubbed`, and `install_flake_input_claude_yes_stubbed`.
 - `info_json_found` and `info_json_sources_not_installed` are now enabled for Rust parity with Python-shaped source metadata output.
 - `upgrade_brew_stubbed_no_updates` verifies brew-phase parity with deterministic `brew outdated --json` stubs.
 - Missing-arg coverage now includes `install`, `remove`, `where`, `info`, and `installed`, each returning parser-style exit code `2` with Python-matching stderr.
 - Undo coverage now includes `undo_dirty_confirmed` (stdin `y`) in parity fixtures and `undo_dirty_confirmed_reverts` in system command matrix with deterministic git call assertions.
-- Verified on 2026-02-19 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+- Verified on 2026-02-28 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
 
 11. SPEC reconciliation found three drift items fixed in v1.0.
 - `info` exit code: clarified returns 0 on not-found (matching `where` behavior).

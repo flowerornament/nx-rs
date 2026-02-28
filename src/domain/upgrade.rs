@@ -8,25 +8,12 @@ use serde_json::Value;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-/// Source type for a flake.lock input.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FlakeSourceType {
-    Github,
-    Tarball,
-    Other(String),
-}
-
 /// Parsed flake.lock input node.
 #[derive(Debug, Clone)]
 pub struct FlakeLockInput {
-    #[allow(dead_code)] // retained for richer per-input reporting and diagnostics
-    pub name: String,
     pub owner: Option<String>,
     pub repo: Option<String>,
     pub rev: String,
-    pub last_modified: i64,
-    #[allow(dead_code)] // retained for source-specific upgrade filtering/reporting
-    pub source_type: FlakeSourceType,
 }
 
 /// A changed input between two flake.lock states.
@@ -37,10 +24,6 @@ pub struct InputChange {
     pub repo: String,
     pub old_rev: String,
     pub new_rev: String,
-    #[allow(dead_code)] // retained for timestamp-aware changelog/report formatting
-    pub old_modified: i64,
-    #[allow(dead_code)] // retained for timestamp-aware changelog/report formatting
-    pub new_modified: i64,
 }
 
 /// Result of comparing two flake.lock states.
@@ -121,51 +104,24 @@ pub fn parse_flake_lock(path: &Path) -> anyhow::Result<HashMap<String, FlakeLock
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        let last_modified = locked
-            .get("lastModified")
-            .and_then(Value::as_i64)
-            .unwrap_or(0);
-
-        let (owner, repo, source_type) = match source_type_str {
-            "github" => {
-                let owner = locked
-                    .get("owner")
-                    .and_then(Value::as_str)
-                    .map(String::from);
-                let repo = locked.get("repo").and_then(Value::as_str).map(String::from);
-                (owner, repo, FlakeSourceType::Github)
-            }
-            "tarball" => {
-                let url = locked
-                    .get("url")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                let (owner, repo) = flakehub_re.captures(url).map_or((None, None), |caps| {
-                    (Some(caps[1].to_string()), Some(caps[2].to_string()))
-                });
-                (owner, repo, FlakeSourceType::Tarball)
-            }
-            other => {
-                let owner = locked
-                    .get("owner")
-                    .and_then(Value::as_str)
-                    .map(String::from);
-                let repo = locked.get("repo").and_then(Value::as_str).map(String::from);
-                (owner, repo, FlakeSourceType::Other(other.to_string()))
-            }
+        let (owner, repo) = if source_type_str == "tarball" {
+            let url = locked
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            flakehub_re.captures(url).map_or((None, None), |caps| {
+                (Some(caps[1].to_string()), Some(caps[2].to_string()))
+            })
+        } else {
+            let owner = locked
+                .get("owner")
+                .and_then(Value::as_str)
+                .map(String::from);
+            let repo = locked.get("repo").and_then(Value::as_str).map(String::from);
+            (owner, repo)
         };
 
-        inputs.insert(
-            input_name.clone(),
-            FlakeLockInput {
-                name: input_name.clone(),
-                owner,
-                repo,
-                rev,
-                last_modified,
-                source_type,
-            },
-        );
+        inputs.insert(input_name.clone(), FlakeLockInput { owner, repo, rev });
     }
 
     Ok(inputs)
@@ -212,8 +168,6 @@ pub fn diff_locks(
                 repo: repo.clone(),
                 old_rev: old_input.rev.clone(),
                 new_rev: new_input.rev.clone(),
-                old_modified: old_input.last_modified,
-                new_modified: new_input.last_modified,
             });
         }
     }
@@ -342,7 +296,6 @@ mod tests {
         let hm = &inputs["home-manager"];
         assert_eq!(hm.owner.as_deref(), Some("nix-community"));
         assert_eq!(hm.repo.as_deref(), Some("home-manager"));
-        assert_eq!(hm.source_type, FlakeSourceType::Github);
         assert!(hm.rev.starts_with("aaaa"));
     }
 
@@ -370,7 +323,6 @@ mod tests {
         let fh = &inputs["flakehub-input"];
         assert_eq!(fh.owner.as_deref(), Some("DeterminateSystems"));
         assert_eq!(fh.repo.as_deref(), Some("nuenv"));
-        assert_eq!(fh.source_type, FlakeSourceType::Tarball);
     }
 
     #[test]

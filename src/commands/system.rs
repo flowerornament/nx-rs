@@ -1491,8 +1491,6 @@ mod tests {
             repo: "home-manager".to_string(),
             old_rev: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
             new_rev: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
-            old_modified: 0,
-            new_modified: 0,
         }
     }
 

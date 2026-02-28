@@ -148,3 +148,32 @@ pub fn show_dry_run_preview(
     }
     println!("  └{}", "─".repeat(40));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::relative_location;
+    use crate::domain::location::PackageLocation;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    #[test]
+    fn relative_location_strips_repo_prefix_and_keeps_line_suffix() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let repo_root = tmp.path();
+        let location = PackageLocation::new(repo_root.join("home/services.nix"), Some(42));
+
+        let rendered = relative_location(&location, repo_root);
+        assert_eq!(rendered, "home/services.nix:42");
+    }
+
+    #[test]
+    fn relative_location_keeps_absolute_path_when_outside_repo() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let repo_root = tmp.path();
+        let outside = PathBuf::from("/tmp/nx-rs-shared-test-outside.nix");
+        let location = PackageLocation::new(outside.clone(), Some(7));
+
+        let rendered = relative_location(&location, repo_root);
+        assert_eq!(rendered, format!("{}:7", outside.display()));
+    }
+}

@@ -6,7 +6,6 @@ Rust implementation of `nx` for nix-darwin package management.
 
 - Migration and cutover are complete.
 - `nx-rs` is the canonical implementation.
-- Python `nx` remains only as a parity reference at `~/code/nx-python`.
 
 ## Quick Start
 
@@ -61,14 +60,6 @@ Run these checks on the documented cadence (or before release-sensitive changes)
 
 ```bash
 just ci
-just parity-check-rust
-PY_NX="$HOME/code/nx-python/nx" just cutover-validate
-```
-
-Monthly cross-implementation parity:
-
-```bash
-just parity-check
 ```
 
 ## Development

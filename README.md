@@ -20,6 +20,8 @@ nx status
 nx upgrade
 ```
 
+Color output is enabled for interactive terminals by default. Disable with `NO_COLOR=1` or use `--plain`.
+
 Bare package names are interpreted as `install`:
 
 ```bash

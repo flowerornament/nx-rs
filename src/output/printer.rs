@@ -20,26 +20,23 @@ impl Printer {
     }
 
     pub fn action(&self, text: &str) {
-        println!("\n{} {text}", self.glyphs().action);
+        println!("{}", self.action_line(text));
     }
 
     pub fn success(&self, text: &str) {
-        println!("{} {text}", self.glyphs().success);
+        println!("{}", self.success_line(text));
     }
 
     pub fn warn(&self, text: &str) {
-        println!("{} {text}", self.glyphs().warning);
+        println!("{}", self.warn_line(text));
     }
 
     pub fn error(&self, text: &str) {
-        eprintln!("{} {text}", self.glyphs().error);
+        eprintln!("{}", self.error_line(text));
     }
 
     pub fn dry_run_banner(&self) {
-        println!(
-            "\n{} Dry Run (no changes will be made)",
-            self.glyphs().dry_run
-        );
+        println!("{}", self.dry_run_line());
     }
 
     pub fn searching(name: &str) {
@@ -88,6 +85,40 @@ impl Printer {
                 error: "x",
                 dry_run: "~",
             },
+        }
+    }
+
+    fn action_line(&self, text: &str) -> String {
+        self.paint(format!("\n{} {text}", self.glyphs().action), "36")
+    }
+
+    fn success_line(&self, text: &str) -> String {
+        self.paint(format!("{} {text}", self.glyphs().success), "32")
+    }
+
+    fn warn_line(&self, text: &str) -> String {
+        self.paint(format!("{} {text}", self.glyphs().warning), "33")
+    }
+
+    fn error_line(&self, text: &str) -> String {
+        self.paint(format!("{} {text}", self.glyphs().error), "1;31")
+    }
+
+    fn dry_run_line(&self) -> String {
+        self.paint(
+            format!(
+                "\n{} Dry Run (no changes will be made)",
+                self.glyphs().dry_run
+            ),
+            "33",
+        )
+    }
+
+    fn paint(&self, text: String, code: &str) -> String {
+        if self.style.color {
+            format!("\x1b[{code}m{text}\x1b[0m")
+        } else {
+            text
         }
     }
 }
@@ -153,6 +184,7 @@ mod tests {
         let printer = Printer::new(OutputStyle {
             plain: false,
             icon_set: IconSet::Unicode,
+            color: false,
         });
 
         let glyphs = printer.glyphs();
@@ -166,6 +198,7 @@ mod tests {
         let printer = Printer::new(OutputStyle {
             plain: true,
             icon_set: IconSet::Minimal,
+            color: false,
         });
 
         let glyphs = printer.glyphs();
@@ -180,9 +213,33 @@ mod tests {
             let printer = Printer::new(OutputStyle {
                 plain: false,
                 icon_set,
+                color: false,
             });
             assert_eq!(printer.glyphs().warning, "!");
         }
+    }
+
+    #[test]
+    fn success_line_uses_ansi_when_color_enabled() {
+        let printer = Printer::new(OutputStyle {
+            plain: false,
+            icon_set: IconSet::Unicode,
+            color: true,
+        });
+        let line = printer.success_line("ok");
+        assert!(line.contains("\x1b[32m"));
+        assert!(line.contains("\x1b[0m"));
+    }
+
+    #[test]
+    fn success_line_has_no_ansi_when_color_disabled() {
+        let printer = Printer::new(OutputStyle {
+            plain: false,
+            icon_set: IconSet::Unicode,
+            color: false,
+        });
+        let line = printer.success_line("ok");
+        assert!(!line.contains("\x1b["));
     }
 
     #[test]

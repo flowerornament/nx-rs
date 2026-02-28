@@ -1,3 +1,6 @@
+use std::env;
+use std::io::IsTerminal;
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum IconSet {
     Unicode,
@@ -8,10 +11,11 @@ pub enum IconSet {
 pub struct OutputStyle {
     pub plain: bool,
     pub icon_set: IconSet,
+    pub color: bool,
 }
 
 impl OutputStyle {
-    pub const fn from_flags(plain: bool, unicode: bool, minimal: bool) -> Self {
+    pub fn from_flags(plain: bool, unicode: bool, minimal: bool) -> Self {
         let icon_set = if minimal || plain {
             IconSet::Minimal
         } else if unicode {
@@ -20,8 +24,24 @@ impl OutputStyle {
             IconSet::Minimal
         };
 
-        Self { plain, icon_set }
+        Self {
+            plain,
+            icon_set,
+            color: use_color(plain),
+        }
     }
+}
+
+fn use_color(plain: bool) -> bool {
+    if plain || env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+
+    if matches!(env::var("TERM").as_deref(), Ok("dumb")) {
+        return false;
+    }
+
+    std::io::stdout().is_terminal()
 }
 
 #[cfg(test)]
@@ -38,6 +58,7 @@ mod tests {
     fn plain_uses_minimal_set() {
         let style = OutputStyle::from_flags(true, true, false);
         assert_eq!(style.icon_set, IconSet::Minimal);
+        assert!(!style.color);
     }
 
     #[test]

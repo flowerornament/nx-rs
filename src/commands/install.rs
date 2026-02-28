@@ -33,7 +33,7 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
         return missing_argument_error("install", "PACKAGES...");
     }
 
-    if args.dry_run {
+    if args.dry_run() {
         ctx.printer.dry_run_banner();
     }
 
@@ -48,7 +48,7 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
     };
     ctx.printer.action(&format!("Installing {pkg_list}"));
 
-    let engine = select_engine(args.engine.as_deref(), args.model.as_deref());
+    let engine = select_engine(args.engine(), args.model());
     let routing_context = build_routing_context(&ctx.config_files);
     let mut cache = load_cache(ctx);
 
@@ -85,14 +85,14 @@ fn run_post_install_actions<F>(
 ) where
     F: FnOnce() -> i32,
 {
-    if success_count == 0 || args.dry_run {
+    if success_count == 0 || args.dry_run() {
         return;
     }
 
     println!();
     Printer::detail("Run: nx rebuild");
 
-    if args.rebuild {
+    if args.rebuild() {
         let _ = rebuild();
     }
 }
@@ -135,7 +135,7 @@ fn install_one(
     };
 
     println!();
-    if args.dry_run {
+    if args.dry_run() {
         Printer::detail("Analyzing (1)");
     } else {
         Printer::detail("Installing (1)");
@@ -172,7 +172,7 @@ fn install_one(
         .display()
         .to_string();
 
-    if args.dry_run {
+    if args.dry_run() {
         if plan.insertion_mode == InsertionMode::NixManifest
             && let Some(insert_after_line) = find_preview_insert_after_line(&plan.target_file)
         {
@@ -269,11 +269,11 @@ fn gate_flake_input(
     };
     Printer::detail(&format!("URL: {flake_url}"));
 
-    if args.dry_run {
+    if args.dry_run() {
         Printer::detail(&format!("[DRY RUN] Would add flake input for {package}"));
         return true; // counted as success in dry-run
     }
-    if !args.yes && !Printer::confirm("Add flake input?", true) {
+    if !args.yes() && !Printer::confirm("Add flake input?", true) {
         ctx.printer.warn(&format!("Skipping {package}"));
         return false;
     }
@@ -403,7 +403,7 @@ fn report_deterministic_edit(
 
 fn maybe_setup_service(package_name: &str, args: &InstallArgs, ctx: &AppContext) {
     maybe_setup_service_with(package_name, args, ctx, |prompt| {
-        let service_engine = ClaudeEngine::new(args.model.as_deref());
+        let service_engine = ClaudeEngine::new(args.model());
         service_engine.run_edit(prompt, &ctx.repo_root)
     });
 }
@@ -416,11 +416,11 @@ fn maybe_setup_service_with<F>(
 ) where
     F: FnMut(&str) -> CommandOutcome,
 {
-    if !args.service {
+    if !args.service() {
         return;
     }
 
-    if args.dry_run {
+    if args.dry_run() {
         Printer::detail(&format!(
             "[DRY RUN] Would add launchd.agents.{package_name}"
         ));
@@ -469,10 +469,10 @@ fn git_diff(cwd: &Path) -> String {
 /// Map CLI flags to source preferences for search.
 fn source_prefs_from_args(args: &InstallArgs) -> SourcePreferences {
     SourcePreferences {
-        bleeding_edge: args.bleeding_edge,
-        nur: args.nur,
-        force_source: args.source.clone(),
-        explicit_target: ExplicitSourceTarget::from_flags(args.cask, args.mas),
+        bleeding_edge: args.bleeding_edge(),
+        nur: args.nur(),
+        force_source: args.source().map(str::to_owned),
+        explicit_target: ExplicitSourceTarget::from_flags(args.cask(), args.mas()),
     }
 }
 
@@ -528,7 +528,7 @@ fn search_for_package(
     cache: &mut Option<MultiSourceCache>,
 ) -> Option<SearchResolution> {
     // Explicit --cask / --mas skip search (instant, no ambiguity)
-    if args.cask || args.mas {
+    if args.cask() || args.mas() {
         let prefs = source_prefs_from_args(args);
         let results = search_all_sources(package, &prefs, None);
         return resolve_search_candidates(package, &results, args, &ctx.repo_root, ctx);
@@ -537,7 +537,7 @@ fn search_for_package(
     if let Some(cache) = cache.as_mut() {
         let cached = cache.get_all(package);
         if !cached.is_empty() {
-            if args.explain {
+            if args.explain() {
                 Printer::detail(&format!(
                     "Cache hit for '{package}' ({} sources)",
                     cached.len()
@@ -595,7 +595,7 @@ fn resolve_search_candidates(
         }
         Ok(None) => {
             show_resolution_groups(package, &display_candidates, None, ctx);
-            if !args.yes && !args.dry_run && !display_candidates.is_empty() {
+            if !args.yes() && !args.dry_run() && !display_candidates.is_empty() {
                 println!();
             }
 
@@ -643,7 +643,7 @@ fn select_candidate_index(
     if candidate_count == 0 {
         return CandidateSelection::Skipped;
     }
-    if args.yes || args.dry_run {
+    if args.yes() || args.dry_run() {
         return CandidateSelection::Selected(0);
     }
     if candidate_count == 1 {
@@ -1029,21 +1029,7 @@ mod tests {
 
     #[test]
     fn source_prefs_defaults_match_no_flags() {
-        let args = InstallArgs {
-            packages: vec![],
-            yes: false,
-            dry_run: false,
-            cask: false,
-            mas: false,
-            service: false,
-            rebuild: false,
-            bleeding_edge: false,
-            nur: false,
-            source: None,
-            explain: false,
-            engine: None,
-            model: None,
-        };
+        let args = InstallArgs::default();
         let prefs = source_prefs_from_args(&args);
         assert!(!prefs.bleeding_edge);
         assert!(!prefs.nur);
@@ -1053,63 +1039,27 @@ mod tests {
 
     #[test]
     fn source_prefs_maps_cask_flag() {
-        let args = InstallArgs {
-            packages: vec![],
-            yes: false,
-            dry_run: false,
-            cask: true,
-            mas: false,
-            service: false,
-            rebuild: false,
-            bleeding_edge: false,
-            nur: false,
-            source: None,
-            explain: false,
-            engine: None,
-            model: None,
-        };
+        let mut args = InstallArgs::default();
+        args.target.cask = true;
         let prefs = source_prefs_from_args(&args);
         assert_eq!(prefs.explicit_target, ExplicitSourceTarget::Cask);
     }
 
     #[test]
     fn source_prefs_cask_wins_when_both_flags_set() {
-        let args = InstallArgs {
-            packages: vec![],
-            yes: false,
-            dry_run: false,
-            cask: true,
-            mas: true,
-            service: false,
-            rebuild: false,
-            bleeding_edge: false,
-            nur: false,
-            source: None,
-            explain: false,
-            engine: None,
-            model: None,
-        };
+        let mut args = InstallArgs::default();
+        args.target.cask = true;
+        args.target.mas = true;
         let prefs = source_prefs_from_args(&args);
         assert_eq!(prefs.explicit_target, ExplicitSourceTarget::Cask);
     }
 
     #[test]
     fn source_prefs_maps_source_and_bleeding_edge() {
-        let args = InstallArgs {
-            packages: vec![],
-            yes: false,
-            dry_run: false,
-            cask: false,
-            mas: false,
-            service: false,
-            rebuild: false,
-            bleeding_edge: true,
-            nur: true,
-            source: Some("unstable".to_string()),
-            explain: false,
-            engine: None,
-            model: None,
-        };
+        let mut args = InstallArgs::default();
+        args.source.bleeding_edge = true;
+        args.source.nur = true;
+        args.source.source = Some("unstable".to_string());
         let prefs = source_prefs_from_args(&args);
         assert!(prefs.bleeding_edge);
         assert!(prefs.nur);
@@ -1188,7 +1138,7 @@ mod tests {
     #[test]
     fn select_candidate_index_yes_bypasses_prompts() {
         let mut args = install_args_template();
-        args.yes = true;
+        args.flow.yes = true;
 
         let mut confirm_calls = 0usize;
         let mut prompt_calls = 0usize;
@@ -1214,7 +1164,7 @@ mod tests {
     #[test]
     fn select_candidate_index_dry_run_bypasses_prompts() {
         let mut args = install_args_template();
-        args.dry_run = true;
+        args.flow.dry_run = true;
 
         let mut confirm_calls = 0usize;
         let mut prompt_calls = 0usize;
@@ -1302,18 +1252,7 @@ mod tests {
     fn install_args_template() -> InstallArgs {
         InstallArgs {
             packages: vec!["ripgrep".to_string()],
-            yes: false,
-            dry_run: false,
-            cask: false,
-            mas: false,
-            service: false,
-            rebuild: false,
-            bleeding_edge: false,
-            nur: false,
-            source: None,
-            explain: false,
-            engine: None,
-            model: None,
+            ..InstallArgs::default()
         }
     }
 
@@ -1322,7 +1261,7 @@ mod tests {
         let tmp = TempDir::new().expect("temp dir should be created");
         let ctx = test_context(tmp.path());
         let mut args = install_args_template();
-        args.rebuild = true;
+        args.flow.rebuild = true;
 
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = Arc::clone(&calls);
@@ -1355,8 +1294,8 @@ mod tests {
         let tmp = TempDir::new().expect("temp dir should be created");
         let ctx = test_context(tmp.path());
         let mut args = install_args_template();
-        args.rebuild = true;
-        args.dry_run = true;
+        args.flow.rebuild = true;
+        args.flow.dry_run = true;
 
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = Arc::clone(&calls);
@@ -1373,7 +1312,7 @@ mod tests {
         let tmp = TempDir::new().expect("temp dir should be created");
         let ctx = test_context(tmp.path());
         let mut args = install_args_template();
-        args.rebuild = true;
+        args.flow.rebuild = true;
 
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = Arc::clone(&calls);
@@ -1413,7 +1352,7 @@ mod tests {
         let ctx = test_context(root);
         let mut args = install_args_template();
         args.service = true;
-        args.dry_run = true;
+        args.flow.dry_run = true;
 
         let calls = Arc::new(AtomicUsize::new(0));
         maybe_setup_service_with("ripgrep", &args, &ctx, |_prompt| {
@@ -1464,7 +1403,7 @@ mod tests {
         );
         let ctx = test_context(root);
         let mut args = install_args_template();
-        args.yes = true;
+        args.flow.yes = true;
 
         let mut plan = test_plan(root, "ripgrep");
         plan.source_result.requires_flake_mod = true;
@@ -1498,7 +1437,7 @@ mod tests {
         );
         let ctx = test_context(root);
         let mut args = install_args_template();
-        args.yes = true;
+        args.flow.yes = true;
 
         let mut plan = test_plan(root, "ripgrep");
         plan.source_result.requires_flake_mod = true;
@@ -1532,7 +1471,7 @@ mod tests {
         );
         let ctx = test_context(root);
         let mut args = install_args_template();
-        args.dry_run = true;
+        args.flow.dry_run = true;
 
         let mut plan = test_plan(root, "ripgrep");
         plan.source_result.requires_flake_mod = true;
@@ -1562,7 +1501,7 @@ mod tests {
         );
         let ctx = test_context(root);
         let mut args = install_args_template();
-        args.yes = true;
+        args.flow.yes = true;
 
         let mut plan = test_plan(root, "ripgrep");
         plan.source_result.requires_flake_mod = true;

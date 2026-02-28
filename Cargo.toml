@@ -25,7 +25,6 @@ unsafe_code = "forbid"
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-struct_excessive_bools = "allow" # CLI arg structs have many boolean flags
 explicit_iter_loop = "warn"
 inefficient_to_string = "warn"
 semicolon_if_nothing_returned = "warn"

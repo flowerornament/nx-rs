@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 const KNOWN_COMMANDS: &[&str] = &[
     "install",
@@ -41,20 +41,53 @@ Notes:
     arg_required_else_help = true,
     after_long_help = ROOT_HELP
 )]
-#[allow(clippy::struct_excessive_bools)] // CLI flag surface intentionally mirrors SPEC switches.
 pub struct Cli {
+    #[command(flatten)]
+    pub style: GlobalStyleArgs,
+    #[command(flatten)]
+    pub output: GlobalOutputArgs,
+    #[command(subcommand)]
+    pub command: CommandKind,
+}
+
+impl Cli {
+    #[must_use]
+    pub const fn plain(&self) -> bool {
+        self.style.plain
+    }
+
+    #[must_use]
+    pub const fn unicode(&self) -> bool {
+        self.style.unicode
+    }
+
+    #[must_use]
+    pub const fn minimal(&self) -> bool {
+        self.style.minimal
+    }
+
+    #[must_use]
+    pub const fn json(&self) -> bool {
+        self.output.json
+    }
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct GlobalStyleArgs {
     #[arg(long, global = true, help = "Use plain output formatting")]
     pub plain: bool,
     #[arg(long, global = true, help = "Force Unicode/emoji output")]
     pub unicode: bool,
     #[arg(long, global = true, help = "Minimal output (less context)")]
     pub minimal: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct GlobalOutputArgs {
     #[arg(long, short = 'v', global = true, help = "Verbose output")]
     pub verbose: bool,
     #[arg(long, global = true, help = "JSON output when supported")]
     pub json: bool,
-    #[command(subcommand)]
-    pub command: CommandKind,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -91,29 +124,114 @@ pub enum CommandKind {
     Upgrade(UpgradeArgs),
 }
 
-#[derive(Debug, Clone, Parser)]
-#[allow(clippy::struct_excessive_bools)] // Install contract is flag-rich by design.
+#[derive(Debug, Clone, Parser, Default)]
 pub struct InstallArgs {
     #[arg(value_name = "PACKAGES")]
     pub packages: Vec<String>,
+    #[command(flatten)]
+    pub flow: InstallFlowArgs,
+    #[command(flatten)]
+    pub target: InstallTargetArgs,
+    #[command(flatten)]
+    pub source: InstallSourceArgs,
+    #[arg(long)]
+    pub service: bool,
+    #[command(flatten)]
+    pub ai: InstallAiArgs,
+}
+
+impl InstallArgs {
+    #[must_use]
+    pub const fn yes(&self) -> bool {
+        self.flow.yes
+    }
+
+    #[must_use]
+    pub const fn dry_run(&self) -> bool {
+        self.flow.dry_run
+    }
+
+    #[must_use]
+    pub const fn rebuild(&self) -> bool {
+        self.flow.rebuild
+    }
+
+    #[must_use]
+    pub const fn cask(&self) -> bool {
+        self.target.cask
+    }
+
+    #[must_use]
+    pub const fn mas(&self) -> bool {
+        self.target.mas
+    }
+
+    #[must_use]
+    pub const fn bleeding_edge(&self) -> bool {
+        self.source.bleeding_edge
+    }
+
+    #[must_use]
+    pub const fn nur(&self) -> bool {
+        self.source.nur
+    }
+
+    #[must_use]
+    pub fn source(&self) -> Option<&str> {
+        self.source.source.as_deref()
+    }
+
+    #[must_use]
+    pub const fn service(&self) -> bool {
+        self.service
+    }
+
+    #[must_use]
+    pub const fn explain(&self) -> bool {
+        self.ai.explain
+    }
+
+    #[must_use]
+    pub fn engine(&self) -> Option<&str> {
+        self.ai.engine.as_deref()
+    }
+
+    #[must_use]
+    pub fn model(&self) -> Option<&str> {
+        self.ai.model.as_deref()
+    }
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct InstallFlowArgs {
     #[arg(long, short = 'y')]
     pub yes: bool,
     #[arg(long, short = 'n')]
     pub dry_run: bool,
     #[arg(long)]
+    pub rebuild: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct InstallTargetArgs {
+    #[arg(long)]
     pub cask: bool,
     #[arg(long)]
     pub mas: bool,
-    #[arg(long)]
-    pub service: bool,
-    #[arg(long)]
-    pub rebuild: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct InstallSourceArgs {
     #[arg(long)]
     pub bleeding_edge: bool,
     #[arg(long)]
     pub nur: bool,
     #[arg(long)]
     pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct InstallAiArgs {
     #[arg(long)]
     pub explain: bool,
     #[arg(long)]
@@ -255,22 +373,60 @@ pub struct PassthroughArgs {
 }
 
 #[derive(Debug, Clone, Parser)]
-#[allow(clippy::struct_excessive_bools)] // Upgrade command intentionally exposes multiple independent toggles.
 pub struct UpgradeArgs {
+    #[command(flatten)]
+    pub flow: UpgradeFlowArgs,
+    #[command(flatten)]
+    pub skip: UpgradeSkipArgs,
+    #[arg(last = true)]
+    pub passthrough: Vec<String>,
+}
+
+impl UpgradeArgs {
+    #[must_use]
+    pub const fn dry_run(&self) -> bool {
+        self.flow.dry_run
+    }
+
+    #[must_use]
+    pub const fn no_ai(&self) -> bool {
+        self.flow.no_ai
+    }
+
+    #[must_use]
+    pub const fn skip_rebuild(&self) -> bool {
+        self.skip.skip_rebuild
+    }
+
+    #[must_use]
+    pub const fn skip_commit(&self) -> bool {
+        self.skip.skip_commit
+    }
+
+    #[must_use]
+    pub const fn skip_brew(&self) -> bool {
+        self.skip.skip_brew
+    }
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct UpgradeFlowArgs {
     #[arg(long, short = 'n')]
     pub dry_run: bool,
     #[arg(long, short = 'v')]
     pub verbose: bool,
+    #[arg(long)]
+    pub no_ai: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct UpgradeSkipArgs {
     #[arg(long)]
     pub skip_rebuild: bool,
     #[arg(long)]
     pub skip_commit: bool,
     #[arg(long)]
     pub skip_brew: bool,
-    #[arg(long)]
-    pub no_ai: bool,
-    #[arg(last = true)]
-    pub passthrough: Vec<String>,
 }
 
 pub fn preprocess_args<I, T>(args: I) -> Vec<OsString>
@@ -464,8 +620,8 @@ mod tests {
     fn global_json_and_unicode_flags_parse_at_root() {
         let cli =
             Cli::try_parse_from(["nx", "--json", "--unicode", "info", "ripgrep"]).expect("parse");
-        assert!(cli.json);
-        assert!(cli.unicode);
+        assert!(cli.json());
+        assert!(cli.unicode());
     }
 
     #[test]
@@ -485,9 +641,9 @@ mod tests {
         let CommandKind::Install(args) = cli.command else {
             panic!("expected install command");
         };
-        assert!(args.explain);
-        assert_eq!(args.engine.as_deref(), Some("claude"));
-        assert_eq!(args.model.as_deref(), Some("sonnet"));
+        assert!(args.explain());
+        assert_eq!(args.engine(), Some("claude"));
+        assert_eq!(args.model(), Some("sonnet"));
     }
 
     #[test]
@@ -526,6 +682,6 @@ mod tests {
         let CommandKind::Upgrade(args) = cli.command else {
             panic!("expected upgrade command");
         };
-        assert!(args.verbose);
+        assert!(args.flow.verbose);
     }
 }

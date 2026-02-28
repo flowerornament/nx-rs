@@ -87,7 +87,7 @@ fn git_diff_stat(file: &str, repo_root: &Path) -> Option<String> {
 // ─── upgrade ─────────────────────────────────────────────────────────────────
 
 pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
-    if args.dry_run {
+    if args.dry_run() {
         ctx.printer.dry_run_banner();
     }
 
@@ -98,17 +98,17 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
     };
 
     // Phase 2: Brew
-    if !args.skip_brew {
+    if !args.skip_brew() {
         run_brew_phase(args, ctx);
     }
 
-    if args.dry_run {
+    if args.dry_run() {
         Printer::detail("Dry run complete - no changes made");
         return 0;
     }
 
     // Phase 3: Rebuild
-    if !args.skip_rebuild {
+    if !args.skip_rebuild() {
         let passthrough = PassthroughArgs {
             passthrough: Vec::new(),
         };
@@ -118,7 +118,7 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
     }
 
     // Phase 4: Commit
-    if !args.skip_commit && !flake_changes.is_empty() {
+    if !args.skip_commit() && !flake_changes.is_empty() {
         commit_flake_lock(ctx, &flake_changes);
     }
 
@@ -132,7 +132,7 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
 fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<Vec<InputChange>, i32> {
     let old_inputs = load_flake_lock(&ctx.repo_root).unwrap_or_default();
 
-    let new_inputs = if args.dry_run {
+    let new_inputs = if args.dry_run() {
         old_inputs.clone()
     } else {
         if !stream_nix_update(args, ctx) {
@@ -164,7 +164,7 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<Vec<InputChan
             if let Some(summary) = fetch_flake_compare_summary(change) {
                 println!("    summary: {}", format_compare_summary(&summary));
                 if let Some(ai_summary) =
-                    maybe_ai_summary(args.no_ai, || summarize_flake_change_ai(change, &summary))
+                    maybe_ai_summary(args.no_ai(), || summarize_flake_change_ai(change, &summary))
                 {
                     println!("    ai summary: {ai_summary}");
                 }
@@ -487,7 +487,7 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
             println!("    {homepage}");
         }
 
-        if let Some(ai_summary) = maybe_ai_summary(args.no_ai, || {
+        if let Some(ai_summary) = maybe_ai_summary(args.no_ai(), || {
             fetch_brew_compare_summary(package)
                 .and_then(|summary| summarize_brew_change_ai(package, &summary))
         }) {
@@ -495,7 +495,7 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
         }
     }
 
-    if args.dry_run {
+    if args.dry_run() {
         return;
     }
 

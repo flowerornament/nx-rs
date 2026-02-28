@@ -52,7 +52,7 @@ scripts/cutover/validate_shadow_canary.sh
 
 ## Latest Execution Result
 
-Executed: **2026-02-12 03:26:11 PST**
+Executed: **2026-02-27 22:36:15 PST** (2026-02-28 UTC)
 
 Shadow matrix:
 
@@ -79,8 +79,8 @@ Mutation safety:
 
 - Git status unchanged: **yes**
 
-Post-run note:
-- Verified after moving legacy in-tree copy from `~/.nix-config/scripts/nx-rs` to `/tmp/nx-rs-legacy-20260212-032055`.
+Historical note:
+- Legacy in-tree copy was previously moved from `~/.nix-config/scripts/nx-rs` to `/tmp/nx-rs-legacy-20260212-032055`.
 
 ## Go/No-Go Criteria
 
@@ -93,29 +93,26 @@ GO for full PATH replacement only if all are true:
 
 NO-GO if any gate fails.
 
-## Final Parity Evidence (2026-02-16)
+## Current Parity Evidence (2026-02-27 PST / 2026-02-28 UTC)
 
-Full parity harness: **37/37 cases passing** for both Python and Rust targets.
+Validated parity harness totals:
+- Python target (`just parity-check`): **60/60 parity-enabled cases passing**.
+- Rust target (`just parity-check-rust`): **68/68 parity-enabled cases passing**.
+- Fixture inventory (`tests/fixtures/parity/cases.json`): **68 total cases** (8 Rust-only cases).
 
-Coverage spans all implemented commands:
-- Query commands: `where`, `list`, `info`, `status`, `installed` (13 cases)
-- Mutation commands: `install --dry-run`, `remove` (dry-run, alias, yes-mutate, not-found) (5 cases)
-- System commands: `update`, `test`, `rebuild` (success, failure, passthrough, preflight) (10 cases)
-- Undo: clean, dirty-cancelled (2 cases)
-- Upgrade: dry-run, stubbed flake (2 cases)
-- Setup variants: `default_launchd_service`, `untracked_nix`, `modified_tracked_file` (5 cases use setup fixtures)
+Coverage spans all command families: query (`where`, `list`, `info`, `status`, `installed`), mutation (`install`, `remove`), system (`update`, `test`, `rebuild`, `upgrade`), and undo flows with setup variants.
 
-SPEC reconciled against verified behavior on same date (v1.0).
+SPEC v1.0 remains reconciled to Python source audit, with clause-level closure tracked in `.agents/spec_traceability_matrix_v1.tsv`.
 
 ## Current Decision
 
-As of **2026-02-16**: **GO** for full production PATH replacement.
+As of **2026-02-27 PST** (2026-02-28 UTC): **GO** for full production PATH replacement.
 
 Evidence trail:
-- Shadow/canary cutover validation passed (2026-02-12).
-- Full 37-case parity harness verified (2026-02-16).
+- Shadow/canary cutover validation passed (2026-02-27 22:36:15 PST).
+- Dual-target parity harness verified (`60/60` Python target; `68/68` Rust target) on 2026-02-27 PST / 2026-02-28 UTC.
 - SPEC reconciled to v1.0 against Python source audit (2026-02-16).
-- `just ci` green (fmt + clippy + test + check).
+- `just ci` green (fmt + clippy + test + check) on 2026-02-27 PST / 2026-02-28 UTC.
 - Legacy in-tree copy decommissioned and quarantined.
 
 ## Flake Cutover Procedure

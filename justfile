@@ -22,12 +22,10 @@ help:
     @echo "Daily Loop (strict)"
     @echo "  just compile         # Agent compile hook: fmt + clippy + test + check"
     @echo "  just guard           # Run strict gates without compile wrapper"
-    @echo "  just parity-check    # Run Python parity harness against captured baselines"
-    @echo "  just parity-check-rust # Run Rust parity subset against Python baselines"
-    @echo "  just parity-check-python # Explicit Python parity check"
+    @echo "  just parity-check    # Run Rust parity harness against captured baselines"
+    @echo "  just parity-check-rust # Explicit Rust parity harness command"
     @echo "  just test-system     # Run system command integration matrix with stubs"
-    @echo "  just cutover-validate # Run manual shadow/canary validation against ~/.nix-config"
-    @echo "  just parity-capture  # Refresh parity baselines from Python reference"
+    @echo "  just cutover-validate # Run Rust direct/canary validation against ~/.nix-config"
     @echo
     @echo "Raw Commands"
     @echo "  just fmt             # Format source"
@@ -101,26 +99,18 @@ test-system:
     @cargo build --quiet --bin nx
     @cargo test --test system_command_matrix -- --nocapture
 
-# Run cutover shadow/canary validation against ~/.nix-config.
+# Run Rust direct/canary validation against ~/.nix-config.
 cutover-validate:
     @scripts/cutover/validate_shadow_canary.sh
 
-# Validate parity fixtures against captured Python baselines.
+# Validate parity fixtures against captured baselines (Rust target).
 parity-check:
-    @just parity-check-python
+    @just parity-check-rust
 
-# Validate Python reference behavior against captured baselines.
-parity-check-python:
-    @cargo test --test parity_harness -- --nocapture
-
-# Validate Rust candidate behavior against captured Python baselines (subset).
+# Validate Rust candidate behavior against captured baselines.
 parity-check-rust:
     @cargo build --quiet --bin nx
     @NX_PARITY_TARGET=rust NX_RUST_PARITY_BIN="$(pwd)/target/debug/nx" cargo test --test parity_harness -- --nocapture
-
-# Refresh parity baselines from Python reference behavior.
-parity-capture:
-    @NX_PARITY_CAPTURE=1 cargo test --test parity_harness -- --nocapture
 
 # Run cargo check across workspace.
 check:

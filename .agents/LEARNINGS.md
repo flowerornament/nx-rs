@@ -21,14 +21,12 @@ Update rules for future agents:
 - Running `bd doctor` must be done from this repo root for authoritative status.
 - `bd doctor` in unrelated parent directories checks different rigs and gives unrelated warnings.
 
-3. Parity baselines support target-specific capture.
+3. Parity baselines support Rust-target capture for operational workflows.
 - Baselines live in `tests/fixtures/parity/baselines/`.
-- Python capture command: `just parity-capture`.
-- Rust capture is supported with `NX_PARITY_CAPTURE=1 NX_PARITY_TARGET=rust`.
+- Rust capture is supported with `NX_PARITY_CAPTURE=1 NX_PARITY_TARGET=rust cargo test --test parity_harness -- --nocapture`.
 
-4. Parity harness is dual-target with case gating.
-- Python verification: `just parity-check-python` (or `just parity-check`).
-- Rust verification: `just parity-check-rust`.
+4. Parity harness defaults to Rust target with case gating.
+- Operational verification commands: `just parity-check` (alias) or `just parity-check-rust`.
 - Python target runs fixture cases with `python_parity=true` (default when omitted).
 - Rust target runs fixture cases with `rust_parity=true`.
 
@@ -40,9 +38,9 @@ Update rules for future agents:
 - Harness normalizes ANSI and absolute paths to stable tokens (for example `<REPO_ROOT>`).
 - This is required for reproducible snapshots across temp directories.
 
-7. Cutover validation is scripted and now passes full shadow/canary gates.
-- Run manual shadow/canary validation with `just cutover-validate` (script: `scripts/cutover/validate_shadow_canary.sh`).
-- Verified on 2026-02-12 against `~/.nix-config`: shadow matrix, canary matrix, and mutation safety all passed.
+7. Cutover validation is scripted and passes full direct/canary gates.
+- Run manual direct/canary validation with `just cutover-validate` (script: `scripts/cutover/validate_shadow_canary.sh`).
+- Verified on 2026-02-12 against `~/.nix-config`: direct matrix, canary matrix, and mutation safety all passed.
 - The `sops-nix` parity gap was fixed by including `default.nix` files in Rust nix scan collection (matching Python finder behavior).
 
 8. Legacy in-tree `nx-rs` decommission audit is clean outside legacy directory.
@@ -52,7 +50,7 @@ Update rules for future agents:
 
 9. Cutover validation still passes after quarantining legacy in-tree copy.
 - Legacy directory was moved to `/tmp/nx-rs-legacy-20260212-032055`.
-- Re-verified on 2026-02-12 with `just cutover-validate`: shadow matrix, canary matrix, and mutation safety all passed.
+- Re-verified on 2026-02-12 with `just cutover-validate`: direct matrix, canary matrix, and mutation safety all passed.
 
 10. Parity harness coverage includes Rust-only search/install deterministic flows, stubbed upgrade brew path, expanded Rust info JSON parity, missing-arg parser failures, and interactive undo-confirm flow.
 - `tests/fixtures/parity/cases.json` currently has 68 cases.
@@ -176,4 +174,10 @@ Update rules for future agents:
 - Recurring weekly/monthly maintenance cadence was removed from `.agents/CUTOVER_PLAYBOOK.md`; standard ongoing gate is `just ci`.
 - `just parity-check-rust`, `just parity-check`, and `just cutover-validate` remain available for ad hoc forensic/recovery validation only.
 - Historical maintenance-gate artifacts remain preserved under `.agents/reports/maintenance-gates/`.
-- Verified on 2026-02-28 with `just ci`, `cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+- Verified on 2026-02-28 with `just ci`, `cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic`, `just parity-check-rust`, and `just cutover-validate`.
+
+30. Operational workflows are now de-Pythonized.
+- `just parity-check` now maps to the Rust parity harness; `just parity-check-python` and `just parity-capture` were removed from the operational command surface.
+- `scripts/cutover/validate_shadow_canary.sh` no longer invokes `nx-python` and now validates Rust direct matrix + canary matrix + mutation safety.
+- Rollback guidance now pins `nx-rs` to a known-good flake revision instead of restoring Python `nx`.
+- Verified on 2026-02-28 with `just ci`, `cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic`, `just parity-check`, and `just cutover-validate`.

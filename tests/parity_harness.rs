@@ -91,7 +91,7 @@ enum HarnessTarget {
 impl HarnessTarget {
     fn from_env() -> Result<Self, Box<dyn Error>> {
         match env::var(PARITY_TARGET_ENV)
-            .unwrap_or_else(|_| "python".to_string())
+            .unwrap_or_else(|_| "rust".to_string())
             .to_ascii_lowercase()
             .as_str()
         {
@@ -135,10 +135,16 @@ fn parity_harness() -> Result<(), Box<dyn Error>> {
     let cases_path = fixtures_root.join("cases.json");
     let baselines_dir = fixtures_root.join("baselines");
     let repo_base_dir = fixtures_root.join("repo_base");
-    let reference_cli = env::var_os("NX_PYTHON_CLI")
-        .map_or_else(|| home_dir().join("code/nx-python/nx"), PathBuf::from);
     let target = HarnessTarget::from_env()?;
     let capture_mode = env::var_os(PARITY_CAPTURE_ENV).is_some();
+    let reference_cli = if target == HarnessTarget::Python {
+        Some(
+            env::var_os("NX_PYTHON_CLI")
+                .map_or_else(|| home_dir().join("code/nx-python/nx"), PathBuf::from),
+        )
+    } else {
+        None
+    };
 
     let all_cases = read_cases(&cases_path)?;
     validate_case_annotations(&all_cases)?;
@@ -161,7 +167,7 @@ fn parity_harness() -> Result<(), Box<dyn Error>> {
         let temp_repo = materialize_repo(&repo_base_dir, case.setup)?;
         let outcome = run_case(
             target,
-            &reference_cli,
+            reference_cli.as_deref(),
             rust_cli.as_deref(),
             &workspace_root,
             temp_repo.path(),
@@ -179,7 +185,7 @@ fn parity_harness() -> Result<(), Box<dyn Error>> {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 format!(
-                    "missing baseline for case '{}': {}. Run `just parity-capture`.",
+                    "missing baseline for case '{}': {}. Run `NX_PARITY_CAPTURE=1 NX_PARITY_TARGET=rust cargo test --test parity_harness -- --nocapture`.",
                     case.id,
                     baseline_path.display()
                 ),
@@ -219,14 +225,18 @@ fn resolve_rust_cli(workspace_root: &Path) -> Result<PathBuf, Box<dyn Error>> {
 
 fn run_case(
     target: HarnessTarget,
-    reference_cli: &Path,
+    reference_cli: Option<&Path>,
     rust_cli: Option<&Path>,
     workspace_root: &Path,
     repo_root: &Path,
     case: &CaseSpec,
 ) -> Result<ParityOutcome, Box<dyn Error>> {
     match target {
-        HarnessTarget::Python => run_target_case(reference_cli, workspace_root, repo_root, case),
+        HarnessTarget::Python => {
+            let cli =
+                reference_cli.ok_or_else(|| io::Error::other("missing python parity binary"))?;
+            run_target_case(cli, workspace_root, repo_root, case)
+        }
         HarnessTarget::Rust => {
             let cli = rust_cli.ok_or_else(|| io::Error::other("missing rust parity binary"))?;
             run_target_case(cli, workspace_root, repo_root, case)

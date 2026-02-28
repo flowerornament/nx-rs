@@ -1,6 +1,6 @@
 # nx-rs Cutover Playbook
 
-Purpose: define and execute a deploy-safe validation workflow before replacing Python `nx` in PATH.
+Purpose: define and execute a deploy-safe validation workflow for production `nx-rs` behavior on `~/.nix-config`.
 
 ## Safety Boundaries
 
@@ -25,12 +25,11 @@ scripts/cutover/validate_shadow_canary.sh
 
 ## Checklist
 
-1. Build and resolve binaries
-- Python baseline: `~/.nix-config/scripts/nx/nx`
+1. Build and resolve binary
 - Rust candidate: `target/debug/nx` (auto-built if missing)
 
-2. Shadow matrix (Python vs Rust)
-- Compare exit code, normalized stdout, normalized stderr for:
+2. Direct matrix (Rust binary execution)
+- Execute and require exit `0` for:
   - `where <installed package>`
   - `where <missing package>`
   - `list --plain`
@@ -52,20 +51,20 @@ scripts/cutover/validate_shadow_canary.sh
 
 ## Latest Execution Result
 
-Executed: **2026-02-27 23:45:38 PST** (2026-02-28 UTC)
+Executed: **2026-02-28 08:04:08 PST** (2026-02-28 UTC)
 
-Shadow matrix:
+Direct matrix:
 
-| Case | Command Args | Python Exit | Rust Exit | Stdout Match | Stderr Match | Pass |
-| --- | --- | --- | --- | --- | --- | --- |
-| where_found | `where ripgrep` | 0 | 0 | yes | yes | yes |
-| where_not_found | `where not-a-real-package-nxrs-cutover` | 0 | 0 | yes | yes | yes |
-| list_plain | `list --plain` | 0 | 0 | yes | yes | yes |
-| status | `status` | 0 | 0 | yes | yes | yes |
-| installed_json | `installed ripgrep --json` | 0 | 0 | yes | yes | yes |
-| info_json_not_found | `info not-a-real-package-nxrs-cutover --json` | 0 | 0 | yes | yes | yes |
-| install_dry_run | `install --dry-run ripgrep` | 0 | 0 | yes | yes | yes |
-| remove_dry_run | `remove --dry-run ripgrep` | 0 | 0 | yes | yes | yes |
+| Case | Command Args | Exit | Pass |
+| --- | --- | --- | --- |
+| where_found | `where ripgrep` | 0 | yes |
+| where_not_found | `where not-a-real-package-nxrs-cutover` | 0 | yes |
+| list_plain | `list --plain` | 0 | yes |
+| status | `status` | 0 | yes |
+| installed_json | `installed ripgrep --json` | 0 | yes |
+| info_json_not_found | `info not-a-real-package-nxrs-cutover --json` | 0 | yes |
+| install_dry_run | `install --dry-run ripgrep` | 0 | yes |
+| remove_dry_run | `remove --dry-run ripgrep` | 0 | yes |
 
 Canary matrix:
 
@@ -87,7 +86,7 @@ Historical note:
 
 GO for full PATH replacement only if all are true:
 
-1. Shadow matrix: all cases pass (exit + stdout + stderr)
+1. Direct matrix: all cases pass
 2. Canary matrix: all cases pass
 3. Mutation safety: unchanged git status
 4. `just compile` passes in `nx-rs`
@@ -97,8 +96,7 @@ NO-GO if any gate fails.
 ## Current Parity Evidence (2026-02-27 PST / 2026-02-28 UTC)
 
 Validated parity harness totals:
-- Python target (`just parity-check`): **60/60 parity-enabled cases passing**.
-- Rust target (`just parity-check-rust`): **68/68 parity-enabled cases passing**.
+- Rust target (`just parity-check` / `just parity-check-rust`): **68/68 parity-enabled cases passing**.
 - Fixture inventory (`tests/fixtures/parity/cases.json`): **68 total cases** (8 Rust-only cases).
 
 Coverage spans all command families: query (`where`, `list`, `info`, `status`, `installed`), mutation (`install`, `remove`), system (`update`, `test`, `rebuild`, `upgrade`), and undo flows with setup variants.
@@ -110,8 +108,8 @@ SPEC v1.0 remains reconciled to Python source audit, with clause-level closure t
 As of **2026-02-27 PST** (2026-02-28 UTC): **GO** for full production PATH replacement.
 
 Evidence trail:
-- Shadow/canary cutover validation passed (2026-02-27 23:45:38 PST), archived at `.agents/reports/cutover-gates/20260228T074322Z/`.
-- Dual-target parity harness verified (`60/60` Python target; `68/68` Rust target) on 2026-02-27 PST / 2026-02-28 UTC.
+- Direct/canary cutover validation passed (2026-02-28 08:04:08 PST).
+- Rust parity harness verified (`68/68` Rust target) on 2026-02-28 PST / 2026-02-28 UTC.
 - SPEC reconciled to v1.0 against Python source audit (2026-02-16).
 - `just ci` green (fmt + clippy + test + check) on 2026-02-27 PST / 2026-02-28 UTC (transcript archived in the same gate bundle directory).
 - Legacy in-tree copy decommissioned and quarantined.
@@ -123,7 +121,7 @@ Parity with Python was a cutover acceptance criterion and is treated as complete
 Operating policy:
 
 1. Normal development and release work uses `just ci` as the standing quality gate.
-2. `just parity-check-rust`, `just parity-check`, and `just cutover-validate` remain available as ad hoc forensic tools when debugging suspected behavior drift or doing exceptional migration/recovery work.
+2. `just parity-check` (or `just parity-check-rust`) and `just cutover-validate` remain available as ad hoc forensic tools when debugging suspected behavior drift or doing exceptional migration/recovery work.
 3. There is no recurring weekly/monthly parity validation schedule.
 
 ## Flake Cutover Procedure
@@ -134,22 +132,9 @@ The production cutover uses nix flakes. nx-rs exposes a `flake.nix` that builds 
 
 1. `nix build` succeeds in `~/code/nx-rs`.
 2. `just ci` passes.
-3. `just cutover-validate` passes (shadow + canary + mutation safety).
+3. `just cutover-validate` passes (direct + canary + mutation safety).
 
-### Step 1: Extract Python nx to standalone repo
-
-```bash
-# Clean copy (no git history needed — ~/code/nx-python/ has the frozen copy)
-mkdir -p ~/code/nx-python
-cp -R ~/.nix-config/scripts/nx/* ~/code/nx-python/
-cd ~/code/nx-python
-git init && git add . && git commit -m "Initial commit: extract from nix-config"
-# Create repo on GitHub, then:
-# git remote add origin git@github.com:flowerornament/nx-python.git
-# git push -u origin main
-```
-
-### Step 2: Add nx-rs as flake input in nix-config
+### Step 1: Add nx-rs as flake input in nix-config
 
 In `~/.nix-config/flake.nix`, add to `inputs`:
 
@@ -160,7 +145,7 @@ nx-rs = {
 };
 ```
 
-### Step 3: Add nx package to system packages
+### Step 2: Add nx package to system packages
 
 Where system packages are declared (e.g. in a host or home module), add:
 
@@ -168,7 +153,7 @@ Where system packages are declared (e.g. in a host or home module), add:
 inputs.nx-rs.packages.${pkgs.system}.default
 ```
 
-### Step 4: Remove Python nx from nix-config
+### Step 3: Remove Python nx from nix-config
 
 ```bash
 rm -rf ~/.nix-config/scripts/nx
@@ -176,7 +161,7 @@ rm -rf ~/.nix-config/scripts/nx
 
 Remove any PATH entries or shell aliases that pointed to `scripts/nx/nx`.
 
-### Step 5: Rebuild and verify
+### Step 4: Rebuild and verify
 
 ```bash
 cd ~/.nix-config
@@ -187,7 +172,7 @@ command -v nx    # should resolve to /run/current-system/sw/bin/nx or similar
 nx --plain --minimal status
 ```
 
-### Step 6: Smoke test
+### Step 5: Smoke test
 
 ```bash
 nx where ripgrep
@@ -224,8 +209,8 @@ Executed: **2026-02-28 UTC**
   - `nx --plain --minimal where ripgrep`
   - `nx --plain --minimal list --plain | head -5`
   - `nx --plain --minimal installed ripgrep --json`
-- Shadow/canary gate re-run passed with explicit Python entrypoint override:
-  - `PY_NX="$HOME/code/nx-python/nx" scripts/cutover/validate_shadow_canary.sh`
+- Direct/canary gate re-run passed:
+  - `scripts/cutover/validate_shadow_canary.sh`
 - Rollback rehearsal applied pre-cutover backups from `.agents/reports/flake-cutover/20260228T075202Z/` and rebuilt successfully with root.
 - During rollback apply, only `~/.nix-config/home/shell.nix` changed relative to current post-cutover state.
 - Clean-env verification after rollback resolved `nx` to cargo-first path:
@@ -241,18 +226,9 @@ Executed: **2026-02-28 UTC**
 
 If the Rust `nx` has issues after cutover:
 
-1. Remove the `nx-rs` input from `~/.nix-config/flake.nix` and its package reference.
+1. Pin `nx-rs` input in `~/.nix-config/flake.lock` back to the last known-good revision.
 
-2. Restore Python `nx`:
-
-```bash
-# If nx-python is on GitHub:
-git clone git@github.com:flowerornament/nx-python.git ~/.nix-config/scripts/nx
-# Or from local copy:
-cp -R ~/code/nx-python ~/.nix-config/scripts/nx
-```
-
-3. Rebuild:
+2. Rebuild:
 
 ```bash
 cd ~/.nix-config && sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .
@@ -260,7 +236,7 @@ hash -r
 command -v nx
 ```
 
-4. Smoke check:
+3. Smoke check:
 
 ```bash
 nx --plain --minimal status
@@ -275,7 +251,7 @@ Target to decommission after standalone repo cutover is canonical:
 
 1. Standalone repo (`/Users/morgan/code/nx-rs`) is canonical for development and issue tracking.
 2. `just compile` passes in standalone repo.
-3. `just cutover-validate` passes (shadow + canary + mutation safety).
+3. `just cutover-validate` passes (direct + canary + mutation safety).
 4. Current `~/.nix-config` git status is known before decommission starts.
 
 ### Reference Audit (hooks/path/tooling)

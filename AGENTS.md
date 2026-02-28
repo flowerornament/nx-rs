@@ -30,7 +30,7 @@ Primary priorities:
 - Migration history/context: `.agents/MIGRATION_PLAN.md`
 - Verified operational learnings: `.agents/LEARNINGS.md`
 - Cutover runbook and rollback criteria: `.agents/CUTOVER_PLAYBOOK.md`
-- Python reference implementation: `~/code/nx-python/`
+- Archived Python reference implementation (historical): `~/code/nx-python/`
 - Legacy context repo: `~/.nix-config`
 
 ## Toolchain And Workflow
@@ -61,13 +61,12 @@ Quality gates:
 | Check | `just check` | `cargo check`, all targets/features |
 | **Full CI gate** | **`just ci`** | fmt-check + lint + test + check in sequence |
 | System tests | `just test-system` | Integration matrix with deterministic stubs |
-| Parity (Python) | `just parity-check` | Validates Python reference against captured baselines |
-| Parity (Rust) | `just parity-check-rust` | Validates Rust candidate against same baselines |
-| Cutover validation | `just cutover-validate` | Shadow/canary comparison of Rust vs Python on `~/.nix-config` |
+| Parity (Rust) | `just parity-check` / `just parity-check-rust` | Validates Rust candidate against captured baselines |
+| Cutover validation | `just cutover-validate` | Rust direct/canary validation on `~/.nix-config` |
 
 All flags use `--workspace --all-targets --all-features`. Clippy treats warnings as errors.
 
-Run `just ci` before finishing any code change. For parity-sensitive or release-adjacent changes, also run `just parity-check-rust` and `just cutover-validate`.
+Run `just ci` before finishing any code change. For parity-sensitive or release-adjacent changes, also run `just parity-check` and `just cutover-validate`.
 
 Agent hook pipeline (`just compile` runs this full sequence):
 

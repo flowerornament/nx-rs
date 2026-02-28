@@ -3,25 +3,8 @@ set -euo pipefail
 
 WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NIX_CONFIG_ROOT="${NIX_CONFIG_ROOT:-$HOME/.nix-config}"
-DEFAULT_PY_NX="$HOME/code/nx-python/nx"
-LEGACY_PY_NX="$NIX_CONFIG_ROOT/scripts/nx/nx"
-PY_NX="${PY_NX:-}"
-
-if [[ -z "$PY_NX" ]]; then
-  if [[ -x "$DEFAULT_PY_NX" ]]; then
-    PY_NX="$DEFAULT_PY_NX"
-  else
-    PY_NX="$LEGACY_PY_NX"
-  fi
-fi
-
 RUST_NX="${RUST_NX:-$WORKSPACE_ROOT/target/debug/nx}"
 REPORT_PATH="${1:-}"
-
-if [[ ! -x "$PY_NX" ]]; then
-  echo "python nx entrypoint not found or not executable: $PY_NX" >&2
-  exit 2
-fi
 
 if [[ ! -x "$RUST_NX" ]]; then
   (cd "$WORKSPACE_ROOT" && cargo build --quiet --bin nx)
@@ -44,25 +27,13 @@ RUN_AT="$(date '+%Y-%m-%d %H:%M:%S %Z')"
 export NIX_CONFIG_ROOT_NORM="$NIX_CONFIG_ROOT"
 export HOME_NORM="$HOME"
 
-declare -a SHADOW_ROWS=()
+declare -a DIRECT_ROWS=()
 declare -a CANARY_ROWS=()
-declare -a SHADOW_FAIL_DETAILS=()
-SHADOW_ALL_PASS=yes
+declare -a FAILURE_DETAILS=()
+DIRECT_ALL_PASS=yes
 CANARY_ALL_PASS=yes
 
 GIT_BEFORE="$(git -C "$NIX_CONFIG_ROOT" status --porcelain=v1 --untracked-files=all)"
-
-normalize_file() {
-  local input="$1"
-  local output="$2"
-
-  perl -CSDA -pe '
-    s/\r\n/\n/g;
-    s/\Q$ENV{NIX_CONFIG_ROOT_NORM}\E/<REPO_ROOT>/g if defined $ENV{NIX_CONFIG_ROOT_NORM};
-    s/\Q$ENV{HOME_NORM}\E/<HOME>/g if defined $ENV{HOME_NORM};
-    s/[ \t]+$//;
-  ' "$input" >"$output"
-}
 
 cmd_display() {
   local rendered
@@ -70,73 +41,34 @@ cmd_display() {
   printf '%s' "${rendered% }"
 }
 
-record_shadow_case() {
+record_direct_case() {
   local id="$1"
   shift
 
-  local case_dir="$TMP_DIR/shadow-$id"
+  local case_dir="$TMP_DIR/direct-$id"
   mkdir -p "$case_dir"
 
   set +e
   env B2NIX_REPO_ROOT="$NIX_CONFIG_ROOT" NO_COLOR=1 TERM=dumb \
-    "$PY_NX" --plain --minimal "$@" >"$case_dir/py.stdout" 2>"$case_dir/py.stderr"
-  local py_ec=$?
-  env B2NIX_REPO_ROOT="$NIX_CONFIG_ROOT" NO_COLOR=1 TERM=dumb \
-    "$RUST_NX" --plain --minimal "$@" >"$case_dir/rs.stdout" 2>"$case_dir/rs.stderr"
-  local rs_ec=$?
+    "$RUST_NX" --plain --minimal "$@" >"$case_dir/stdout" 2>"$case_dir/stderr"
+  local ec=$?
   set -e
 
-  normalize_file "$case_dir/py.stdout" "$case_dir/py.stdout.norm"
-  normalize_file "$case_dir/py.stderr" "$case_dir/py.stderr.norm"
-  normalize_file "$case_dir/rs.stdout" "$case_dir/rs.stdout.norm"
-  normalize_file "$case_dir/rs.stderr" "$case_dir/rs.stderr.norm"
-
-  local exit_match=no
-  local stdout_match=no
-  local stderr_match=no
   local pass=no
-
-  if [[ "$py_ec" -eq "$rs_ec" ]]; then
-    exit_match=yes
-  fi
-  if cmp -s "$case_dir/py.stdout.norm" "$case_dir/rs.stdout.norm"; then
-    stdout_match=yes
-  fi
-  if cmp -s "$case_dir/py.stderr.norm" "$case_dir/rs.stderr.norm"; then
-    stderr_match=yes
-  fi
-
-  if [[ "$exit_match" == yes && "$stdout_match" == yes && "$stderr_match" == yes ]]; then
+  if [[ "$ec" -eq 0 ]]; then
     pass=yes
   else
-    SHADOW_ALL_PASS=no
-
-    if [[ "$stdout_match" == no ]]; then
-      local stdout_diff
-      stdout_diff="$(
-        diff -u "$case_dir/py.stdout.norm" "$case_dir/rs.stdout.norm" \
-          | sed -n '1,120p' \
-          || true
-      )"
-      SHADOW_FAIL_DETAILS+=(
-        $'### '"$id"$' stdout mismatch\n\n```diff\n'"$stdout_diff"$'\n```'
-      )
-    fi
-
-    if [[ "$stderr_match" == no ]]; then
-      local stderr_diff
-      stderr_diff="$(
-        diff -u "$case_dir/py.stderr.norm" "$case_dir/rs.stderr.norm" \
-          | sed -n '1,120p' \
-          || true
-      )"
-      SHADOW_FAIL_DETAILS+=(
-        $'### '"$id"$' stderr mismatch\n\n```diff\n'"$stderr_diff"$'\n```'
-      )
-    fi
+    DIRECT_ALL_PASS=no
+    local stdout_preview
+    stdout_preview="$(sed -n '1,120p' "$case_dir/stdout" || true)"
+    local stderr_preview
+    stderr_preview="$(sed -n '1,120p' "$case_dir/stderr" || true)"
+    FAILURE_DETAILS+=(
+      $'### '\"$id\"$' failed\n\n```text\n'$'stdout:\n'\"$stdout_preview\"$'\n\nstderr:\n'\"$stderr_preview\"$'\n```'
+    )
   fi
 
-  SHADOW_ROWS+=("| $id | $(cmd_display "$@") | $py_ec | $rs_ec | $stdout_match | $stderr_match | $pass |")
+  DIRECT_ROWS+=("| $id | $(cmd_display "$@") | $ec | $pass |")
 }
 
 CANARY_BIN="$TMP_DIR/canary-bin"
@@ -152,7 +84,7 @@ record_canary_case() {
 
   set +e
   env PATH="$CANARY_BIN:$PATH" B2NIX_REPO_ROOT="$NIX_CONFIG_ROOT" NO_COLOR=1 TERM=dumb \
-    nx --plain --minimal "$@" >"$case_dir/canary.stdout" 2>"$case_dir/canary.stderr"
+    nx --plain --minimal "$@" >"$case_dir/stdout" 2>"$case_dir/stderr"
   local ec=$?
   set -e
 
@@ -161,6 +93,13 @@ record_canary_case() {
     pass=yes
   else
     CANARY_ALL_PASS=no
+    local stdout_preview
+    stdout_preview="$(sed -n '1,120p' "$case_dir/stdout" || true)"
+    local stderr_preview
+    stderr_preview="$(sed -n '1,120p' "$case_dir/stderr" || true)"
+    FAILURE_DETAILS+=(
+      $'### '\"$id\"$' canary failed\n\n```text\n'$'stdout:\n'\"$stdout_preview\"$'\n\nstderr:\n'\"$stderr_preview\"$'\n```'
+    )
   fi
 
   CANARY_ROWS+=("| $id | nx --plain --minimal $(cmd_display "$@") | $ec | $pass |")
@@ -168,7 +107,7 @@ record_canary_case() {
 
 PACKAGE_LIST="$(
   env B2NIX_REPO_ROOT="$NIX_CONFIG_ROOT" NO_COLOR=1 TERM=dumb \
-    "$PY_NX" --plain --minimal list --plain \
+    "$RUST_NX" --plain --minimal list --plain \
     | awk 'NF {gsub(/^ +/, "", $0); print}'
 )"
 
@@ -189,14 +128,14 @@ fi
 
 MISSING_PACKAGE="not-a-real-package-nxrs-cutover"
 
-record_shadow_case "where_found" where "$PACKAGE_SAMPLE"
-record_shadow_case "where_not_found" where "$MISSING_PACKAGE"
-record_shadow_case "list_plain" list --plain
-record_shadow_case "status" status
-record_shadow_case "installed_json" installed "$PACKAGE_SAMPLE" --json
-record_shadow_case "info_json_not_found" info "$MISSING_PACKAGE" --json
-record_shadow_case "install_dry_run" install --dry-run "$PACKAGE_SAMPLE"
-record_shadow_case "remove_dry_run" remove --dry-run "$PACKAGE_SAMPLE"
+record_direct_case "where_found" where "$PACKAGE_SAMPLE"
+record_direct_case "where_not_found" where "$MISSING_PACKAGE"
+record_direct_case "list_plain" list --plain
+record_direct_case "status" status
+record_direct_case "installed_json" installed "$PACKAGE_SAMPLE" --json
+record_direct_case "info_json_not_found" info "$MISSING_PACKAGE" --json
+record_direct_case "install_dry_run" install --dry-run "$PACKAGE_SAMPLE"
+record_direct_case "remove_dry_run" remove --dry-run "$PACKAGE_SAMPLE"
 
 record_canary_case "status" status
 record_canary_case "where_found" where "$PACKAGE_SAMPLE"
@@ -212,12 +151,12 @@ if [[ "$GIT_BEFORE" != "$GIT_AFTER" ]]; then
   MUTATION_DIFF="$(diff -u "$TMP_DIR/git-before.txt" "$TMP_DIR/git-after.txt" || true)"
 fi
 
-SHADOW_ROWS_TEXT="$(printf '%s\n' "${SHADOW_ROWS[@]}")"
+DIRECT_ROWS_TEXT="$(printf '%s\n' "${DIRECT_ROWS[@]}")"
 CANARY_ROWS_TEXT="$(printf '%s\n' "${CANARY_ROWS[@]}")"
-SHADOW_FAIL_DETAILS_TEXT="$(printf '%s\n\n' "${SHADOW_FAIL_DETAILS[@]}")"
+FAILURE_DETAILS_TEXT="$(printf '%s\n\n' "${FAILURE_DETAILS[@]}")"
 
 OVERALL_DECISION=no
-if [[ "$SHADOW_ALL_PASS" == yes && "$CANARY_ALL_PASS" == yes && "$MUTATION_SAFE" == yes ]]; then
+if [[ "$DIRECT_ALL_PASS" == yes && "$CANARY_ALL_PASS" == yes && "$MUTATION_SAFE" == yes ]]; then
   OVERALL_DECISION=yes
 fi
 
@@ -227,17 +166,16 @@ REPORT="$(cat <<EOF_REPORT
 - Executed: $RUN_AT
 - Workspace: $WORKSPACE_ROOT
 - nix-config root: $NIX_CONFIG_ROOT
-- Python nx: $PY_NX
 - Rust nx-rs: $RUST_NX
 - Sample installed package used in checks: $PACKAGE_SAMPLE
 
-## Shadow Matrix (Python vs Rust)
+## Direct Matrix (Rust Binary)
 
-| Case | Command Args | Python Exit | Rust Exit | Stdout Match | Stderr Match | Pass |
-| --- | --- | --- | --- | --- | --- | --- |
-$SHADOW_ROWS_TEXT
+| Case | Command Args | Exit | Pass |
+| --- | --- | --- | --- |
+$DIRECT_ROWS_TEXT
 
-Shadow matrix all pass: $SHADOW_ALL_PASS
+Direct matrix all pass: $DIRECT_ALL_PASS
 
 ## Canary Matrix (PATH-preferred nx-rs)
 
@@ -253,13 +191,13 @@ Git status unchanged after all checks: $MUTATION_SAFE
 
 ## Overall Gate
 
-All gates pass (shadow + canary + mutation safety): $OVERALL_DECISION
+All gates pass (direct + canary + mutation safety): $OVERALL_DECISION
 EOF_REPORT
 )"
 
-if [[ "${#SHADOW_FAIL_DETAILS[@]}" -gt 0 ]]; then
-  REPORT+=$'\n\n## Shadow Failure Details\n\n'
-  REPORT+="$SHADOW_FAIL_DETAILS_TEXT"
+if [[ "${#FAILURE_DETAILS[@]}" -gt 0 ]]; then
+  REPORT+=$'\n\n## Failure Details\n\n'
+  REPORT+="$FAILURE_DETAILS_TEXT"
 fi
 
 if [[ "$MUTATION_SAFE" == no ]]; then

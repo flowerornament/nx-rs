@@ -846,7 +846,7 @@ const MATRIX_CASES: &[MatrixCase] = &[
 #[test]
 fn system_command_matrix() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_base = workspace_root.join("tests/fixtures/parity/repo_base");
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
     let nx_bin = resolve_nx_bin(&workspace_root)?;
 
     for case in MATRIX_CASES {

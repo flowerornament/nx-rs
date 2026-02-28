@@ -93,23 +93,12 @@ GO for full PATH replacement only if all are true:
 
 NO-GO if any gate fails.
 
-## Current Parity Evidence (2026-02-27 PST / 2026-02-28 UTC)
-
-Validated parity harness totals:
-- Rust target (`just parity-check` / `just parity-check-rust`): **68/68 parity-enabled cases passing**.
-- Fixture inventory (`tests/fixtures/parity/cases.json`): **68 total cases** (8 Rust-only cases).
-
-Coverage spans all command families: query (`where`, `list`, `info`, `status`, `installed`), mutation (`install`, `remove`), system (`update`, `test`, `rebuild`, `upgrade`), and undo flows with setup variants.
-
-SPEC v1.0 remains reconciled to Python source audit, with clause-level closure tracked in `.agents/spec_traceability_matrix_v1.tsv`.
-
 ## Current Decision
 
 As of **2026-02-27 PST** (2026-02-28 UTC): **GO** for full production PATH replacement.
 
 Evidence trail:
 - Direct/canary cutover validation passed (2026-02-28 08:04:08 PST).
-- Rust parity harness verified (`68/68` Rust target) on 2026-02-28 PST / 2026-02-28 UTC.
 - SPEC reconciled to v1.0 against Python source audit (2026-02-16).
 - `just ci` green (fmt + clippy + test + check) on 2026-02-27 PST / 2026-02-28 UTC (transcript archived in the same gate bundle directory).
 - Legacy in-tree copy decommissioned and quarantined.
@@ -121,7 +110,7 @@ Parity with Python was a cutover acceptance criterion and is treated as complete
 Operating policy:
 
 1. Normal development and release work uses `just ci` as the standing quality gate.
-2. `just parity-check` (or `just parity-check-rust`) and `just cutover-validate` remain available as ad hoc forensic tools when debugging suspected behavior drift or doing exceptional migration/recovery work.
+2. `just test-system` and `just cutover-validate` remain available as ad hoc forensic tools when debugging suspected behavior drift or doing exceptional migration/recovery work.
 3. There is no recurring weekly/monthly parity validation schedule.
 
 ## Flake Cutover Procedure

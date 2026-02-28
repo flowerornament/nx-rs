@@ -61,12 +61,11 @@ Quality gates:
 | Check | `just check` | `cargo check`, all targets/features |
 | **Full CI gate** | **`just ci`** | fmt-check + lint + test + check in sequence |
 | System tests | `just test-system` | Integration matrix with deterministic stubs |
-| Parity (Rust) | `just parity-check` / `just parity-check-rust` | Validates Rust candidate against captured baselines |
 | Cutover validation | `just cutover-validate` | Rust direct/canary validation on `~/.nix-config` |
 
 All flags use `--workspace --all-targets --all-features`. Clippy treats warnings as errors.
 
-Run `just ci` before finishing any code change. For parity-sensitive or release-adjacent changes, also run `just parity-check` and `just cutover-validate`.
+Run `just ci` before finishing any code change. For release-adjacent changes, also run `just test-system` and `just cutover-validate`.
 
 Agent hook pipeline (`just compile` runs this full sequence):
 

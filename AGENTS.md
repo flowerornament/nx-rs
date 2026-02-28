@@ -2,7 +2,7 @@
 
 ## Project Goal
 
-Migrate `nx` from Python to Rust with clean, idiomatic, easy-to-read code while preserving current behavior and safety contracts.
+Maintain and evolve `nx-rs` as the canonical `nx` implementation with clean, idiomatic, easy-to-read Rust while preserving behavior and safety contracts.
 
 `nx` is a hand-rolled tool for managing the Nix configuration on this--and eventually other--machines. The config is at `~/.nix-config`.
 
@@ -16,7 +16,7 @@ Primary priorities:
 ## Guidelines
 
 1. Treat `.agents/SPEC.md` as the behavior contract.
-2. Follow `.agents/MIGRATION_PLAN.md` as the authoritative implementation plan.
+2. Treat `.agents/MIGRATION_PLAN.md` as historical migration context; use `.agents/CUTOVER_PLAYBOOK.md` and `.agents/SPEC.md` for current maintenance decisions.
 3. Prefer libraries when they simplify code or reduce LOC.
 4. Use a functional-first style: pure transforms and explicit side-effect boundaries.
 5. Design types up front to encode invariants before implementing command flows.
@@ -27,7 +27,7 @@ Primary priorities:
 ## Key Documents
 
 - Behavior contract: `.agents/SPEC.md`
-- Authoritative migration plan: `.agents/MIGRATION_PLAN.md`
+- Migration history/context: `.agents/MIGRATION_PLAN.md`
 - Verified operational learnings: `.agents/LEARNINGS.md`
 - Cutover runbook and rollback criteria: `.agents/CUTOVER_PLAYBOOK.md`
 - Python reference implementation: `~/code/nx-python/`
@@ -67,7 +67,7 @@ Quality gates:
 
 All flags use `--workspace --all-targets --all-features`. Clippy treats warnings as errors.
 
-Run `just ci` before finishing any code change. For migration-specific validation, also run `just parity-check-rust` and `just cutover-validate`.
+Run `just ci` before finishing any code change. For parity-sensitive or release-adjacent changes, also run `just parity-check-rust` and `just cutover-validate`.
 
 Agent hook pipeline (`just compile` runs this full sequence):
 
@@ -85,7 +85,7 @@ Tracking model:
 - `bd` is the only source of truth for executable tasks, dependencies, and status.
 - Do not track task checklists or status in markdown docs.
 - Use this repo's tracker at `./.beads`.
-- Current active migration continuation epic is `nx-rs-0a1`.
+- Use `bd ready` to identify the active epic/task set for the current session.
 - Historical migration execution in `~/.nix-config` was tracked under `morgan-pnv`.
 - Do not track any state in markdown docs
 - Avoid duplicating information between AGENTS.md and other markdown docs

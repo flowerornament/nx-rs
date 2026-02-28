@@ -1,81 +1,82 @@
-# nx
+# nx-rs
 
-Multi-source package installer for nix-darwin.
+Rust implementation of `nx` for nix-darwin package management.
 
-`nx` manages packages across nixpkgs, Homebrew, casks, NUR, Mac App Store, and flake inputs from a single CLI. It edits your nix-darwin config files directly, so `darwin-rebuild switch` picks up changes.
+## Status
+
+- Migration and cutover are complete.
+- `nx-rs` is the canonical implementation.
+- Python `nx` remains only as a parity reference at `~/code/nx-python`.
 
 ## Quick Start
 
 ```bash
-nx ripgrep          # search all sources, install best match
-nx install --cask firefox   # explicit cask install (skips search)
-nx remove ripgrep   # remove from config
-nx upgrade          # update flake inputs + brew + rebuild
-nx rebuild          # darwin-rebuild switch
-nx where ripgrep    # show which config file contains it
-nx list             # list all installed packages by source
+nx ripgrep
+nx install --cask firefox
+nx remove ripgrep
+nx where ripgrep
+nx list --plain
+nx status
+nx upgrade
 ```
 
-Bare package names are treated as `install`:
+Bare package names are interpreted as `install`:
 
 ```bash
-nx ripgrep          # equivalent to: nx install ripgrep
-```
-
-Typos are caught before they become broken installs:
-
-```bash
-nx rebuiild         # error: unknown command 'rebuiild'. Did you mean 'rebuild'?
+nx ripgrep    # equivalent to: nx install ripgrep
 ```
 
 ## Install
 
-Requires Rust 1.92+ (pinned in `rust-toolchain.toml`).
+Production (via flake) should be managed from `~/.nix-config`:
+
+```nix
+# flake.nix inputs
+nx-rs = {
+  url = "github:flowerornament/nx-rs";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+
+# package list/module
+inputs.nx-rs.packages.${pkgs.system}.default
+```
+
+Development/local install:
 
 ```bash
 cargo install --path .
 ```
 
-Or use `just` for development:
+## Behavior Contract
+
+- Contract source: `.agents/SPEC.md`
+- Operational playbook: `.agents/CUTOVER_PLAYBOOK.md`
+- Ongoing learnings: `.agents/LEARNINGS.md`
+
+## Maintenance Gates
+
+Run these checks on the documented cadence (or before release-sensitive changes):
 
 ```bash
-just doctor         # verify toolchain
-just ci             # fmt + clippy + test + check
+just ci
+just parity-check-rust
+PY_NX="$HOME/code/nx-python/nx" just cutover-validate
 ```
 
-## How It Works
+Monthly cross-implementation parity:
 
-1. **Search** - queries nixpkgs, Homebrew, NUR, flake inputs in parallel
-2. **Route** - picks the best source by confidence score and preference
-3. **Edit** - inserts the package into the correct `.nix` config file
-4. **Rebuild** - `nx rebuild` applies changes via `darwin-rebuild switch`
-
-Config repo location: `~/.nix-config`
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `install <pkg>` | Search and install a package |
-| `remove <pkg>` | Remove a package from config |
-| `where <pkg>` | Show config file location |
-| `list [source]` | List installed packages |
-| `info <pkg>` | Show package details |
-| `installed <pkg>` | Check if installed |
-| `status` | Show system status |
-| `update` | Update flake inputs only |
-| `upgrade` | Full upgrade (flake + brew + rebuild) |
-| `rebuild` | darwin-rebuild switch |
-| `test` | Run config tests |
-| `undo` | Revert uncommitted config changes |
+```bash
+just parity-check
+```
 
 ## Development
 
 ```bash
-just help           # show all workflows
-just guard          # strict pre-compile checks
-just compile        # guard + cargo check
-just ci             # fmt + clippy + test + check
+just help
+just doctor
+just guard
+just compile
+just ci
 ```
 
 ## License

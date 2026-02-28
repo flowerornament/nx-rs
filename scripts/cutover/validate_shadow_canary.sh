@@ -3,7 +3,18 @@ set -euo pipefail
 
 WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NIX_CONFIG_ROOT="${NIX_CONFIG_ROOT:-$HOME/.nix-config}"
-PY_NX="${PY_NX:-$NIX_CONFIG_ROOT/scripts/nx/nx}"
+DEFAULT_PY_NX="$HOME/code/nx-python/nx"
+LEGACY_PY_NX="$NIX_CONFIG_ROOT/scripts/nx/nx"
+PY_NX="${PY_NX:-}"
+
+if [[ -z "$PY_NX" ]]; then
+  if [[ -x "$DEFAULT_PY_NX" ]]; then
+    PY_NX="$DEFAULT_PY_NX"
+  else
+    PY_NX="$LEGACY_PY_NX"
+  fi
+fi
+
 RUST_NX="${RUST_NX:-$WORKSPACE_ROOT/target/debug/nx}"
 REPORT_PATH="${1:-}"
 

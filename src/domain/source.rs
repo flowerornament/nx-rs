@@ -38,7 +38,7 @@ impl PackageSource {
     }
 
     /// Parse from user-facing or serialized string (case-insensitive).
-    #[allow(dead_code)] // consumed by cache deserialization and CLI parsing
+    #[allow(dead_code)] // retained for source parsing from external cache/CLI strings
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
             "nxs" => Some(Self::Nxs),
@@ -59,7 +59,6 @@ impl PackageSource {
 
 /// Result from searching a package source.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // consumed by infra::sources and install command (.13)
 pub struct SourceResult {
     pub name: String,
     pub source: PackageSource,
@@ -71,7 +70,6 @@ pub struct SourceResult {
     pub flake_url: Option<String>,
 }
 
-#[allow(dead_code)] // consumed by infra::sources and install command (.13)
 impl SourceResult {
     pub fn new(name: impl Into<String>, source: PackageSource) -> Self {
         Self {
@@ -89,7 +87,6 @@ impl SourceResult {
 
 /// User preferences for source selection.
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)] // consumed by infra::sources and install command (.13)
 #[allow(clippy::struct_excessive_bools)] // Source selection is modeled as orthogonal switches.
 pub struct SourcePreferences {
     pub bleeding_edge: bool,
@@ -101,7 +98,6 @@ pub struct SourcePreferences {
 
 /// Typed intermediate from `nix search --json` output.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // consumed by infra::sources
 pub struct NixSearchEntry {
     pub attr_path: String,
     pub pname: String,
@@ -142,7 +138,6 @@ static NAME_MAPPINGS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::
 
 /// Language package prefixes that need `withPackages` treatment.
 /// Maps attr prefix -> (runtime, method).
-#[allow(dead_code)] // consumed by infra::sources
 pub const LANG_PACKAGE_PREFIXES: &[(&str, &str, &str)] = &[
     ("python3Packages.", "python3", "withPackages"),
     ("python311Packages.", "python3", "withPackages"),
@@ -161,7 +156,6 @@ pub const LANG_PACKAGE_PREFIXES: &[(&str, &str, &str)] = &[
 
 /// Known overlays and the packages they replace/provide.
 /// Maps `package_name` -> `(overlay_name, attr_in_overlay, description)`.
-#[allow(dead_code)] // consumed by infra::sources
 pub static OVERLAY_PACKAGES: LazyLock<
     HashMap<&'static str, (&'static str, &'static str, &'static str)>,
 > = LazyLock::new(|| {
@@ -221,7 +215,6 @@ pub fn normalize_name(name: &str) -> String {
 }
 
 /// Resolve common aliases case-insensitively (returns mapped or original).
-#[allow(dead_code)] // consumed by infra::sources
 pub fn mapped_name(name: &str) -> String {
     let lower = name.to_lowercase();
     NAME_MAPPINGS
@@ -232,7 +225,6 @@ pub fn mapped_name(name: &str) -> String {
 /// Detect if a package is a language-specific package.
 ///
 /// Returns `(bare_name, runtime, method)` or `None`.
-#[allow(dead_code)] // consumed by infra::sources
 pub fn detect_language_package(name: &str) -> Option<(&str, &str, &str)> {
     for &(prefix, runtime, method) in LANG_PACKAGE_PREFIXES {
         if let Some(bare) = name.strip_prefix(prefix)
@@ -245,7 +237,6 @@ pub fn detect_language_package(name: &str) -> Option<(&str, &str, &str)> {
 }
 
 /// Strip the `legacyPackages.<arch>` prefix from a nix attribute path.
-#[allow(dead_code)] // consumed by infra::sources
 pub fn clean_attr_path(attr: &str) -> &str {
     if let Some(rest) = attr.strip_prefix("legacyPackages.") {
         // Skip the arch segment: find the second dot after the prefix
@@ -257,7 +248,6 @@ pub fn clean_attr_path(attr: &str) -> &str {
 }
 
 /// Strip non-alphanumeric characters for normalized comparison.
-#[allow(dead_code)] // consumed by score_match, search_name_variants
 fn strip_separators(s: &str) -> String {
     static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9]+").unwrap());
     RE.replace_all(&s.to_lowercase(), "").into_owned()
@@ -303,7 +293,6 @@ const NESTING_PENALTY_PER_LEVEL: f64 = 0.1;
 ///
 /// Prefers root-level packages (pkgs.redis) over nested ones
 /// (`pkgs.chickenPackages.eggs.redis`). Returns 0.0-1.0.
-#[allow(dead_code)] // consumed by infra::sources
 pub fn score_match(search_name: &str, attr: &str, pname: &str) -> f64 {
     let parts: Vec<&str> = attr.split('.').collect();
     let tail = parts.last().copied().unwrap_or(attr);
@@ -387,7 +376,6 @@ pub fn score_match(search_name: &str, attr: &str, pname: &str) -> f64 {
 }
 
 /// Extract a `NixSearchEntry` from a JSON object map.
-#[allow(dead_code)] // consumed by parse_nix_search_results
 fn entry_from_obj(obj: &serde_json::Map<String, Value>, fallback_attr: &str) -> NixSearchEntry {
     let str_field = |key| {
         obj.get(key)
@@ -411,7 +399,6 @@ fn entry_from_obj(obj: &serde_json::Map<String, Value>, fallback_attr: &str) -> 
 ///
 /// Handles both dict format (`attrPath -> {pname, description, ...}`)
 /// and list format.
-#[allow(dead_code)] // consumed by infra::sources
 pub fn parse_nix_search_results(data: &Value) -> Vec<NixSearchEntry> {
     match data {
         Value::Object(map) => map
@@ -434,7 +421,6 @@ pub fn parse_nix_search_results(data: &Value) -> Vec<NixSearchEntry> {
 }
 
 /// Generate search name variants: mapped name, original, compact (max 3).
-#[allow(dead_code)] // consumed by infra::sources
 pub fn search_name_variants(name: &str) -> Vec<String> {
     let mut variants = Vec::with_capacity(3);
     let mapped = mapped_name(name);
@@ -454,7 +440,6 @@ pub fn search_name_variants(name: &str) -> Vec<String> {
 }
 
 /// Return the current Nix system identifier (e.g., `aarch64-darwin`).
-#[allow(dead_code)] // consumed by infra::sources
 pub const fn get_current_system() -> &'static str {
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     {
@@ -475,7 +460,6 @@ pub const fn get_current_system() -> &'static str {
 }
 
 /// Sort results in-place by source priority and confidence.
-#[allow(dead_code)] // consumed by infra::sources
 pub fn sort_results(results: &mut [SourceResult], prefs: &SourcePreferences) {
     let priority = |source: PackageSource| -> u8 {
         if prefs.bleeding_edge {
@@ -512,7 +496,6 @@ pub fn sort_results(results: &mut [SourceResult], prefs: &SourcePreferences) {
 }
 
 /// Remove duplicate results by `(source, attr)`, preserving order.
-#[allow(dead_code)] // consumed by infra::sources
 pub fn deduplicate_results(results: Vec<SourceResult>) -> Vec<SourceResult> {
     let mut seen = std::collections::HashSet::new();
     results
@@ -525,7 +508,6 @@ pub fn deduplicate_results(results: Vec<SourceResult>) -> Vec<SourceResult> {
 ///
 /// Returns `(available, reason)`. Permissive when platforms is not a
 /// string list or is empty.
-#[allow(dead_code)] // consumed by infra::sources
 pub fn check_platforms(platforms: &Value, current_system: &str) -> (bool, Option<String>) {
     let arr = match platforms.as_array() {
         Some(a) if !a.is_empty() => a,

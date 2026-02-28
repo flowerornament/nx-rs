@@ -418,6 +418,7 @@ struct SearchBatch {
 
 enum SearchCallResult {
     Results(Vec<SourceResult>),
+    #[allow(dead_code)] // retained for deterministic failure simulation in orchestration tests
     Failed,
 }
 

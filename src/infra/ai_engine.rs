@@ -63,7 +63,6 @@ pub trait AiEngine: Send + Sync {
     fn supports_flake_input(&self) -> bool;
 
     /// Human-readable engine name.
-    #[allow(dead_code)] // tested; consumed by install logging in future phase
     fn name(&self) -> &'static str;
 }
 
@@ -457,7 +456,6 @@ pub fn build_remove_prompt(package: &str, file_path: &str) -> String {
 }
 
 /// Build an edit prompt from a resolved install plan (fallback for complex edits).
-#[allow(dead_code)] // tested; consumed by install AI edit path in future phase
 pub fn build_edit_prompt(plan: &InstallPlan) -> String {
     let target = plan.target_file.to_string_lossy();
 

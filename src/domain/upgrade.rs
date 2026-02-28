@@ -19,13 +19,13 @@ pub enum FlakeSourceType {
 /// Parsed flake.lock input node.
 #[derive(Debug, Clone)]
 pub struct FlakeLockInput {
-    #[allow(dead_code)] // tested; used in display/reporting in .18
+    #[allow(dead_code)] // retained for richer per-input reporting and diagnostics
     pub name: String,
     pub owner: Option<String>,
     pub repo: Option<String>,
     pub rev: String,
     pub last_modified: i64,
-    #[allow(dead_code)] // tested; used in display/filtering in .18
+    #[allow(dead_code)] // retained for source-specific upgrade filtering/reporting
     pub source_type: FlakeSourceType,
 }
 
@@ -37,9 +37,9 @@ pub struct InputChange {
     pub repo: String,
     pub old_rev: String,
     pub new_rev: String,
-    #[allow(dead_code)] // tested; used in changelog display in .18
+    #[allow(dead_code)] // retained for timestamp-aware changelog/report formatting
     pub old_modified: i64,
-    #[allow(dead_code)] // tested; used in changelog display in .18
+    #[allow(dead_code)] // retained for timestamp-aware changelog/report formatting
     pub new_modified: i64,
 }
 

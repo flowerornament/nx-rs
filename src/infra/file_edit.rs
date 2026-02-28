@@ -28,7 +28,6 @@ pub fn apply_edit(plan: &InstallPlan) -> Result<EditOutcome> {
 ///
 /// Dispatches to the per-mode remover. Idempotent: returns
 /// `file_changed: false` if the token is not found.
-#[allow(dead_code)] // wired in by install engine paths (nx-rs-8u2)
 pub fn apply_removal(plan: &InstallPlan) -> Result<EditOutcome> {
     apply_plan(plan, dispatch_remove)
 }
@@ -335,7 +334,6 @@ fn insert_mas_block(
 // or `(original_content, None)` when the token is absent (idempotent).
 
 /// Remove a bare identifier from `home.packages = with pkgs; [ ... ]`.
-#[allow(dead_code)]
 fn remove_nix_manifest(content: &str, token: &str) -> Result<(String, Option<usize>)> {
     if !nix_manifest_contains(content, token) {
         return Ok((content.to_string(), None));
@@ -357,7 +355,6 @@ fn remove_nix_manifest(content: &str, token: &str) -> Result<(String, Option<usi
 }
 
 /// Remove a bare name from the correct `runtime.withPackages (ps: ...)` block.
-#[allow(dead_code)]
 fn remove_language_package(
     content: &str,
     bare_name: &str,
@@ -380,7 +377,6 @@ fn remove_language_package(
 }
 
 /// Remove a double-quoted name from a homebrew `[ "pkg" ... ]` list.
-#[allow(dead_code)]
 fn remove_homebrew_manifest(content: &str, token: &str) -> Result<(String, Option<usize>)> {
     if !homebrew_manifest_contains(content, token) {
         return Ok((content.to_string(), None));
@@ -399,7 +395,6 @@ fn remove_homebrew_manifest(content: &str, token: &str) -> Result<(String, Optio
 }
 
 /// Remove a `"Name" = <id>;` entry from `masApps = { ... }`.
-#[allow(dead_code)]
 fn remove_mas_app(content: &str, token: &str) -> Result<(String, Option<usize>)> {
     let lines: Vec<&str> = content.lines().collect();
     let Some((block_start, block_end)) = find_mas_apps_block(&lines) else {
@@ -421,7 +416,6 @@ fn read_file(path: &Path) -> Result<String> {
 /// Reconstruct file content with a single line removed.
 ///
 /// Preserves the original trailing-newline behavior.
-#[allow(dead_code)]
 fn splice_out_line(content: &str, lines: &[&str], remove_idx: usize) -> String {
     let mut out = String::with_capacity(content.len());
     for (i, line) in lines.iter().enumerate() {
@@ -438,7 +432,6 @@ fn splice_out_line(content: &str, lines: &[&str], remove_idx: usize) -> String {
 }
 
 /// Find the line index of a bare identifier within a region.
-#[allow(dead_code)]
 fn find_ident_line(lines: &[&str], start: usize, end: usize, token: &str) -> Option<usize> {
     for (i, line) in lines.iter().enumerate().take(end).skip(start) {
         let ident = extract_bare_ident(line.trim());
@@ -450,7 +443,6 @@ fn find_ident_line(lines: &[&str], start: usize, end: usize, token: &str) -> Opt
 }
 
 /// Find the line index of a double-quoted value within a region.
-#[allow(dead_code)]
 fn find_quoted_line(lines: &[&str], start: usize, end: usize, token: &str) -> Option<usize> {
     for (i, line) in lines.iter().enumerate().take(end).skip(start) {
         if let Some(existing) = extract_quoted_value(line.trim())

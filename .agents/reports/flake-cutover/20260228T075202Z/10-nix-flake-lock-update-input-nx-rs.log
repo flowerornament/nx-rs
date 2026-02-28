@@ -1,0 +1,2 @@
+warning: '--update-input' is a deprecated alias for 'flake update' and will be removed in a future version.
+warning: Git tree '/Users/morgan/.nix-config' has uncommitted changes

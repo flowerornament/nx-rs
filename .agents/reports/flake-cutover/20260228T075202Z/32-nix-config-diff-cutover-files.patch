@@ -1,0 +1,27 @@
+diff --git a/home/shell.nix b/home/shell.nix
+index 9f2c198..2a269d5 100644
+--- a/home/shell.nix
++++ b/home/shell.nix
+@@ -3,10 +3,9 @@
+ 
+ {
+   # PATH configuration (prepended to Nix paths)
+-  # Order: user paths → Nix paths → Homebrew → system paths
++  # Order: selected user paths → Nix paths → appended user paths → Homebrew → system paths
+   home.sessionPath = [
+     "$HOME/.local/bin"
+-    "$HOME/.local/share/cargo/bin"
+     "$HOME/.local/share/bun/bin"
+     "$HOME/.nimble/bin"  # Nim packages (nimlangserver, etc.)
+   ];
+@@ -108,6 +107,10 @@
+ 
+     # Profile extra (sourced in .zprofile)
+     profileExtra = ''
++      # Keep cargo-installed tools available, but after Nix PATH entries so
++      # flake-provided binaries (for example nx) win command resolution.
++      export PATH="$PATH:$HOME/.local/share/cargo/bin"
++
+       # Homebrew - append (not prepend) so Nix packages take precedence
+       if [[ -x /opt/homebrew/bin/brew ]]; then
+         export PATH="$PATH:/opt/homebrew/bin:/opt/homebrew/sbin"

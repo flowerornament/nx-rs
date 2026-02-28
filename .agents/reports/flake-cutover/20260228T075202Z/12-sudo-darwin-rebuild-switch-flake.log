@@ -1,0 +1,124 @@
+building the system configuration...
+warning: Git tree '/Users/morgan/.nix-config' has uncommitted changes
+warning: Using 'builtins.derivation' to create a derivation named 'options.json' that references the store path '/nix/store/zkrz054gvl1dcxkw25d8lgx8l10px665-source' without a proper context. The resulting derivation will not have a correct store reference, so this is unreliable and may stop working in the future.
+these 14 derivations will be built:
+  /nix/store/shm1hlabw2b1jf1jh3i75ig01rn2hdrx-hm-session-vars.sh.drv
+  /nix/store/ks7n1arqqxfvjywaj5n9417g3vrkzv6p-home-manager-fonts.drv
+  /nix/store/1cq3i7kvaip3xhqynf9f6bhq1ia1di8c-hm_LibraryFonts.homemanagerfontsversion.drv
+  /nix/store/swx3zq2plpfww4b5cscch3ly8nkaca9b-home-manager-path.drv
+  /nix/store/xsq7nz33899jgw3pnpzaaksxiyb45m1d-user-environment.drv
+  /nix/store/2d6aw7jj63d51azkk90d3zr4357pnvsq-etc.drv
+  /nix/store/6rsr7bqzfwsszkj1kmiy9v63xfx9rscr-activation-script.drv
+  /nix/store/m68p0kg5bi7sjfbghyv927ssca9f66kg-home-manager-applications.drv
+  /nix/store/p3kh8q9k2prkjasip5c70ra93hxzxp76-hm_..zprofile.drv
+  /nix/store/zsjhabfa47iql1lq7j6irgfwds90g4av-hm_..zshenv.drv
+  /nix/store/lwp76diml1qldaxw4cz7lgfxqshn1vzh-home-manager-files.drv
+  /nix/store/axn5wwbcfcm4pjqqlnsl73caw00p3791-home-manager-generation.drv
+  /nix/store/40vbkgkl17lvvgpz22yqzgq2gmsicvph-activation-morgan.drv
+  /nix/store/r2qmqysq8zj5g78n3s2mj1vqmif8gql3-darwin-system-26.05.3bfa436.drv
+building '/nix/store/shm1hlabw2b1jf1jh3i75ig01rn2hdrx-hm-session-vars.sh.drv'...
+building '/nix/store/p3kh8q9k2prkjasip5c70ra93hxzxp76-hm_..zprofile.drv'...
+building '/nix/store/zsjhabfa47iql1lq7j6irgfwds90g4av-hm_..zshenv.drv'...
+building '/nix/store/m68p0kg5bi7sjfbghyv927ssca9f66kg-home-manager-applications.drv'...
+building '/nix/store/ks7n1arqqxfvjywaj5n9417g3vrkzv6p-home-manager-fonts.drv'...
+building '/nix/store/swx3zq2plpfww4b5cscch3ly8nkaca9b-home-manager-path.drv'...
+building '/nix/store/1cq3i7kvaip3xhqynf9f6bhq1ia1di8c-hm_LibraryFonts.homemanagerfontsversion.drv'...
+building '/nix/store/xsq7nz33899jgw3pnpzaaksxiyb45m1d-user-environment.drv'...
+building '/nix/store/6rsr7bqzfwsszkj1kmiy9v63xfx9rscr-activation-script.drv'...
+building '/nix/store/lwp76diml1qldaxw4cz7lgfxqshn1vzh-home-manager-files.drv'...
+building '/nix/store/2d6aw7jj63d51azkk90d3zr4357pnvsq-etc.drv'...
+building '/nix/store/axn5wwbcfcm4pjqqlnsl73caw00p3791-home-manager-generation.drv'...
+building '/nix/store/40vbkgkl17lvvgpz22yqzgq2gmsicvph-activation-morgan.drv'...
+building '/nix/store/r2qmqysq8zj5g78n3s2mj1vqmif8gql3-darwin-system-26.05.3bfa436.drv'...
+setting up /Applications/Nix Apps...
+setting up pam...
+applying patches...
+setting up /etc...
+user defaults...
+restarting Dock...
+setting up launchd services...
+setting up user launchd services...
+configuring networking...
+configuring application firewall...
+configuring power...
+setting up /Library/Fonts/Nix Fonts...
+setting nvram variables...
+Homebrew bundle...
+Using neurosnap/tap
+Using smart-mcp-proxy/mcpproxy
+Using steipete/tap
+Using steveyegge/beads
+Using wedow/tools
+Using crystalline
+Using deno
+Using golangci-lint
+Using mcptools
+Using neurosnap/tap/zmx
+Using nim
+Using opencode
+Using serialosc
+Using smart-mcp-proxy/mcpproxy/mcpproxy
+Using steveyegge/beads/bd
+Using vercel-cli
+Using wedow/tools/ticket
+Using yt-dlp
+Using claude-code
+Using codex
+Using flashspace
+Using fuse-t
+Using ghostty
+Using gitx
+Using resilio-sync
+Using codexbar
+`brew bundle` complete! 26 Brewfile dependencies now installed.
+Activating home-manager configuration for morgan
+Starting Home Manager activation
+Activating checkFilesChanged
+Activating checkLinkTargets
+Activating writeBoundary
+Activating cloneClaudeConfig
+Activating cloneCodexConfig
+Activating cloneOpencodeConfig
+Activating cloneSkillsConfig
+Activating setupLaunchAgents
+Activating ensureSopsSecrets
+Activating installGsdClaude
+GSD: updating Claude Code 1.22.0 -> 1.22.0
+
+[36m   ██████╗ ███████╗██████╗
+  ██╔════╝ ██╔════╝██╔══██╗
+  ██║  ███╗███████╗██║  ██║
+  ██║   ██║╚════██║██║  ██║
+  ╚██████╔╝███████║██████╔╝
+   ╚═════╝ ╚══════╝╚═════╝[0m
+
+  Get Shit Done [2mv1.22.0[0m
+  A meta-prompting, context engineering and spec-driven
+  development system for Claude Code, OpenCode, Gemini, and Codex by TÂCHES.
+
+  Installing for [36mClaude Code[0m to [36m~/.claude[0m
+
+  [32m✓[0m Installed commands/gsd
+  [32m✓[0m Installed get-shit-done
+  [32m✓[0m Installed agents
+  [32m✓[0m Installed CHANGELOG.md
+  [32m✓[0m Wrote VERSION (1.22.0)
+  [32m✓[0m Wrote package.json (CommonJS mode)
+  [32m✓[0m Installed hooks (bundled)
+  [32m✓[0m Wrote file manifest (gsd-file-manifest.json)
+  [33m⚠[0m Skipping statusline (already configured)
+    Use [36m--force-statusline[0m to replace
+
+
+  [32mDone![0m Open a blank directory in Claude Code and run [36m/gsd:new-project[0m.
+
+  [36mJoin the community:[0m https://discord.gg/gsd
+
+Activating installGsdCodex
+Activating installGsdOpencode
+Activating installPackages
+Activating migrateGhAccounts
+Activating linkGeneration
+Cleaning up orphan links from /Users/morgan
+Creating home file links in /Users/morgan
+Activating syncActionbookRustSkillPack

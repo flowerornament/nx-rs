@@ -1,0 +1,3 @@
+## main...origin/main [ahead 2]
+MM home/agents.nix
+ M home/shell.nix

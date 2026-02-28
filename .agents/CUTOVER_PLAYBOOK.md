@@ -171,7 +171,7 @@ Remove any PATH entries or shell aliases that pointed to `scripts/nx/nx`.
 ```bash
 cd ~/.nix-config
 nix flake lock --update-input nx-rs
-darwin-rebuild switch --flake .
+sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .
 hash -r
 command -v nx    # should resolve to /run/current-system/sw/bin/nx or similar
 nx --plain --minimal status
@@ -184,6 +184,26 @@ nx where ripgrep
 nx list --plain | head -5
 nx installed ripgrep --json
 ```
+
+### Latest Flake Cutover Execution Result
+
+Executed: **2026-02-28 UTC**
+
+- Rollback checkpoint captured before mutation (git status snapshots + backups for `flake.nix`, `packages/nix/cli.nix`, and `home/shell.nix`).
+- `nix flake lock --update-input nx-rs` completed (with deprecation warning for alias).
+- `darwin-rebuild switch --flake .` required root on this host; `sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .` succeeded.
+- PATH shadowing fix applied in `~/.nix-config/home/shell.nix`:
+  - removed `$HOME/.local/share/cargo/bin` from prepended `home.sessionPath`
+  - appended cargo path in `programs.zsh.profileExtra`
+- Clean login env verification now resolves `nx` to flake-managed path first:
+  - `/etc/profiles/per-user/morgan/bin/nx`
+  - then `~/.local/share/cargo/bin/nx`
+- Smoke checks passed from `~/.nix-config`:
+  - `nx --plain --minimal status`
+  - `nx where ripgrep`
+  - `nx list --plain | head -5`
+  - `nx installed ripgrep --json`
+- Archived transcripts/reports: `.agents/reports/flake-cutover/20260228T075202Z/`
 
 ## Rollback (Flake-Based)
 
@@ -203,7 +223,7 @@ cp -R ~/code/nx-python ~/.nix-config/scripts/nx
 3. Rebuild:
 
 ```bash
-cd ~/.nix-config && darwin-rebuild switch --flake .
+cd ~/.nix-config && sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .
 hash -r
 command -v nx
 ```

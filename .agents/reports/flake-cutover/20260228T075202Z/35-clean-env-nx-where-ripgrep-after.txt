@@ -1,0 +1,9 @@
++ ripgrep at packages/nix/cli.nix:18
+
+  ┌── cli.nix ───
+  │     16 │     glow          # markdown viewer in terminal
+  │     17 │     jq            # JSON processor
+  │ +   18 │     ripgrep       # grep replacement (provides 'rg')
+  │     19 │     tree          # Directory tree viewer
+  │     20 │ 
+  └────────────────────────────────────────

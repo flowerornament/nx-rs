@@ -153,3 +153,10 @@ Update rules for future agents:
 - `tests/system_command_matrix.rs` now seeds `$HOME/.cache/nix/fetcher-cache-v4.sqlite` for `upgrade_flake_update_cache_corruption_retries_once` and asserts the file is deleted after the retry path runs.
 - This closes the remaining SPEC §11 traceability gap for `stream_nix_update` cache-corruption handling in `.agents/spec_traceability_matrix_v1.tsv`.
 - Verified on 2026-02-28 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+
+26. Flake PATH cutover on this host requires explicit cargo-path de-prioritization and root rebuild invocation.
+- During cutover (`nx-rs-s52.3`), `~/.nix-config` already had `nx-rs` flake input/package wiring, but inherited shell PATH still resolved `nx` to `~/.local/share/cargo/bin/nx` before Nix profile paths.
+- Reliable fix in `~/.nix-config/home/shell.nix`: remove `$HOME/.local/share/cargo/bin` from prepended `home.sessionPath` and append it in `programs.zsh.profileExtra` (`export PATH="$PATH:$HOME/.local/share/cargo/bin"`), preserving cargo tools while letting flake-managed `nx` win resolution.
+- `darwin-rebuild switch --flake .` now fails without root on this host; use `sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .` for cutover and rollback rebuild steps.
+- Verification should use a clean login shell environment to avoid inherited PATH contamination from long-lived sessions.
+- Verified on 2026-02-28 with evidence bundle `.agents/reports/flake-cutover/20260228T075202Z/` against `~/.nix-config`.

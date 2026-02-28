@@ -102,3 +102,9 @@ Update rules for future agents:
 - Added parity fixture case `upgrade_flake_passthrough_stubbed` to lock Python/Rust behavior for `upgrade -- ...` forwarding to `nix flake update`.
 - Added `upgrade_passthrough_flake_update_args` to `tests/system_command_matrix.rs` to assert exact flake-update argv (`flake update --commit-lock-file foo`) under deterministic stubs.
 - Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.
+
+18. Upgrade command contract coverage now locks GitHub-token injection and cache-corruption retry semantics.
+- `tests/system_command_matrix.rs` now stubs `gh` and asserts `upgrade` always probes `gh auth token` before `nix flake update`.
+- Added `upgrade_flake_update_injects_access_token_option` to assert token-bearing updates include `--option access-tokens github.com=<token>`.
+- Added `upgrade_flake_update_cache_corruption_retries_once` to assert one retry after the known cache-corruption signature (`failed to insert entry: invalid object specified`).
+- Verified on 2026-02-27 with `just ci`, `just parity-check-rust`, and `PY_NX="$HOME/code/nx-python/nx" just cutover-validate`.

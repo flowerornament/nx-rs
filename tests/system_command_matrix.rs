@@ -68,6 +68,23 @@ const UPGRADE_PASSTHROUGH_ARGS: &[&str] = &[
     "--commit-lock-file",
     "foo",
 ];
+const UPGRADE_TOKEN_MODE_ARGS: &[&str] = &[
+    "upgrade",
+    "--skip-brew",
+    "--skip-rebuild",
+    "--skip-commit",
+    "--no-ai",
+];
+const UPGRADE_CACHE_RETRY_ARGS: &[&str] = &[
+    "upgrade",
+    "--skip-brew",
+    "--skip-rebuild",
+    "--skip-commit",
+    "--no-ai",
+];
+const GH_AUTH_TOKEN_ARGS: &[&str] = &["auth", "token"];
+const GH_NIXPKGS_COMPARE_ARGS: &[&str] = &["api", "repos/NixOS/nixpkgs/compare/aaaaaaa...bbbbbbb"];
+const UPGRADE_TOKEN_OPTION: &str = "github.com=ghp_system_matrix_token";
 
 const INFO_FOUND_STDOUT: &[&str] = &[
     "ripgrep (installed (nxs))",
@@ -143,6 +160,8 @@ enum StubMode {
     PreflightUntracked,
     DarwinRebuildFail,
     UpgradeFlakeChanged,
+    UpgradeWithToken,
+    UpgradeCacheCorruption,
     UndoDirty,
 }
 
@@ -159,6 +178,8 @@ impl StubMode {
             Self::PreflightUntracked => "preflight_untracked",
             Self::DarwinRebuildFail => "darwin_rebuild_fail",
             Self::UpgradeFlakeChanged => "upgrade_flake_changed",
+            Self::UpgradeWithToken => "upgrade_with_token",
+            Self::UpgradeCacheCorruption => "upgrade_cache_corruption",
             Self::UndoDirty => "undo_dirty",
         }
     }
@@ -335,7 +356,9 @@ const UNDO_CANCELLED_CALLS: &[ExpectedCall] = &[
 const NO_CALLS: &[ExpectedCall] = &[];
 
 const UPGRADE_COMMIT_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", ExpectedCwd::RepoRoot, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
+    ExpectedCall::new("gh", ExpectedCwd::RepoRoot, GH_NIXPKGS_COMPARE_ARGS),
     ExpectedCall::new(
         "git",
         ExpectedCwd::RepoRoot,
@@ -354,23 +377,46 @@ const UPGRADE_COMMIT_CALLS: &[ExpectedCall] = &[
     ),
 ];
 
-const UPGRADE_SKIP_COMMIT_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
-    "nix",
-    ExpectedCwd::RepoRoot,
-    &["flake", "update"],
-)];
+const UPGRADE_SKIP_COMMIT_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", ExpectedCwd::RepoRoot, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
+    ExpectedCall::new("gh", ExpectedCwd::RepoRoot, GH_NIXPKGS_COMPARE_ARGS),
+];
 
-const UPGRADE_FAILURE_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
-    "nix",
-    ExpectedCwd::RepoRoot,
-    &["flake", "update"],
-)];
+const UPGRADE_FAILURE_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", ExpectedCwd::RepoRoot, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
+];
 
-const UPGRADE_PASSTHROUGH_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
-    "nix",
-    ExpectedCwd::RepoRoot,
-    &["flake", "update", "--commit-lock-file", "foo"],
-)];
+const UPGRADE_PASSTHROUGH_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", ExpectedCwd::RepoRoot, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new(
+        "nix",
+        ExpectedCwd::RepoRoot,
+        &["flake", "update", "--commit-lock-file", "foo"],
+    ),
+];
+
+const UPGRADE_TOKEN_MODE_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", ExpectedCwd::RepoRoot, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new(
+        "nix",
+        ExpectedCwd::RepoRoot,
+        &[
+            "flake",
+            "update",
+            "--option",
+            "access-tokens",
+            UPGRADE_TOKEN_OPTION,
+        ],
+    ),
+];
+
+const UPGRADE_CACHE_RETRY_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", ExpectedCwd::RepoRoot, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
+    ExpectedCall::new("nix", ExpectedCwd::RepoRoot, &["flake", "update"]),
+];
 
 const MATRIX_CASES: &[MatrixCase] = &[
     MatrixCase {
@@ -567,6 +613,25 @@ const MATRIX_CASES: &[MatrixCase] = &[
         expected_exit: 0,
         expected_calls: Some(UPGRADE_PASSTHROUGH_CALLS),
         stdout_contains: &[],
+    },
+    MatrixCase {
+        id: "upgrade_flake_update_injects_access_token_option",
+        cli_args: UPGRADE_TOKEN_MODE_ARGS,
+        mode: StubMode::UpgradeWithToken,
+        expected_exit: 0,
+        expected_calls: Some(UPGRADE_TOKEN_MODE_CALLS),
+        stdout_contains: &[],
+    },
+    MatrixCase {
+        id: "upgrade_flake_update_cache_corruption_retries_once",
+        cli_args: UPGRADE_CACHE_RETRY_ARGS,
+        mode: StubMode::UpgradeCacheCorruption,
+        expected_exit: 0,
+        expected_calls: Some(UPGRADE_CACHE_RETRY_CALLS),
+        stdout_contains: &[
+            "Nix cache corruption detected, clearing cache and retrying",
+            "Retrying flake update",
+        ],
     },
     MatrixCase {
         id: "info_found_installed_plain",
@@ -844,6 +909,7 @@ fn install_stubs(stub_dir: &Path) -> Result<(), Box<dyn Error>> {
     for program in [
         "git",
         "nix",
+        "gh",
         "brew",
         "sudo",
         "ruff",
@@ -1031,6 +1097,14 @@ case "$program" in
         echo "stub nix flake update failed"
         exit 1
       fi
+      if [ "$mode" = "upgrade_cache_corruption" ]; then
+        marker="${HOME}/.nx-system-it-cache-corruption-once"
+        if [ ! -f "$marker" ]; then
+          : > "$marker"
+          echo "error: failed to insert entry: invalid object specified"
+          exit 1
+        fi
+      fi
       if [ "$mode" = "upgrade_flake_changed" ]; then
         printf '%s' "${NX_SYSTEM_IT_UPGRADE_NEW_LOCK:?NX_SYSTEM_IT_UPGRADE_NEW_LOCK must be set}" > flake.lock
       fi
@@ -1048,6 +1122,17 @@ case "$program" in
     fi
 
     echo "stub nix unsupported: $*" >&2
+    exit 1
+    ;;
+  gh)
+    if [ "${1:-}" = "auth" ] && [ "${2:-}" = "token" ]; then
+      if [ "$mode" = "upgrade_with_token" ]; then
+        echo "ghp_system_matrix_token"
+        exit 0
+      fi
+      exit 1
+    fi
+    echo "stub gh unsupported: $*" >&2
     exit 1
     ;;
   brew)

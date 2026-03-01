@@ -1,0 +1,19 @@
+Run full upgrade flow (flake, brew, rebuild, commit)
+
+Usage: nx upgrade [OPTIONS] [-- <PASSTHROUGH>...]
+
+Arguments:
+  [PASSTHROUGH]...  
+
+Options:
+  -n, --dry-run       
+      --plain         Use plain output formatting
+      --unicode       Force Unicode/emoji output
+  -v, --verbose       
+      --minimal       Minimal output (less context)
+      --no-ai         
+      --skip-rebuild  
+      --json          JSON output when supported
+      --skip-commit   
+      --skip-brew     
+  -h, --help          Print help

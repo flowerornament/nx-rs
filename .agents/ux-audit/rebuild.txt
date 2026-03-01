@@ -1,0 +1,79 @@
+
+> Checking tracked nix files
++ Git preflight passed
+
+> Checking flake
++ Flake check passed
+
+> Rebuilding system
+
+  building the system configuration...
+  warning: Git tree '/Users/morgan/.nix-config' has uncommitted changes
+  warning: Using 'builtins.derivation' to create a derivation named
+  'options.json' that references the store path
+  '/nix/store/kzqqrhnhh9q3dnrj3x10cdihmj09yc8p-source' without a proper
+  context. The resulting derivation will not have a correct store reference, so
+  this is unreliable and may stop working in the future.
+  setting up /Applications/Nix Apps...
+  setting up pam...
+  applying patches...
+  setting up /etc...
+  user defaults...
+  restarting Dock...
+  setting up launchd services...
+  setting up user launchd services...
+  configuring networking...
+  configuring application firewall...
+  configuring power...
+  setting up /Library/Fonts/Nix Fonts...
+  setting nvram variables...
+  Homebrew bundle...
+  Using neurosnap/tap
+  Using smart-mcp-proxy/mcpproxy
+  Using steipete/tap
+  Using steveyegge/beads
+  Using wedow/tools
+  Using crystalline
+  Using deno
+  Using golangci-lint
+  Using mcptools
+  Using neurosnap/tap/zmx
+  Using nim
+  Using opencode
+  Using serialosc
+  Using smart-mcp-proxy/mcpproxy/mcpproxy
+  Using steveyegge/beads/bd
+  Using vercel-cli
+  Using wedow/tools/ticket
+  Using yt-dlp
+  Using claude-code
+  Using codex
+  Using flashspace
+  Using fuse-t
+  Using ghostty
+  Using gitx
+  Using resilio-sync
+  Using codexbar
+  `brew bundle` complete! 26 Brewfile dependencies now installed.
+  Activating home-manager configuration for morgan
+  Starting Home Manager activation
+  Activating checkFilesChanged
+  Activating checkLinkTargets
+  Activating writeBoundary
+  Activating cloneClaudeConfig
+  Activating cloneCodexConfig
+  Activating cloneOpencodeConfig
+  Activating cloneSkillsConfig
+  Activating setupLaunchAgents
+  Activating ensureSopsSecrets
+  Activating installGsdClaude
+  Activating installGsdCodex
+  Activating installGsdOpencode
+  Activating installPackages
+  Activating migrateGhAccounts
+  Activating linkGeneration
+  Cleaning up orphan links from /Users/morgan
+  Creating home file links in /Users/morgan
+  Activating syncActionbookRustSkillPack
+
++ System rebuilt

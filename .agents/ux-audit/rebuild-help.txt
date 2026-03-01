@@ -1,0 +1,14 @@
+Run darwin-rebuild switch with preflight checks
+
+Usage: nx rebuild [OPTIONS] [-- <PASSTHROUGH>...]
+
+Arguments:
+  [PASSTHROUGH]...  
+
+Options:
+      --plain    Use plain output formatting
+      --unicode  Force Unicode/emoji output
+      --minimal  Minimal output (less context)
+  -v, --verbose  Verbose output
+      --json     JSON output when supported
+  -h, --help     Print help

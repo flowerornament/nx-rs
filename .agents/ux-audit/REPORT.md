@@ -25,6 +25,29 @@ Test repo: `~/.nix-config` (108 packages across nxs/brew/cask/services)
 | help | --help, install --help, no args | Pass |
 | subdir | list from packages/nix/, status from home/ | Pass |
 
+## Spacing & Alignment Issues
+
+**S1. info title format doesn't match Pattern 16** (nx-rs-nwh)
+- Shows `ripgrep (installed (nxs))` — nested parens, no bold
+- Design system: `**ripgrep**  installed (nxs)` — bold name, space, badge
+
+**S2. Inconsistent blank line placement** (nx-rs-fun)
+- `search-default.txt` L2-L3: double blank between searching and results
+- `upgrade-dry-run.txt`: no blank before `+` result lines after headers
+- `remove-not-found.txt`: no blank between dry-run header and error
+- `info-not-installed.txt`: no blank before suggestion block
+
+**S3. Prompt and result merge on same line** (nx-rs-4yh)
+- `Revert all changes? [y/N]: + Reverted 1 files` — should be separate lines
+- Same in init: `Write .nx/manifest.toml? [Y/n]:   Cancelled.`
+
+**S4. search uses `>` action glyph for static results title** (nx-rs-2en)
+- `> Results for 'firefox'` — search is done, not in progress
+- Should use title pattern at column 2
+
+**S5. installed: single vs multi structural mismatch** (nx-rs-spa)
+- Multi has leading blank + title header; single has neither
+
 ## Issues Found
 
 ### High Priority

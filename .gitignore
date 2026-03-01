@@ -6,5 +6,9 @@ result
 .beads/interactions.jsonl
 .beads/metadata.json
 
+# Dolt ephemeral (belt-and-suspenders with .beads/.gitignore)
+.dolt/
+*.db
+
 .vercel
 .agents/reports/

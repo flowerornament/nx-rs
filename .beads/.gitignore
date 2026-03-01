@@ -40,6 +40,10 @@ dolt-server.lock
 dolt-server.log
 dolt-server.activity
 dolt-monitor.pid
+dolt-access.lock
+bd.sock.startlock
+export-state/
+ephemeral.sqlite3
 
 # Sync state (local-only, per-machine)
 # These files are machine-specific and should not be shared across clones

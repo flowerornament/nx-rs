@@ -33,7 +33,7 @@
             git config --global user.name "test"
           '';
 
-          # Only run unit tests in sandbox; integration tests need Python + ~/.nix-config
+          # Only run unit tests in sandbox; integration tests require external repo/env setup.
           cargoTestFlags = [ "--lib" ];
 
           meta = with pkgs.lib; {

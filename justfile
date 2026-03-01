@@ -23,7 +23,6 @@ help:
     @echo "  just compile         # Agent compile hook: fmt + clippy + test + check"
     @echo "  just guard           # Run strict gates without compile wrapper"
     @echo "  just test-system     # Run system command integration matrix with stubs"
-    @echo "  just cutover-validate # Run Rust direct/canary validation against ~/.nix-config"
     @echo
     @echo "Raw Commands"
     @echo "  just fmt             # Format source"
@@ -96,10 +95,6 @@ test:
 test-system:
     @cargo build --quiet --bin nx
     @cargo test --test system_command_matrix -- --nocapture
-
-# Run Rust direct/canary validation against ~/.nix-config.
-cutover-validate:
-    @scripts/cutover/validate_shadow_canary.sh
 
 # Run cargo check across workspace.
 check:

@@ -112,10 +112,8 @@ Defined at root callback and persisted in app state:
 
 Resolution order:
 
-1. `B2NIX_REPO_ROOT` env var
-2. `git rev-parse --show-toplevel` if contains `flake.nix`
-3. `~/.nix-config`
-4. error
+1. `NX_REPO_ROOT` env var
+2. error if unset
 
 ## 3.2 Config File Discovery
 

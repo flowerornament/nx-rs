@@ -2,9 +2,16 @@
 set -euo pipefail
 
 WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-NIX_CONFIG_ROOT="${NIX_CONFIG_ROOT:-$HOME/.nix-config}"
+NX_REPO_ROOT="${NX_REPO_ROOT:-${NIX_CONFIG_ROOT:-}}"
 RUST_NX="${RUST_NX:-$WORKSPACE_ROOT/target/debug/nx}"
 REPORT_PATH="${1:-}"
+
+if [[ -z "$NX_REPO_ROOT" ]]; then
+  echo "repository root is not configured; set NX_REPO_ROOT (or NIX_CONFIG_ROOT for this script)" >&2
+  exit 2
+fi
+
+NIX_CONFIG_ROOT="$NX_REPO_ROOT"
 
 if [[ ! -x "$RUST_NX" ]]; then
   (cd "$WORKSPACE_ROOT" && cargo build --quiet --bin nx)
@@ -49,7 +56,7 @@ record_direct_case() {
   mkdir -p "$case_dir"
 
   set +e
-  env B2NIX_REPO_ROOT="$NIX_CONFIG_ROOT" NO_COLOR=1 TERM=dumb \
+  env NX_REPO_ROOT="$NIX_CONFIG_ROOT" NO_COLOR=1 TERM=dumb \
     "$RUST_NX" --plain --minimal "$@" >"$case_dir/stdout" 2>"$case_dir/stderr"
   local ec=$?
   set -e
@@ -83,7 +90,7 @@ record_canary_case() {
   mkdir -p "$case_dir"
 
   set +e
-  env PATH="$CANARY_BIN:$PATH" B2NIX_REPO_ROOT="$NIX_CONFIG_ROOT" NO_COLOR=1 TERM=dumb \
+  env PATH="$CANARY_BIN:$PATH" NX_REPO_ROOT="$NIX_CONFIG_ROOT" NO_COLOR=1 TERM=dumb \
     nx --plain --minimal "$@" >"$case_dir/stdout" 2>"$case_dir/stderr"
   local ec=$?
   set -e
@@ -106,7 +113,7 @@ record_canary_case() {
 }
 
 PACKAGE_LIST="$(
-  env B2NIX_REPO_ROOT="$NIX_CONFIG_ROOT" NO_COLOR=1 TERM=dumb \
+  env NX_REPO_ROOT="$NIX_CONFIG_ROOT" NO_COLOR=1 TERM=dumb \
     "$RUST_NX" --plain --minimal list --plain \
     | awk 'NF {gsub(/^ +/, "", $0); print}'
 )"

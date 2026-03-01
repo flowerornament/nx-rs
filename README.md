@@ -1,16 +1,22 @@
 # nx-rs
 
-Rust implementation of `nx` for nix-darwin package management.
+`nx-rs` provides `nx`, a CLI for managing packages and related Nix configuration repositories.
 
-## Status
+## What `nx` Does
 
-- Migration and cutover are complete.
-- `nx-rs` is the canonical implementation.
+- Finds where packages are declared (`where`, `installed`, `status`, `list`)
+- Searches candidate sources (`search`, `info`)
+- Applies deterministic edits to Nix manifests (`install`, `remove`)
+- Runs operational flows (`update`, `rebuild`, `upgrade`, `undo`)
+- Manages encrypted secrets via `sops` (`secret add`)
 
 ## Quick Start
 
 ```bash
+# Bare package names are treated as "install"
 nx ripgrep
+
+# Common workflows
 nx install --cask firefox
 nx remove ripgrep
 nx where ripgrep
@@ -19,17 +25,11 @@ nx status
 nx upgrade
 ```
 
-Color output is enabled for interactive terminals by default. Disable with `NO_COLOR=1` or use `--plain`.
+Output defaults to colored/interactive when supported. Use `--plain` (or `NO_COLOR=1`) for script-friendly output.
 
-Bare package names are interpreted as `install`:
+## Install (Production via Flake)
 
-```bash
-nx ripgrep    # equivalent to: nx install ripgrep
-```
-
-## Install
-
-Production (via flake) should be managed from `~/.nix-config`:
+Add `nx-rs` to your Nix configuration repository:
 
 ```nix
 # flake.nix inputs
@@ -42,34 +42,94 @@ nx-rs = {
 inputs.nx-rs.packages.${pkgs.system}.default
 ```
 
-Development/local install:
+Then rebuild:
+
+```bash
+nix flake lock --update-input nx-rs
+sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .
+```
+
+## Repository Root Configuration
+
+`nx` requires the repository root via `NX_REPO_ROOT`.
+
+Set it in your environment (shell config, direnv, or a `sops-nix` rendered env template):
+
+```bash
+export NX_REPO_ROOT=/path/to/your/config-repo
+```
+
+## Local Development
+
+Toolchain is pinned in `rust-toolchain.toml` (Rust `1.92.0`).
+
+```bash
+just help
+just doctor
+just hooks-install
+just compile
+just ci
+```
+
+Local install for ad hoc testing:
 
 ```bash
 cargo install --path .
 ```
 
-## Behavior Contract
+## Command Surface
 
-- Contract source: `.agents/SPEC.md`
-- Operational playbook: `.agents/CUTOVER_PLAYBOOK.md`
-- Ongoing learnings: `.agents/LEARNINGS.md`
+Primary commands:
 
-## Maintenance Gates
+- `install`, `remove` (`rm`, `uninstall`)
+- `where`, `list`, `info`, `status`, `installed`, `search`
+- `undo`, `update`, `test`, `rebuild`, `upgrade`
+- `secret` (`secrets`) with `secret add`
 
-Run these checks on the documented cadence (or before release-sensitive changes):
+Use command help for full options:
+
+```bash
+nx --help
+nx <command> --help
+```
+
+## Safety Model
+
+- Prefer `--dry-run` for mutating commands (`install`, `remove`).
+- Commands like `where`, `list`, `info`, `status`, `installed`, and `search` are read-only.
+- Repository root is configured via `NX_REPO_ROOT`.
+
+## Contract and Operational Docs
+
+- Behavior contract: `.agents/SPEC.md`
+- Cutover and rollback runbook: `.agents/CUTOVER_PLAYBOOK.md`
+- Verified operational learnings: `.agents/LEARNINGS.md`
+
+## Quality Gates
+
+Standard gate:
 
 ```bash
 just ci
 ```
 
-## Development
+Release-adjacent/operational validation:
 
 ```bash
-just help
-just doctor
-just guard
-just compile
-just ci
+cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic
+just test-system
+scripts/cutover/validate_shadow_canary.sh
+```
+
+## Task Tracking
+
+Work is tracked in `bd` (`./.beads`):
+
+```bash
+bd ready
+bd create --title="<task>" --type=task --priority=2
+bd close <id>
+bd sync
 ```
 
 ## License

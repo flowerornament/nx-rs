@@ -889,7 +889,7 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &MatrixCase) -> Result<(), Bo
         .args(["--plain", "--minimal"])
         .args(case.cli_args)
         .current_dir(repo_root.path())
-        .env("B2NIX_REPO_ROOT", repo_root.path())
+        .env("NX_REPO_ROOT", repo_root.path())
         .env("HOME", home_dir.path())
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")

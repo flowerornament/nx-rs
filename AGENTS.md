@@ -2,9 +2,9 @@
 
 ## Project Goal
 
-Maintain and evolve `nx-rs` as the canonical `nx` implementation with clean, idiomatic, easy-to-read Rust while preserving behavior and safety contracts.
+Maintain and evolve `nx-rs` with clean, idiomatic, easy-to-read Rust while preserving behavior and safety contracts.
 
-`nx` is a hand-rolled tool for managing the Nix configuration on this--and eventually other--machines. The config is at `~/.nix-config`.
+`nx` is a hand-rolled tool for managing Nix configuration repositories.
 
 Primary priorities:
 
@@ -16,22 +16,19 @@ Primary priorities:
 ## Guidelines
 
 1. Treat `.agents/SPEC.md` as the behavior contract.
-2. Treat `.agents/MIGRATION_PLAN.md` as historical migration context; use `.agents/CUTOVER_PLAYBOOK.md` and `.agents/SPEC.md` for current maintenance decisions.
+2. Use `.agents/CUTOVER_PLAYBOOK.md` and `.agents/LEARNINGS.md` for operational decisions.
 3. Prefer libraries when they simplify code or reduce LOC.
 4. Use a functional-first style: pure transforms and explicit side-effect boundaries.
 5. Design types up front to encode invariants before implementing command flows.
-6. Parity fidelity at the code-structure, syntactic, and semantic level with the Python project is not required.
-7. Keep the feedback loop tight: run strict checks frequently via `just`.
-8. Actively tend to and enrich the agentic feedback loop. Intelligently make tests and checks happen automatically at the right times in the feedback loop.
+6. Keep the feedback loop tight: run strict checks frequently via `just`.
+7. Actively tend to and enrich the agentic feedback loop. Intelligently make tests and checks happen automatically at the right times in the feedback loop.
 
 ## Key Documents
 
 - Behavior contract: `.agents/SPEC.md`
-- Migration history/context: `.agents/MIGRATION_PLAN.md`
 - Verified operational learnings: `.agents/LEARNINGS.md`
-- Cutover runbook and rollback criteria: `.agents/CUTOVER_PLAYBOOK.md`
-- Archived Python reference implementation (historical): `~/code/nx-python/`
-- Legacy context repo: `~/.nix-config`
+- Operational validation and rollback runbook: `.agents/CUTOVER_PLAYBOOK.md`
+- Legacy context repo: configure via `NX_REPO_ROOT`
 
 ## Toolchain And Workflow
 
@@ -61,11 +58,11 @@ Quality gates:
 | Check | `just check` | `cargo check`, all targets/features |
 | **Full CI gate** | **`just ci`** | fmt-check + lint + test + check in sequence |
 | System tests | `just test-system` | Integration matrix with deterministic stubs |
-| Cutover validation | `just cutover-validate` | Rust direct/canary validation on `~/.nix-config` |
+| Operational validation | `scripts/cutover/validate_shadow_canary.sh` | Rust direct/canary validation on configured `NX_REPO_ROOT` |
 
 All flags use `--workspace --all-targets --all-features`. Clippy treats warnings as errors.
 
-Run `just ci` before finishing any code change. For release-adjacent changes, also run `just test-system` and `just cutover-validate`.
+Run `just ci` before finishing any code change. For release-adjacent changes, also run `just test-system` and `scripts/cutover/validate_shadow_canary.sh`.
 
 Agent hook pipeline (`just compile` runs this full sequence):
 
@@ -84,7 +81,6 @@ Tracking model:
 - Do not track task checklists or status in markdown docs.
 - Use this repo's tracker at `./.beads`.
 - Use `bd ready` to identify the active epic/task set for the current session.
-- Historical migration execution in `~/.nix-config` was tracked under `morgan-pnv`.
 - Do not track any state in markdown docs
 - Avoid duplicating information between AGENTS.md and other markdown docs
 - Do not create additional documents unless new categories of information need to be recorded

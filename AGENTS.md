@@ -89,7 +89,7 @@ bd prime              # full context about using bd
 bd ready              # find available work
 bd create --title="..." --type=task --priority=2
 bd close <id>         # complete work
-bd sync               # sync state (run at session end)
+bd dolt push          # push beads to remote (run at session end)
 ```
 
 ## Landing the Plane (Session Completion)
@@ -105,7 +105,7 @@ bd sync               # sync state (run at session end)
    ```bash
    # If shipping a release change, bump version first (Cargo.toml + flake.nix).
    git pull --rebase
-   bd sync
+   bd dolt push
    git push
    git status  # MUST show "up to date with origin"
    ```

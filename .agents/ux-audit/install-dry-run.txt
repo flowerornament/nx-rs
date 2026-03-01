@@ -1,0 +1,26 @@
+
+~ Dry Run (no changes will be made)
+
+> Installing cowsay
+
+  Found (1)
+  cowsay
+    1. nxs (pkgs.cowsay)
+           Version:     3.8.4
+           Description: Program which generates ASCII pictures of a cow with a me...
+    2. Homebrew formula
+           Version:     3.8.4
+           Description: Apjanke's fork of the classic cowsay project
+
+  Analyzing (1)
+> Routing cowsay
+
+  ┌── cli.nix (preview) ───
+  │    105 │     inputs.storage-planner.packages.aarch64-darwin.default   # sp (Rust)
+  │    106 │     inputs.torrent-getter.packages.aarch64-darwin.default    # torrent-getter CLI
+  │ +      │     cowsay  # Program which generates ASCII pictures o...
+  │    107 │   ];
+  └────────────────────────────────────────
+
++ Would add cowsay to packages/nix/cli.nix
+EXIT:0

@@ -1,0 +1,5 @@
+Usage: nx remove [OPTIONS] PACKAGES...
+Try 'nx remove --help' for help.
+
+Error: Missing argument 'PACKAGES...'.
+EXIT:2

@@ -1,0 +1,5 @@
+Usage: nx info [OPTIONS] PACKAGE
+Try 'nx info --help' for help.
+
+Error: Missing argument 'PACKAGE'.
+EXIT CODE: 0

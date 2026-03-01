@@ -1,0 +1,12 @@
+
+> Scanning repository
+
++ Platform: darwin (/run/current-system/sw/bin/darwin-rebuild)
+
+  Discovered 10 slot(s):
+    4 nix package list(s)
+    1 withPackages call(s)
+    5 service definition(s)
+    Default install target: packages/nix/cli.nix
+
+  Write .nx/manifest.toml? [Y/n]:   Cancelled.

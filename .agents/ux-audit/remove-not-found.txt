@@ -1,0 +1,6 @@
+
+~ Dry Run (no changes will be made)
+x nonexistent-xyz not found
+
+  Check installed: nx list | grep -i nonexistent-xyz
+EXIT:0

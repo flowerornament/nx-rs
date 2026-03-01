@@ -1,0 +1,11 @@
+  Searching for firefox... done
+
+
+> Results for 'firefox'
+
+  nxs firefox (148.0) - Web browser built from Firefox source tree
+  nxs firefox-esr (140.8.0esr) - Web browser built from Firefox source tree
+  nxs firefox-esr-140 (140.8.0esr) - Web browser built from Firefox source tree
+  nxs firefox-mobile (148.0) - Web browser built from Firefox source tree
+  nxs firefox-beta (148.0b15) - Web browser built from Firefox Beta Release source tree
+  cask firefox (148.0) - Web browser

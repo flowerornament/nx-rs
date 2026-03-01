@@ -375,7 +375,8 @@ Network behavior:
 - JSON output format (query strings as top-level keys):
   - `{ "<query>": { "match": <name-or-null>, "location": <loc-or-null> } }`
 - Exit `0` only if all requested packages resolved to installed locations.
-- Single package non-json mode with `--show-location` includes normalized location.
+- Single package: always prints result (success or "not installed" warning). `--show-location` adds file location.
+- Multi package: prints summary header with count, each result with location.
 
 ## 10. System Command Contracts
 

@@ -1,0 +1,7 @@
+
+~ Dry Run (no changes will be made)
+
+> Installing ripgrep
+
++ ripgrep already installed (packages/nix/cli.nix:18)
+EXIT:0

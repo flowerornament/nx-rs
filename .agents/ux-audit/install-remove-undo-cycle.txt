@@ -1,0 +1,90 @@
+=== REAL INSTALL ===
+
+> Installing cowsay
+
+  Found (1)
+  cowsay
+    1. nxs (pkgs.cowsay)
+           Version:     3.8.4
+           Description: Program which generates ASCII pictures of a cow with a me...
+    2. Homebrew formula
+           Version:     3.8.4
+           Description: Apjanke's fork of the classic cowsay project
+
+  Installing (1)
+> Routing cowsay
+
++ Added 'cowsay' to packages/nix/cli.nix
+
+  ┌── cli.nix ───
+  │     10 │     bat           # cat replacement with syntax highlighting
+  │     11 │     bindfs        # FUSE filesystem for mounting a directory
+  │ +   12 │     cowsay
+  │     13 │     eza           # ls replacement with icons
+  │     14 │     fd            # find replacement
+  └────────────────────────────────────────
+
+  Run: nx rebuild
+INSTALL_EXIT:0
+=== REAL REMOVE ===
+
+> Removing cowsay
+  Location: packages/nix/cli.nix:12
+
+  ┌── cli.nix ───
+  │     11 │     bindfs        # FUSE filesystem for mounting a directory
+  │ -   12 │     cowsay
+  │     13 │     eza           # ls replacement with icons
+  └────────────────────────────────────────
+* cli.nix
+
++ cowsay removed from cli.nix
+REMOVE_EXIT:0
+=== UNDO (after remove - nothing to undo since remove already reverted) ===
+
+  Nothing to undo.
+UNDO_AFTER_REMOVE_EXIT:0
+=== RE-INSTALL for undo test ===
+
+> Installing cowsay
+
+  Found (1)
+  cowsay
+    1. nxs (pkgs.cowsay)
+           Version:     3.8.4
+           Description: Program which generates ASCII pictures of a cow with a me...
+    2. Homebrew formula
+           Version:     3.8.4
+           Description: Apjanke's fork of the classic cowsay project
+
+  Installing (1)
+> Routing cowsay
+
++ Added 'cowsay' to packages/nix/cli.nix
+
+  ┌── cli.nix ───
+  │     10 │     bat           # cat replacement with syntax highlighting
+  │     11 │     bindfs        # FUSE filesystem for mounting a directory
+  │ +   12 │     cowsay
+  │     13 │     eza           # ls replacement with icons
+  │     14 │     fd            # find replacement
+  └────────────────────────────────────────
+
+  Run: nx rebuild
+INSTALL2_EXIT:0
+=== UNDO (after install - should revert) ===
+
+  Undo Changes (1 files)
+  packages/nix/cli.nix
+    1 file changed, 1 insertion(+)
+
+  Revert all changes? [y/N]: + Reverted 1 files
+UNDO_AFTER_INSTALL_EXIT:0
+=== GIT STATUS ===
+D  .beads/dolt-monitor.pid
+D  .beads/dolt-server.activity
+D  .beads/dolt-server.lock
+D  .beads/dolt-server.port
+?? .beads/dolt-monitor.pid
+?? .beads/dolt-server.activity
+?? .beads/dolt-server.port

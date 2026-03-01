@@ -1,0 +1,5 @@
+Usage: nx where [OPTIONS] PACKAGE
+Try 'nx where --help' for help.
+
+Error: Missing argument 'PACKAGE'.
+EXIT CODE: 0

@@ -1,0 +1,5 @@
+Usage: nx installed [OPTIONS] PACKAGES...
+Try 'nx installed --help' for help.
+
+Error: Missing argument 'PACKAGES...'.
+exit: 0

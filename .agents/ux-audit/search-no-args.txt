@@ -1,0 +1,6 @@
+error: the following required arguments were not provided:
+  <PACKAGE>
+
+Usage: nx search <PACKAGE>
+
+For more information, try '--help'.

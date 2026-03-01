@@ -1,0 +1,28 @@
+Multi-source package installer for nix-darwin
+
+Usage: nx [OPTIONS] <COMMAND>
+
+Commands:
+  init       Scan repo and generate .nx/manifest.toml
+  install    Install package(s) into nix config
+  remove     Remove package(s) from nix config
+  secret     Manage encrypted secrets via sops
+  search     Search package sources without installing
+  where      Show where a package is declared
+  list       List installed packages by source
+  info       Show package metadata and source candidates
+  status     Show package distribution summary
+  installed  Check whether package(s) are installed
+  undo       Revert modified tracked files via git checkout
+  update     Run nix flake update
+  test       Run repo quality checks
+  rebuild    Run darwin-rebuild switch with preflight checks
+  upgrade    Run full upgrade flow (flake, brew, rebuild, commit)
+
+Options:
+      --plain    Use plain output formatting
+      --unicode  Force Unicode/emoji output
+      --minimal  Minimal output (less context)
+  -v, --verbose  Verbose output
+      --json     JSON output when supported
+  -h, --help     Print help (see more with '--help')

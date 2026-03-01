@@ -1,0 +1,26 @@
+Install package(s) into nix config
+
+Usage: nx install [OPTIONS] [PACKAGES]...
+
+Arguments:
+  [PACKAGES]...  
+
+Options:
+      --plain            Use plain output formatting
+  -y, --yes              
+  -n, --dry-run          
+      --unicode          Force Unicode/emoji output
+      --minimal          Minimal output (less context)
+      --rebuild          
+      --cask             
+  -v, --verbose          Verbose output
+      --json             JSON output when supported
+      --mas              
+      --bleeding-edge    
+      --nur              
+      --source <SOURCE>  
+      --service          
+      --explain          
+      --engine <ENGINE>  
+      --model <MODEL>    
+  -h, --help             Print help

@@ -652,16 +652,20 @@ fn render_installed_json(results: &[InstalledResult], printer: &Printer) -> i32 
 
 fn render_single_installed(result: &InstalledResult, ctx: &AppContext, show_location: bool) -> i32 {
     let Some(found) = &result.matched else {
+        ctx.printer
+            .warn(&format!("{} is not installed", result.query));
         return 1;
+    };
+    let name_part = if found.name == result.query {
+        found.name.clone()
+    } else {
+        format!("{} → {}", result.query, found.name)
     };
     if show_location {
         let rel = relative_location(&found.location, &ctx.repo_root);
-        if found.name == result.query {
-            ctx.printer.success(&format!("{} ({rel})", found.name));
-        } else {
-            ctx.printer
-                .success(&format!("{} → {} ({rel})", result.query, found.name));
-        }
+        ctx.printer.success(&format!("{name_part} ({rel})"));
+    } else {
+        ctx.printer.success(&name_part);
     }
     0
 }

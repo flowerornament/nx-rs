@@ -1,0 +1,19 @@
+
+  cowsay (not installed)
+
+  nxs (pkgs.cowsay)
+  Version:      3.8.4
+  Description:  Program which generates ASCII pictures of a cow with a message
+  Homepage:     https://cowsay.diamonds
+  License:      GPL-3.0-only
+
+  Homebrew formula
+  Version:      3.8.4
+  Description:  Apjanke's fork of the classic cowsay project
+  Homepage:     https://cowsay.diamonds
+  License:      GPL-3.0-only
+  HEAD build:   Available (brew install --HEAD)
+  Available from multiple sources. Install with:
+  nx cowsay
+  nx --source homebrew cowsay
+EXIT CODE: 0

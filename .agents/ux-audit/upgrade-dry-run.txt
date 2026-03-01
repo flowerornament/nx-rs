@@ -1,0 +1,7 @@
+
+~ Dry Run (no changes will be made)
++ All flake inputs up to date
+
+> Checking Homebrew updates
++ All Homebrew packages up to date
+  Dry run complete - no changes made

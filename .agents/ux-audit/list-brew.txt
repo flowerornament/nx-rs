@@ -1,0 +1,14 @@
+  crystalline
+  deno
+  golangci-lint
+  mcptools
+  neurosnap/tap/zmx
+  nim
+  opencode
+  serialosc
+  smart-mcp-proxy/mcpproxy/mcpproxy
+  steveyegge/beads/bd
+  vercel-cli
+  wedow/tools/ticket
+  yt-dlp
+---EXIT CODE: 0---

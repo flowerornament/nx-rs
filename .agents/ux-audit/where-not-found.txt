@@ -1,0 +1,4 @@
+x nonexistent-xyz not found
+
+  Try: nx info nonexistent-xyz
+EXIT CODE: 0

@@ -1,0 +1,2 @@
+  Searching for zzzznonexistentpackagexyz... done
+x zzzznonexistentpackagexyz: not found in any source

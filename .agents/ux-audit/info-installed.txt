@@ -1,0 +1,25 @@
+
+  ripgrep (installed (nxs))
+  Location: packages/nix/cli.nix:18
+
+  ┌── cli.nix ───
+  │     17 │     jq            # JSON processor
+  │ +   18 │     ripgrep       # grep replacement (provides 'rg')
+  │     19 │     tree          # Directory tree viewer
+  └────────────────────────────────────────
+
+  nxs (pkgs.ripgrep) (current)
+  Version:      15.1.0
+  Description:  Utility that combines the usability of The Silver Searcher with the raw speed of grep
+  Homepage:     https://github.com/BurntSushi/ripgrep
+  License:      Unlicense
+
+  Homebrew formula
+  Version:      15.1.0
+  Description:  Search tool like grep and The Silver Searcher
+  Homepage:     https://github.com/BurntSushi/ripgrep
+  License:      Unlicense
+  HEAD build:   Available (brew install --HEAD)
+  Dependencies: pcre2
+  Build deps:   asciidoctor, pkgconf, rust
+EXIT CODE: 0

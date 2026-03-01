@@ -1,0 +1,9 @@
+
+  Package Check (3/3 installed)
++ ripgrep
+    packages/nix/cli.nix:18
++ jq
+    packages/nix/cli.nix:17
++ bat
+    packages/nix/cli.nix:10
+exit: 0

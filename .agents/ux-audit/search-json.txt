@@ -1,0 +1,51 @@
+  Searching for firefox... done
+[
+  {
+    "name": "firefox",
+    "source": "nxs",
+    "attr": "firefox",
+    "version": "148.0",
+    "confidence": 1.0,
+    "description": "Web browser built from Firefox source tree"
+  },
+  {
+    "name": "firefox",
+    "source": "nxs",
+    "attr": "firefox-esr",
+    "version": "140.8.0esr",
+    "confidence": 1.0,
+    "description": "Web browser built from Firefox source tree"
+  },
+  {
+    "name": "firefox",
+    "source": "nxs",
+    "attr": "firefox-esr-140",
+    "version": "140.8.0esr",
+    "confidence": 1.0,
+    "description": "Web browser built from Firefox source tree"
+  },
+  {
+    "name": "firefox",
+    "source": "nxs",
+    "attr": "firefox-mobile",
+    "version": "148.0",
+    "confidence": 1.0,
+    "description": "Web browser built from Firefox source tree"
+  },
+  {
+    "name": "firefox",
+    "source": "nxs",
+    "attr": "firefox-beta",
+    "version": "148.0b15",
+    "confidence": 0.68,
+    "description": "Web browser built from Firefox Beta Release source tree"
+  },
+  {
+    "name": "firefox",
+    "source": "cask",
+    "attr": "firefox",
+    "version": "148.0",
+    "confidence": 1.0,
+    "description": "Web browser"
+  }
+]

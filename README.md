@@ -2,6 +2,15 @@
 
 `nx-rs` provides `nx`, a CLI for managing packages and related Nix configuration repositories.
 
+## About
+
+`nx` is a workflow-oriented tool for maintaining a Nix config repo from the command line.
+It helps you find package definitions, inspect what is installed, and make deterministic
+manifest edits for package add/remove flows.
+
+The tool is intended for repositories that manage system and home configuration in Nix,
+and it uses `NX_REPO_ROOT` to target the repository it should operate on.
+
 ## Usage
 
 ### Install

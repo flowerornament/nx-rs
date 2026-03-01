@@ -1,2 +1,0 @@
-MM home/agents.nix
- M home/shell.nix

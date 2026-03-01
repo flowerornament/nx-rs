@@ -1,1 +1,0 @@
-{"ripgrep": {"match": null, "location": null}}

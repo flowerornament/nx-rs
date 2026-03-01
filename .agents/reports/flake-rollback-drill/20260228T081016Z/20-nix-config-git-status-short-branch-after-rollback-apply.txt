@@ -1,2 +1,0 @@
-## main...origin/main
- M home/shell.nix

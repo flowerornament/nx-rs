@@ -7,3 +7,4 @@ result
 .beads/metadata.json
 
 .vercel
+.agents/reports/

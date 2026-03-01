@@ -23,11 +23,11 @@ const KNOWN_COMMANDS: &[&str] = &[
 ];
 
 const ROOT_HELP: &str = "Run `nx <command> --help` for command-specific usage and examples.";
-const SECRET_HELP: &str = "Examples:\n  nx secret add redacted_api_key --value '<token>'\n  printf '%s' '<token>' | nx secret add redacted_api_key --value-stdin";
+const SECRET_HELP: &str = "Examples:\n  nx secret add example_secret_key --value '<token>'\n  printf '%s' '<token>' | nx secret add example_secret_key --value-stdin";
 const SECRET_ADD_HELP: &str = "Examples:
-  nx secret add redacted_api_key --value '<token>'
-  nx secret add --name redacted_api_key --value '<token>'
-  printf '%s' '<token>' | nx secret add redacted_api_key --value-stdin
+  nx secret add example_secret_key --value '<token>'
+  nx secret add --name example_secret_key --value '<token>'
+  printf '%s' '<token>' | nx secret add example_secret_key --value-stdin
 
 Notes:
   - `--` stops option parsing; do not put it before `--name` or `--value`.
@@ -684,15 +684,16 @@ mod tests {
 
     #[test]
     fn secret_add_parses_positional_key() {
-        let cli = Cli::try_parse_from(["nx", "secret", "add", "redacted_api_key", "--value", "v"])
-            .expect("secret add should parse with positional key");
+        let cli =
+            Cli::try_parse_from(["nx", "secret", "add", "example_secret_key", "--value", "v"])
+                .expect("secret add should parse with positional key");
         let CommandKind::Secret(SecretArgs {
             command: SecretCommand::Add(add_args),
         }) = cli.command
         else {
             panic!("expected secret command");
         };
-        assert_eq!(add_args.key_name(), "redacted_api_key");
+        assert_eq!(add_args.key_name(), "example_secret_key");
     }
 
     #[test]
@@ -702,7 +703,7 @@ mod tests {
             "secret",
             "add",
             "--name",
-            "redacted_api_key",
+            "example_secret_key",
             "--value",
             "v",
         ])
@@ -713,7 +714,7 @@ mod tests {
         else {
             panic!("expected secret command");
         };
-        assert_eq!(add_args.key_name(), "redacted_api_key");
+        assert_eq!(add_args.key_name(), "example_secret_key");
     }
 
     #[test]
@@ -723,7 +724,7 @@ mod tests {
             "secret",
             "add",
             "--key",
-            "redacted_api_key",
+            "example_secret_key",
             "--value",
             "v",
         ])
@@ -734,7 +735,7 @@ mod tests {
         else {
             panic!("expected secret command");
         };
-        assert_eq!(add_args.key_name(), "redacted_api_key");
+        assert_eq!(add_args.key_name(), "example_secret_key");
     }
 
     #[test]
@@ -753,7 +754,7 @@ mod tests {
             .write_long_help(&mut add_help)
             .expect("secret add help should render");
         let add_help = String::from_utf8(add_help).expect("help should be utf8");
-        assert!(add_help.contains("nx secret add --name redacted_api_key"));
+        assert!(add_help.contains("nx secret add --name example_secret_key"));
         assert!(add_help.contains("`--` stops option parsing"));
     }
 

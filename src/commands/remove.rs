@@ -237,11 +237,12 @@ fn plans_from_manifest(
     let mut plans = Vec::new();
     match slot.kind {
         SlotKind::HomebrewList => {
-            let source = if slot.file.to_string_lossy().contains("cask") {
-                PackageSource::Cask
-            } else {
-                PackageSource::Homebrew
-            };
+            let source =
+                if slot.tags.iter().any(|t| t == "casks") || slot.attr_path.contains("casks") {
+                    PackageSource::Cask
+                } else {
+                    PackageSource::Homebrew
+                };
             plans.push(make_remove_plan(
                 package,
                 file_path,
@@ -272,9 +273,20 @@ fn plans_from_manifest(
                     }),
                     PackageSource::Nxs,
                 ));
+            } else {
+                plans.push(make_remove_plan(
+                    package,
+                    file_path,
+                    InsertionMode::NixManifest,
+                    None,
+                    PackageSource::Nxs,
+                ));
             }
         }
         SlotKind::NixPackages | SlotKind::Services => {
+            // NOTE: Services use attrset structure, not lists. NixManifest mode
+            // works for line-based removal but may need a dedicated mode for
+            // structured edits.
             plans.push(make_remove_plan(
                 package,
                 file_path,

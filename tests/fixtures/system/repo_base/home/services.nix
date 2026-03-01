@@ -1,7 +1,7 @@
 # nx: services and daemons
 { ... }:
 {
-  launchd.user.agents.test-agent = {
+  launchd.agents.test-agent = {
     command = "/usr/bin/true";
   };
 }

@@ -7,7 +7,7 @@ use rowan::ast::AstNode;
 use walkdir::WalkDir;
 
 use crate::commands::context::AppContext;
-use crate::domain::manifest::{Manifest, PlatformConfig, Slot, SlotKind};
+use crate::domain::manifest::{CURRENT_SCHEMA_VERSION, Manifest, PlatformConfig, Slot, SlotKind};
 use crate::output::printer::Printer;
 
 // --- Public entry point
@@ -51,7 +51,7 @@ pub fn cmd_init(refresh: bool, ctx: &AppContext) -> i32 {
         .map_or_else(HashMap::new, |m| m.overlays.clone());
 
     let manifest = Manifest {
-        schema_version: 1,
+        schema_version: CURRENT_SCHEMA_VERSION,
         platform,
         slots,
         aliases,
@@ -86,12 +86,20 @@ fn detect_platform(repo_root: &Path) -> Option<PlatformConfig> {
 
     let outputs = find_attrpath_value_recursive(expr.syntax(), &["outputs"])?;
 
-    let text = outputs.syntax().text().to_string();
-    if text.contains("darwinConfigurations") {
+    // Walk AST identifiers to avoid matching comments or string literals.
+    let has_ident = |name: &str| -> bool {
+        outputs.syntax().descendants().any(|node| {
+            ast::Ident::cast(node)
+                .and_then(|id| id.ident_token())
+                .is_some_and(|tok| tok.text() == name)
+        })
+    };
+
+    if has_ident("darwinConfigurations") {
         Some(Manifest::default_darwin())
-    } else if text.contains("nixosConfigurations") {
+    } else if has_ident("nixosConfigurations") {
         Some(Manifest::default_nixos())
-    } else if text.contains("homeConfigurations") {
+    } else if has_ident("homeConfigurations") {
         Some(Manifest::default_home_manager())
     } else {
         None
@@ -105,6 +113,13 @@ fn scan_repo_slots(repo_root: &Path) -> Vec<Slot> {
 
     for nix_file in collect_all_nix_files(repo_root) {
         let Ok(content) = fs::read_to_string(&nix_file) else {
+            eprintln!(
+                "warning: could not read {}",
+                nix_file
+                    .strip_prefix(repo_root)
+                    .unwrap_or(&nix_file)
+                    .display()
+            );
             continue;
         };
         let rel_path = nix_file
@@ -113,6 +128,9 @@ fn scan_repo_slots(repo_root: &Path) -> Vec<Slot> {
             .to_path_buf();
 
         let parse = rnix::Root::parse(&content);
+        if let Some(err) = parse.errors().first() {
+            eprintln!("warning: parse error in {}: {err}", rel_path.display());
+        }
         let root = parse.tree();
         let Some(expr) = root.expr() else { continue };
 
@@ -124,6 +142,8 @@ fn scan_repo_slots(repo_root: &Path) -> Vec<Slot> {
             .cmp(&b.file)
             .then_with(|| a.attr_path.cmp(&b.attr_path))
     });
+    // Deduplicate by (file, attr_path) — multiple AST walks can yield duplicates.
+    slots.dedup_by(|a, b| a.file == b.file && a.attr_path == b.attr_path);
     slots
 }
 
@@ -226,12 +246,9 @@ fn detect_with_packages(apply: &ast::Apply) -> Option<(String, String)> {
 
         if let Some(last) = attrs.last()
             && last == "withPackages"
+            && attrs.len() >= 2
         {
-            let runtime = if attrs.len() >= 2 {
-                attrs[attrs.len() - 2].clone()
-            } else {
-                "unknown".to_string()
-            };
+            let runtime = attrs[attrs.len() - 2].clone();
             return Some((runtime, "withPackages".to_string()));
         }
     }
@@ -358,6 +375,10 @@ fn merge_user_annotations(new_slots: &mut [Slot], existing_slots: &[Slot]) {
                 if !new_slot.tags.contains(tag) {
                     new_slot.tags.push(tag.clone());
                 }
+            }
+            // Preserve runtime
+            if new_slot.runtime.is_none() {
+                new_slot.runtime.clone_from(&existing.runtime);
             }
             // Preserve default_for
             if new_slot.default_for.is_none() {
@@ -714,5 +735,128 @@ mod tests {
         merge_user_annotations(&mut new_slots, &existing);
         assert!(new_slots[0].tags.contains(&"my-custom-tag".to_string()));
         assert_eq!(new_slots[0].default_for, Some(vec!["install".to_string()]));
+    }
+
+    #[test]
+    fn merge_preserves_runtime() {
+        let existing = vec![Slot {
+            kind: SlotKind::WithPackages,
+            file: PathBuf::from("packages/languages.nix"),
+            attr_path: "python3.withPackages".to_string(),
+            tags: vec![],
+            runtime: Some("python3".to_string()),
+            default_for: None,
+        }];
+
+        let mut new_slots = vec![Slot {
+            kind: SlotKind::WithPackages,
+            file: PathBuf::from("packages/languages.nix"),
+            attr_path: "python3.withPackages".to_string(),
+            tags: vec![],
+            runtime: None,
+            default_for: None,
+        }];
+
+        merge_user_annotations(&mut new_slots, &existing);
+        assert_eq!(new_slots[0].runtime, Some("python3".to_string()));
+    }
+
+    #[test]
+    fn scan_fixture_repo_finds_all_slot_kinds() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/system/repo_base");
+        if !fixture.exists() {
+            return; // skip if fixtures not present
+        }
+
+        let slots = scan_repo_slots(&fixture);
+        let platform = detect_platform(&fixture);
+
+        // Platform should detect Darwin from darwinConfigurations
+        assert!(
+            platform.is_some(),
+            "should detect platform from fixture flake.nix"
+        );
+        assert_eq!(platform.unwrap().kind, PlatformKind::Darwin);
+
+        // Verify all SlotKind variants are represented
+        let has_kind = |kind: SlotKind| slots.iter().any(|s| s.kind == kind);
+        assert!(
+            has_kind(SlotKind::NixPackages),
+            "missing NixPackages slot: {slots:?}"
+        );
+        assert!(
+            has_kind(SlotKind::HomebrewList),
+            "missing HomebrewList slot: {slots:?}"
+        );
+        assert!(
+            has_kind(SlotKind::MasApps),
+            "missing MasApps slot: {slots:?}"
+        );
+        assert!(
+            has_kind(SlotKind::WithPackages),
+            "missing WithPackages slot: {slots:?}"
+        );
+        assert!(
+            has_kind(SlotKind::Services),
+            "missing Services slot: {slots:?}"
+        );
+
+        // Verify specific expected files
+        let file_matches = |s: &Slot, file: &str, attr: &str| {
+            s.file.as_path() == Path::new(file) && s.attr_path == attr
+        };
+        assert!(
+            slots
+                .iter()
+                .any(|s| file_matches(s, "packages/nix/cli.nix", "home.packages")),
+            "missing cli.nix home.packages slot"
+        );
+        assert!(
+            slots
+                .iter()
+                .any(|s| file_matches(s, "packages/homebrew/brews.nix", "homebrew.brews")),
+            "missing brews.nix slot"
+        );
+        assert!(
+            slots
+                .iter()
+                .any(|s| file_matches(s, "packages/homebrew/casks.nix", "homebrew.casks")),
+            "missing casks.nix slot"
+        );
+
+        // Verify no duplicates
+        let mut seen = std::collections::HashSet::new();
+        for slot in &slots {
+            let key = (slot.file.clone(), slot.attr_path.clone());
+            assert!(
+                seen.insert(key.clone()),
+                "duplicate slot: {}:{}",
+                slot.file.display(),
+                slot.attr_path
+            );
+        }
+    }
+
+    #[test]
+    fn detect_platform_ignores_comments() {
+        let tmp = TempDir::new().unwrap();
+        write_file(
+            tmp.path(),
+            "flake.nix",
+            r"{
+  # darwinConfigurations would go here
+  outputs = { self, nixpkgs, ... }: {
+    packages = {};
+  };
+}",
+        );
+
+        // Should NOT detect Darwin — "darwinConfigurations" only appears in a comment
+        let platform = detect_platform(tmp.path());
+        assert!(
+            platform.is_none(),
+            "should not detect platform from comment, got: {platform:?}"
+        );
     }
 }

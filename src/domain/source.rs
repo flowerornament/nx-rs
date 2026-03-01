@@ -268,6 +268,12 @@ pub fn mapped_name_with_aliases(
 }
 
 /// Look up overlay info, checking user overlays first.
+///
+/// User overlays use colon-delimited format: `"overlay_name:attr_in_overlay:description"`.
+/// Falls back to the compiled-in `OVERLAY_PACKAGES` table.
+///
+/// Not yet wired into query/sources paths — will replace direct `OVERLAY_PACKAGES`
+/// access when manifest overlay resolution is connected end-to-end.
 #[allow(dead_code)]
 pub fn overlay_lookup_with_user(
     name: &str,
@@ -952,5 +958,72 @@ mod tests {
     fn platforms_empty_permissive() {
         let (avail, _) = check_platforms(&json!([]), "aarch64-darwin");
         assert!(avail);
+    }
+
+    // --- normalize_name_with_aliases ---
+
+    #[test]
+    fn normalize_with_user_aliases_overrides_builtin() {
+        let aliases = HashMap::from([("vim".to_string(), "helix".to_string())]);
+        assert_eq!(normalize_name_with_aliases("vim", Some(&aliases)), "helix");
+    }
+
+    #[test]
+    fn normalize_with_user_aliases_falls_back_to_builtin() {
+        let aliases = HashMap::new();
+        assert_eq!(
+            normalize_name_with_aliases("nvim", Some(&aliases)),
+            "neovim"
+        );
+    }
+
+    #[test]
+    fn normalize_with_no_aliases_uses_builtin() {
+        assert_eq!(normalize_name_with_aliases("rg", None), "ripgrep");
+    }
+
+    // --- mapped_name_with_aliases ---
+
+    #[test]
+    fn mapped_with_user_aliases_overrides_builtin() {
+        let aliases = HashMap::from([("vim".to_string(), "Helix".to_string())]);
+        assert_eq!(mapped_name_with_aliases("vim", Some(&aliases)), "Helix");
+    }
+
+    #[test]
+    fn mapped_with_no_match_returns_original() {
+        assert_eq!(mapped_name_with_aliases("unknown-pkg", None), "unknown-pkg");
+    }
+
+    // --- overlay_lookup_with_user ---
+
+    #[test]
+    fn overlay_lookup_user_overrides_builtin() {
+        let overlays = HashMap::from([(
+            "neovim".to_string(),
+            "my-overlay:neovim-custom:Custom neovim".to_string(),
+        )]);
+        let result = overlay_lookup_with_user("neovim", Some(&overlays));
+        assert_eq!(
+            result,
+            Some((
+                "my-overlay".to_string(),
+                "neovim-custom".to_string(),
+                "Custom neovim".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn overlay_lookup_falls_back_to_builtin() {
+        let result = overlay_lookup_with_user("neovim", None);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().0, "neovim-nightly-overlay");
+    }
+
+    #[test]
+    fn overlay_lookup_returns_none_for_unknown() {
+        let result = overlay_lookup_with_user("unknown-pkg", None);
+        assert!(result.is_none());
     }
 }

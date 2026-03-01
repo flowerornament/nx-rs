@@ -6,5 +6,6 @@
   };
 
   outputs = { self, nixpkgs }: {
+    darwinConfigurations.myhost = {};
   };
 }

@@ -105,7 +105,7 @@ impl SlotKind {
 
 const MANIFEST_DIR: &str = ".nx";
 const MANIFEST_FILE: &str = "manifest.toml";
-const CURRENT_SCHEMA_VERSION: u32 = 1;
+pub(crate) const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 // --- Load / Save
 
@@ -199,7 +199,14 @@ fn parse_document(doc: &toml_edit::DocumentMut) -> Result<Manifest> {
     let schema_version = doc
         .get("schema_version")
         .and_then(toml_edit::Item::as_integer)
-        .map_or(CURRENT_SCHEMA_VERSION, |v| u32::try_from(v).unwrap_or(0));
+        .map_or(CURRENT_SCHEMA_VERSION, |v| {
+            u32::try_from(v).unwrap_or(CURRENT_SCHEMA_VERSION)
+        });
+    if schema_version != CURRENT_SCHEMA_VERSION {
+        eprintln!(
+            "warning: manifest schema_version is {schema_version}, expected {CURRENT_SCHEMA_VERSION}"
+        );
+    }
 
     let platform = doc
         .get("platform")
@@ -287,6 +294,11 @@ fn parse_slot(table: &toml_edit::Table) -> Result<Slot> {
         .and_then(toml_edit::Item::as_str)
         .map(PathBuf::from)
         .ok_or_else(|| anyhow::anyhow!("slot missing 'file' field"))?;
+    anyhow::ensure!(
+        !file.is_absolute(),
+        "slot file must be a relative path, got: {}",
+        file.display()
+    );
 
     let attr_path = table
         .get("attr_path")
@@ -642,9 +654,110 @@ mod tests {
     }
 
     #[test]
+    fn parse_slot_rejects_absolute_path() {
+        let tmp = TempDir::new().unwrap();
+        let nx_dir = tmp.path().join(".nx");
+        fs::create_dir_all(&nx_dir).unwrap();
+        fs::write(
+            nx_dir.join("manifest.toml"),
+            "schema_version = 1\n\n[[slots]]\nkind = \"nix-packages\"\nfile = \"/etc/nixos/packages.nix\"\n",
+        )
+        .unwrap();
+
+        let err = Manifest::load(tmp.path()).unwrap_err();
+        assert!(err.to_string().contains("relative path"));
+    }
+
+    #[test]
     fn home_manager_default_platform() {
         let platform = Manifest::default_home_manager();
         assert_eq!(platform.kind, PlatformKind::HomeManager);
         assert!(!platform.sudo);
+    }
+
+    #[test]
+    fn round_trip_hand_crafted_fixture() {
+        let fixture_toml = r#"schema_version = 1
+
+[platform]
+kind = "nixos"
+rebuild_command = "nixos-rebuild"
+sudo = true
+flake_root = "/etc/nixos"
+
+[[slots]]
+kind = "nix-packages"
+file = "modules/system.nix"
+attr_path = "environment.systemPackages"
+tags = ["system", "core"]
+default_for = ["install"]
+
+[[slots]]
+kind = "homebrew-list"
+file = "modules/brews.nix"
+attr_path = "homebrew.brews"
+tags = ["brews"]
+
+[[slots]]
+kind = "with-packages"
+file = "modules/python.nix"
+attr_path = "python3.withPackages"
+runtime = "python3"
+
+[[slots]]
+kind = "mas-apps"
+file = "modules/mas.nix"
+attr_path = "homebrew.masApps"
+
+[[slots]]
+kind = "services"
+file = "modules/services.nix"
+attr_path = "launchd.agents.myagent"
+
+[aliases]
+vim = "neovim"
+rg = "ripgrep"
+
+[overlays]
+neovim = "neovim-nightly-overlay"
+"#;
+
+        let tmp = TempDir::new().unwrap();
+        let nx_dir = tmp.path().join(".nx");
+        fs::create_dir_all(&nx_dir).unwrap();
+        fs::write(nx_dir.join("manifest.toml"), fixture_toml).unwrap();
+
+        // Load
+        let loaded = Manifest::load(tmp.path()).unwrap().unwrap();
+        assert_eq!(loaded.schema_version, 1);
+        assert_eq!(loaded.platform.kind, PlatformKind::NixOS);
+        assert_eq!(loaded.platform.flake_root, "/etc/nixos");
+        assert_eq!(loaded.slots.len(), 5);
+        assert_eq!(loaded.aliases.len(), 2);
+        assert_eq!(loaded.overlays.len(), 1);
+
+        // Save → Load again: round-trip preserves all fields
+        loaded.save(tmp.path()).unwrap();
+        let reloaded = Manifest::load(tmp.path()).unwrap().unwrap();
+
+        assert_eq!(reloaded.schema_version, loaded.schema_version);
+        assert_eq!(reloaded.platform.kind, loaded.platform.kind);
+        assert_eq!(
+            reloaded.platform.rebuild_command,
+            loaded.platform.rebuild_command
+        );
+        assert_eq!(reloaded.platform.sudo, loaded.platform.sudo);
+        assert_eq!(reloaded.platform.flake_root, loaded.platform.flake_root);
+        assert_eq!(reloaded.slots.len(), loaded.slots.len());
+        for (a, b) in reloaded.slots.iter().zip(loaded.slots.iter()) {
+            assert_eq!(a.kind, b.kind);
+            assert_eq!(a.file, b.file);
+            assert_eq!(a.attr_path, b.attr_path);
+            assert_eq!(a.tags, b.tags);
+            assert_eq!(a.runtime, b.runtime);
+            assert_eq!(a.default_for, b.default_for);
+        }
+        assert_eq!(reloaded.aliases, loaded.aliases);
+        assert_eq!(reloaded.overlays, loaded.overlays);
     }
 }

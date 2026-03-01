@@ -44,6 +44,7 @@ fn check_git_preflight(ctx: &AppContext) -> Result<(), i32> {
         let mut dirs: Vec<String> = m
             .slots
             .iter()
+            .filter(|s| s.file.components().count() > 1)
             .filter_map(|s| {
                 s.file
                     .components()

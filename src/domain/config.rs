@@ -82,9 +82,16 @@ impl ConfigFiles {
             .map(|slot| repo_root.join(&slot.file))
             .collect();
 
+        let mut by_purpose = BTreeMap::new();
+        for slot in &manifest.slots {
+            for tag in &slot.tags {
+                by_purpose.insert(tag.clone(), repo_root.join(&slot.file));
+            }
+        }
+
         Self {
             repo_root: repo_root.to_path_buf(),
-            by_purpose: BTreeMap::new(),
+            by_purpose,
             all_files,
             manifest: Some(manifest.clone()),
         }
@@ -94,7 +101,11 @@ impl ConfigFiles {
     pub fn discover_or_manifest(repo_root: &Path) -> Self {
         match Manifest::load(repo_root) {
             Ok(Some(manifest)) => Self::from_manifest(&manifest, repo_root),
-            _ => Self::discover(repo_root),
+            Ok(None) => Self::discover(repo_root),
+            Err(err) => {
+                eprintln!("warning: failed to load manifest, falling back to discovery: {err:#}");
+                Self::discover(repo_root)
+            }
         }
     }
 
@@ -168,6 +179,8 @@ impl ConfigFiles {
     }
 
     pub fn homebrew_taps(&self) -> PathBuf {
+        // Taps are not a manifest slot kind — they share a file with brews or live in
+        // a separate file matched by keyword only.
         self.find_by_keywords(&["taps manifest"])
             .unwrap_or_else(|| self.repo_root.join("packages/homebrew/taps.nix"))
     }

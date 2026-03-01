@@ -43,6 +43,37 @@ sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .
 export NX_REPO_ROOT=/path/to/your/config-repo
 ```
 
+### LLM-Assisted Functions
+
+Some flows can call local AI CLIs when helpful:
+
+- `install`:
+  - `--engine codex|claude` selects the engine (`codex` default).
+  - `--model <name>` selects the model for the chosen engine.
+  - `--explain` prints extra decision details during install resolution.
+- `remove`:
+  - `--model <name>` sets the Claude model used for AI fallback edits.
+- `upgrade`:
+  - Prints optional AI-generated change summaries for flake/homebrew updates.
+  - `--no-ai` disables AI summaries entirely.
+
+Requirements:
+
+- `codex` and/or `claude` must be installed and available on `PATH` for the corresponding features.
+- Authentication and provider-specific environment variables are managed by those CLIs.
+
+### Environment Variables
+
+`nx` reads the following environment variables:
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `NX_REPO_ROOT` | Yes | none | Absolute/relative path to the target Nix configuration repository. |
+| `NX_RS_SOPS_BIN` | No | `sops` | Override the `sops` executable used by `nx secret add`. |
+| `NX_RS_AUTO_REFRESH` | No | enabled | Controls auto-refresh of a local cargo-installed `nx` binary before `rebuild`/`upgrade`. Set to `0`, `false`, or `no` to disable. |
+| `NO_COLOR` | No | unset | Disables colored output when set. |
+| `TERM` | No | shell/default | If set to `dumb`, color output is disabled. |
+
 ### Examples
 
 ```bash

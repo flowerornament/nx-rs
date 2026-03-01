@@ -99,11 +99,9 @@ nx <command> --help
 - Commands like `where`, `list`, `info`, `status`, `installed`, and `search` are read-only.
 - Repository root is configured via `NX_REPO_ROOT`.
 
-## Contract and Operational Docs
+## Behavior Contract
 
-- Behavior contract: `.agents/SPEC.md`
-- Cutover and rollback runbook: `.agents/CUTOVER_PLAYBOOK.md`
-- Verified operational learnings: `.agents/LEARNINGS.md`
+- `.agents/SPEC.md`
 
 ## Quality Gates
 
@@ -118,7 +116,6 @@ Release-adjacent/operational validation:
 ```bash
 cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic
 just test-system
-scripts/cutover/validate_shadow_canary.sh
 ```
 
 ## Task Tracking

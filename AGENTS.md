@@ -16,7 +16,7 @@ Primary priorities:
 ## Guidelines
 
 1. Treat `.agents/SPEC.md` as the behavior contract.
-2. Use `.agents/CUTOVER_PLAYBOOK.md` and `.agents/LEARNINGS.md` for operational decisions.
+2. Use `.agents/SPEC.md` as the primary maintenance decision reference.
 3. Prefer libraries when they simplify code or reduce LOC.
 4. Use a functional-first style: pure transforms and explicit side-effect boundaries.
 5. Design types up front to encode invariants before implementing command flows.
@@ -26,8 +26,6 @@ Primary priorities:
 ## Key Documents
 
 - Behavior contract: `.agents/SPEC.md`
-- Verified operational learnings: `.agents/LEARNINGS.md`
-- Operational validation and rollback runbook: `.agents/CUTOVER_PLAYBOOK.md`
 - Legacy context repo: configure via `NX_REPO_ROOT`
 
 ## Toolchain And Workflow
@@ -58,11 +56,10 @@ Quality gates:
 | Check | `just check` | `cargo check`, all targets/features |
 | **Full CI gate** | **`just ci`** | fmt-check + lint + test + check in sequence |
 | System tests | `just test-system` | Integration matrix with deterministic stubs |
-| Operational validation | `scripts/cutover/validate_shadow_canary.sh` | Rust direct/canary validation on configured `NX_REPO_ROOT` |
 
 All flags use `--workspace --all-targets --all-features`. Clippy treats warnings as errors.
 
-Run `just ci` before finishing any code change. For release-adjacent changes, also run `just test-system` and `scripts/cutover/validate_shadow_canary.sh`.
+Run `just ci` before finishing any code change. For release-adjacent changes, also run `just test-system`.
 
 Agent hook pipeline (`just compile` runs this full sequence):
 

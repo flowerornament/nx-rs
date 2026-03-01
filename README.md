@@ -34,7 +34,7 @@ sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .
 export NX_REPO_ROOT=/path/to/your/config-repo
 ```
 
-### Common Commands
+### Examples
 
 ```bash
 # Bare package names are treated as "install"
@@ -48,7 +48,7 @@ nx status
 nx upgrade
 ```
 
-### Commands
+### Command Groups
 
 - `install`, `remove` (`rm`, `uninstall`)
 - `where`, `list`, `info`, `status`, `installed`, `search`
@@ -62,10 +62,10 @@ nx --help
 nx <command> --help
 ```
 
-### Safety
+### Command Behavior
 
-- Prefer `--dry-run` for mutating commands (`install`, `remove`).
-- Commands like `where`, `list`, `info`, `status`, `installed`, and `search` are read-only.
+- `where`, `list`, `info`, `status`, `installed`, and `search` are read-only.
+- `install` and `remove` support `--dry-run` to preview changes.
 
 ## Development
 

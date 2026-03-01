@@ -5,6 +5,7 @@ use anyhow::bail;
 
 use crate::cli::{Cli, CommandKind};
 use crate::commands::context::{AppContext, GlobalFlags};
+use crate::commands::init::cmd_init;
 use crate::commands::install::cmd_install;
 use crate::commands::query::{cmd_info, cmd_installed, cmd_list, cmd_status, cmd_where};
 use crate::commands::remove::cmd_remove;
@@ -40,10 +41,11 @@ pub fn execute(cli: Cli) -> i32 {
         }
     };
 
-    let config_files = ConfigFiles::discover(&repo_root);
+    let config_files = ConfigFiles::discover_or_manifest(&repo_root);
     let ctx = AppContext::new(repo_root, printer, config_files, global_flags);
 
     match cli.command {
+        CommandKind::Init(args) => cmd_init(args.refresh, &ctx),
         CommandKind::Install(args) => cmd_install(&args, &ctx),
         CommandKind::Remove(args) => cmd_remove(&args, &ctx),
         CommandKind::Secret(args) => cmd_secret(&args, &ctx),

@@ -20,7 +20,9 @@ use crate::domain::upgrade::InputChange;
 use crate::infra::shell::run_captured_command;
 
 #[cfg(test)]
-use self::rebuild::{build_rebuild_command, has_nix_extension};
+use self::rebuild::{
+    build_rebuild_command, build_rebuild_command_with_manifest, has_nix_extension,
+};
 #[cfg(test)]
 use self::undo::{git_diff_stat, git_modified_files};
 #[cfg(test)]
@@ -529,5 +531,32 @@ mod tests {
                 "--show-trace".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn rebuild_command_uses_manifest_rebuild_command() {
+        use std::collections::HashMap;
+
+        use crate::domain::manifest::{Manifest, PlatformConfig, PlatformKind};
+
+        let manifest = Manifest {
+            schema_version: 1,
+            platform: PlatformConfig {
+                kind: PlatformKind::NixOS,
+                rebuild_command: "nixos-rebuild".to_string(),
+                sudo: true,
+                flake_root: ".".to_string(),
+            },
+            slots: vec![],
+            aliases: HashMap::default(),
+            overlays: HashMap::default(),
+        };
+
+        let args = PassthroughArgs {
+            passthrough: Vec::new(),
+        };
+        let result = build_rebuild_command_with_manifest("/test", &args, Some(&manifest));
+        assert_eq!(result[0], "nixos-rebuild");
+        assert_eq!(result[1], "switch");
     }
 }

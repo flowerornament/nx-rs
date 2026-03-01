@@ -5,14 +5,18 @@ use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
+use super::manifest::{Manifest, SlotKind};
+
 /// Purpose-based routing to `.nix` config files.
 ///
 /// Discovers files by scanning `# nx:` comment tags on the first line,
 /// then provides SPEC-defined accessors that resolve by keyword match with deterministic fallbacks.
+/// When constructed from a manifest, resolves from manifest slots instead.
 pub struct ConfigFiles {
     repo_root: PathBuf,
     by_purpose: BTreeMap<String, PathBuf>,
     all_files: Vec<PathBuf>,
+    manifest: Option<Manifest>,
 }
 
 impl ConfigFiles {
@@ -66,7 +70,36 @@ impl ConfigFiles {
             repo_root: repo_root.to_path_buf(),
             by_purpose,
             all_files,
+            manifest: None,
         }
+    }
+
+    /// Construct from a manifest, resolving slot files to absolute paths.
+    pub fn from_manifest(manifest: &Manifest, repo_root: &Path) -> Self {
+        let all_files: Vec<PathBuf> = manifest
+            .slots
+            .iter()
+            .map(|slot| repo_root.join(&slot.file))
+            .collect();
+
+        Self {
+            repo_root: repo_root.to_path_buf(),
+            by_purpose: BTreeMap::new(),
+            all_files,
+            manifest: Some(manifest.clone()),
+        }
+    }
+
+    /// Auto-detect: load manifest if available, otherwise fall back to discovery.
+    pub fn discover_or_manifest(repo_root: &Path) -> Self {
+        match Manifest::load(repo_root) {
+            Ok(Some(manifest)) => Self::from_manifest(&manifest, repo_root),
+            _ => Self::discover(repo_root),
+        }
+    }
+
+    pub fn manifest(&self) -> Option<&Manifest> {
+        self.manifest.as_ref()
     }
 
     pub fn repo_root(&self) -> &Path {
@@ -82,33 +115,54 @@ impl ConfigFiles {
     }
 
     // -- Primary accessors --
+    //
+    // When a manifest is loaded, these resolve from manifest slots.
+    // Otherwise they fall back to keyword matching and hardcoded paths.
 
     pub fn packages(&self) -> PathBuf {
+        if let Some(slot) = self.manifest_slot_for(SlotKind::NixPackages, Some("install")) {
+            return self.repo_root.join(&slot.file);
+        }
         self.find_by_keywords(&["cli tools", "utilities"])
             .unwrap_or_else(|| self.repo_root.join("packages/nix/cli.nix"))
     }
 
     pub fn languages(&self) -> PathBuf {
+        if let Some(slot) = self.manifest_slot_for(SlotKind::WithPackages, None) {
+            return self.repo_root.join(&slot.file);
+        }
         self.find_by_keywords(&["language", "runtimes", "toolchains"])
             .unwrap_or_else(|| self.repo_root.join("packages/nix/languages.nix"))
     }
 
     pub fn services(&self) -> PathBuf {
+        if let Some(slot) = self.manifest_slot_for(SlotKind::Services, None) {
+            return self.repo_root.join(&slot.file);
+        }
         self.find_by_keywords(&["services", "daemons"])
             .unwrap_or_else(|| self.repo_root.join("home/services.nix"))
     }
 
     pub fn darwin(&self) -> PathBuf {
+        if let Some(slot) = self.manifest_slot_for(SlotKind::MasApps, None) {
+            return self.repo_root.join(&slot.file);
+        }
         self.find_by_keywords(&["macos system"])
             .unwrap_or_else(|| self.repo_root.join("system/darwin.nix"))
     }
 
     pub fn homebrew_brews(&self) -> PathBuf {
+        if let Some(slot) = self.manifest_slot_for_tag(SlotKind::HomebrewList, "brews") {
+            return self.repo_root.join(&slot.file);
+        }
         self.find_by_keywords(&["formula manifest", "brews"])
             .unwrap_or_else(|| self.repo_root.join("packages/homebrew/brews.nix"))
     }
 
     pub fn homebrew_casks(&self) -> PathBuf {
+        if let Some(slot) = self.manifest_slot_for_tag(SlotKind::HomebrewList, "casks") {
+            return self.repo_root.join(&slot.file);
+        }
         self.find_by_keywords(&["cask manifest", "gui apps"])
             .unwrap_or_else(|| self.repo_root.join("packages/homebrew/casks.nix"))
     }
@@ -119,6 +173,34 @@ impl ConfigFiles {
     }
 
     // -- Internal --
+
+    fn manifest_slot_for(
+        &self,
+        kind: SlotKind,
+        default_for: Option<&str>,
+    ) -> Option<&super::manifest::Slot> {
+        let manifest = self.manifest.as_ref()?;
+        if let Some(target) = default_for
+            && let Some(slot) = manifest.slots.iter().find(|s| {
+                s.kind == kind
+                    && s.default_for
+                        .as_ref()
+                        .is_some_and(|df| df.iter().any(|d| d == target))
+            })
+        {
+            return Some(slot);
+        }
+        manifest.slot_by_kind(kind)
+    }
+
+    fn manifest_slot_for_tag(&self, kind: SlotKind, tag: &str) -> Option<&super::manifest::Slot> {
+        let manifest = self.manifest.as_ref()?;
+        manifest
+            .slots
+            .iter()
+            .find(|s| s.kind == kind && s.tags.iter().any(|t| t == tag))
+            .or_else(|| manifest.slot_by_kind(kind))
+    }
 
     fn find_by_keywords(&self, keywords: &[&str]) -> Option<PathBuf> {
         for keyword in keywords {
@@ -148,6 +230,8 @@ fn read_nx_comment(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::manifest::{Manifest, PlatformKind, Slot};
+    use std::collections::HashMap;
     use std::fs;
     use tempfile::TempDir;
 
@@ -303,5 +387,143 @@ mod tests {
 
         // "macos system" should match "MacOS System Configuration"
         assert_eq!(cf.darwin(), root.join("system/darwin.nix"));
+    }
+
+    // --- Manifest-aware routing ---
+
+    fn test_manifest() -> Manifest {
+        Manifest {
+            schema_version: 1,
+            platform: crate::domain::manifest::PlatformConfig {
+                kind: PlatformKind::Darwin,
+                rebuild_command: "/run/current-system/sw/bin/darwin-rebuild".to_string(),
+                sudo: true,
+                flake_root: ".".to_string(),
+            },
+            slots: vec![
+                Slot {
+                    kind: SlotKind::NixPackages,
+                    file: PathBuf::from("modules/packages.nix"),
+                    attr_path: "home.packages".to_string(),
+                    tags: vec![],
+                    runtime: None,
+                    default_for: Some(vec!["install".to_string()]),
+                },
+                Slot {
+                    kind: SlotKind::HomebrewList,
+                    file: PathBuf::from("modules/brews.nix"),
+                    attr_path: "homebrew.brews".to_string(),
+                    tags: vec!["brews".to_string()],
+                    runtime: None,
+                    default_for: None,
+                },
+                Slot {
+                    kind: SlotKind::HomebrewList,
+                    file: PathBuf::from("modules/casks.nix"),
+                    attr_path: "homebrew.casks".to_string(),
+                    tags: vec!["casks".to_string()],
+                    runtime: None,
+                    default_for: None,
+                },
+                Slot {
+                    kind: SlotKind::WithPackages,
+                    file: PathBuf::from("modules/langs.nix"),
+                    attr_path: "python3.withPackages".to_string(),
+                    tags: vec![],
+                    runtime: Some("python3".to_string()),
+                    default_for: None,
+                },
+                Slot {
+                    kind: SlotKind::Services,
+                    file: PathBuf::from("modules/services.nix"),
+                    attr_path: "launchd.agents".to_string(),
+                    tags: vec![],
+                    runtime: None,
+                    default_for: None,
+                },
+                Slot {
+                    kind: SlotKind::MasApps,
+                    file: PathBuf::from("modules/mas.nix"),
+                    attr_path: "homebrew.masApps".to_string(),
+                    tags: vec![],
+                    runtime: None,
+                    default_for: None,
+                },
+            ],
+            aliases: HashMap::new(),
+            overlays: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn from_manifest_routes_packages_to_manifest_slot() {
+        let tmp = TempDir::new().unwrap();
+        let manifest = test_manifest();
+        let cf = ConfigFiles::from_manifest(&manifest, tmp.path());
+
+        assert_eq!(cf.packages(), tmp.path().join("modules/packages.nix"));
+    }
+
+    #[test]
+    fn from_manifest_routes_languages_to_with_packages_slot() {
+        let tmp = TempDir::new().unwrap();
+        let manifest = test_manifest();
+        let cf = ConfigFiles::from_manifest(&manifest, tmp.path());
+
+        assert_eq!(cf.languages(), tmp.path().join("modules/langs.nix"));
+    }
+
+    #[test]
+    fn from_manifest_routes_brews_by_tag() {
+        let tmp = TempDir::new().unwrap();
+        let manifest = test_manifest();
+        let cf = ConfigFiles::from_manifest(&manifest, tmp.path());
+
+        assert_eq!(cf.homebrew_brews(), tmp.path().join("modules/brews.nix"));
+        assert_eq!(cf.homebrew_casks(), tmp.path().join("modules/casks.nix"));
+    }
+
+    #[test]
+    fn from_manifest_routes_services_and_darwin() {
+        let tmp = TempDir::new().unwrap();
+        let manifest = test_manifest();
+        let cf = ConfigFiles::from_manifest(&manifest, tmp.path());
+
+        assert_eq!(cf.services(), tmp.path().join("modules/services.nix"));
+        assert_eq!(cf.darwin(), tmp.path().join("modules/mas.nix"));
+    }
+
+    #[test]
+    fn from_manifest_populates_all_files() {
+        let tmp = TempDir::new().unwrap();
+        let manifest = test_manifest();
+        let cf = ConfigFiles::from_manifest(&manifest, tmp.path());
+
+        assert_eq!(cf.all_files().len(), manifest.slots.len());
+    }
+
+    #[test]
+    fn discover_or_manifest_uses_manifest_when_present() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let manifest = test_manifest();
+        manifest.save(root).unwrap();
+
+        let cf = ConfigFiles::discover_or_manifest(root);
+        assert!(cf.manifest().is_some());
+        assert_eq!(cf.packages(), root.join("modules/packages.nix"));
+    }
+
+    #[test]
+    fn discover_or_manifest_falls_back_to_discovery() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_nix(root, "packages/nix/cli.nix", "# nx: cli tools\n[]");
+
+        let cf = ConfigFiles::discover_or_manifest(root);
+        assert!(cf.manifest().is_none());
+        assert_eq!(cf.packages(), root.join("packages/nix/cli.nix"));
     }
 }

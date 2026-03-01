@@ -17,16 +17,38 @@ pub struct PackageBuckets {
     pub services: Vec<String>,
 }
 
+/// Scan packages, using manifest slots when available to determine which files to scan.
+#[allow(dead_code)]
+pub fn scan_packages_with_manifest(
+    repo_root: &Path,
+    manifest: Option<&crate::domain::manifest::Manifest>,
+) -> anyhow::Result<PackageBuckets> {
+    let files = if let Some(m) = manifest {
+        m.slots
+            .iter()
+            .map(|slot| repo_root.join(&slot.file))
+            .filter(|p| p.exists())
+            .collect()
+    } else {
+        collect_nix_files(repo_root)
+    };
+    scan_packages_from_files(&files)
+}
+
 pub fn scan_packages(repo_root: &Path) -> anyhow::Result<PackageBuckets> {
+    scan_packages_from_files(&collect_nix_files(repo_root))
+}
+
+fn scan_packages_from_files(files: &[PathBuf]) -> anyhow::Result<PackageBuckets> {
     let mut out = PackageBuckets::default();
     let mut seen = SourceSeen::default();
 
-    for nix_file in collect_nix_files(repo_root) {
-        let content = fs::read_to_string(&nix_file)
+    for nix_file in files {
+        let content = fs::read_to_string(nix_file)
             .with_context(|| format!("reading {}", nix_file.display()))?;
         collect_nixpkgs_packages(&content, &mut out, &mut seen);
         collect_homebrew_items(
-            &nix_file,
+            nix_file,
             &content,
             "brews.nix",
             brews_regex(),
@@ -34,7 +56,7 @@ pub fn scan_packages(repo_root: &Path) -> anyhow::Result<PackageBuckets> {
             &mut seen.brews,
         );
         collect_homebrew_items(
-            &nix_file,
+            nix_file,
             &content,
             "casks.nix",
             casks_regex(),

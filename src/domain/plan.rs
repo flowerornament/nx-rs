@@ -109,9 +109,18 @@ pub fn build_install_plan(sr: &SourceResult, config: &ConfigFiles) -> Result<Ins
 
 /// Collect nix manifest files that could host a package (for AI routing).
 ///
-/// Candidates are constrained to the fallback manifest's parent directory and
-/// exclude the language manifest to preserve routing safety invariants.
+/// When a manifest is loaded, returns all `NixPackages` slots.
+/// Otherwise, constrains to the fallback manifest's parent directory and
+/// excludes the language manifest to preserve routing safety invariants.
 pub fn nix_manifest_candidates(config: &ConfigFiles) -> Vec<PathBuf> {
+    if let Some(manifest) = config.manifest() {
+        return manifest
+            .slots_by_kind(super::manifest::SlotKind::NixPackages)
+            .into_iter()
+            .map(|slot| config.repo_root().join(&slot.file))
+            .collect();
+    }
+
     let fallback = config.packages();
     let Some(parent) = fallback.parent() else {
         return vec![fallback];

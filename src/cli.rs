@@ -3,6 +3,7 @@ use std::ffi::OsString;
 use clap::{Args, Parser, Subcommand};
 
 const KNOWN_COMMANDS: &[&str] = &[
+    "init",
     "install",
     "remove",
     "rm",
@@ -97,6 +98,8 @@ pub struct GlobalOutputArgs {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum CommandKind {
+    #[command(about = "Scan repo and generate .nx/manifest.toml")]
+    Init(InitArgs),
     #[command(about = "Install package(s) into nix config")]
     Install(InstallArgs),
     #[command(alias = "rm", alias = "uninstall")]
@@ -434,6 +437,12 @@ pub struct UpgradeSkipArgs {
     pub skip_brew: bool,
 }
 
+#[derive(Debug, Clone, Parser, Default)]
+pub struct InitArgs {
+    #[arg(long, help = "Re-scan and merge with existing manifest")]
+    pub refresh: bool,
+}
+
 pub fn preprocess_args<I, T>(args: I) -> Vec<OsString>
 where
     I: IntoIterator<Item = T>,
@@ -510,6 +519,7 @@ mod tests {
     #[test]
     fn known_commands_match_spec_plus_intentional_extensions() {
         let spec_commands: BTreeSet<_> = [
+            "init",
             "install",
             "remove",
             "rm",

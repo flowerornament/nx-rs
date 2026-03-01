@@ -226,19 +226,70 @@ pub static OVERLAY_PACKAGES: LazyLock<
 // --- Pure Functions
 
 /// Normalize a package name through alias mapping (case-insensitive).
+/// When a manifest is available, its aliases take precedence over compiled-in defaults.
 pub fn normalize_name(name: &str) -> String {
+    normalize_name_with_aliases(name, None)
+}
+
+pub fn normalize_name_with_aliases(
+    name: &str,
+    user_aliases: Option<&HashMap<String, String>>,
+) -> String {
     let lower = name.to_lowercase();
+    if let Some(aliases) = user_aliases
+        && let Some(mapped) = aliases.get(&lower)
+    {
+        return mapped.to_lowercase();
+    }
     NAME_MAPPINGS
         .get(lower.as_str())
         .map_or(lower, |mapped| mapped.to_lowercase())
 }
 
 /// Resolve common aliases case-insensitively (returns mapped or original).
+/// When a manifest is available, its aliases take precedence over compiled-in defaults.
 pub fn mapped_name(name: &str) -> String {
+    mapped_name_with_aliases(name, None)
+}
+
+pub fn mapped_name_with_aliases(
+    name: &str,
+    user_aliases: Option<&HashMap<String, String>>,
+) -> String {
     let lower = name.to_lowercase();
+    if let Some(aliases) = user_aliases
+        && let Some(mapped) = aliases.get(&lower)
+    {
+        return mapped.clone();
+    }
     NAME_MAPPINGS
         .get(lower.as_str())
         .map_or_else(|| name.to_string(), |mapped| (*mapped).to_string())
+}
+
+/// Look up overlay info, checking user overlays first.
+#[allow(dead_code)]
+pub fn overlay_lookup_with_user(
+    name: &str,
+    user_overlays: Option<&HashMap<String, String>>,
+) -> Option<(String, String, String)> {
+    let lower = name.to_lowercase();
+    if let Some(overlays) = user_overlays
+        && let Some(overlay_spec) = overlays.get(&lower)
+    {
+        // User overlays: value is "overlay_name:attr_in_overlay:description"
+        let parts: Vec<&str> = overlay_spec.splitn(3, ':').collect();
+        if parts.len() == 3 {
+            return Some((
+                parts[0].to_string(),
+                parts[1].to_string(),
+                parts[2].to_string(),
+            ));
+        }
+    }
+    OVERLAY_PACKAGES
+        .get(lower.as_str())
+        .map(|(overlay, attr, desc)| (overlay.to_string(), attr.to_string(), desc.to_string()))
 }
 
 /// Detect if a package is a language-specific package.

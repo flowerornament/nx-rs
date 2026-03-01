@@ -5,6 +5,8 @@ use crate::commands::context::AppContext;
 use crate::infra::shell::{CapturedCommand, run_captured_command, run_indented_command_collecting};
 use crate::output::printer::Printer;
 
+use crate::domain::manifest::Manifest;
+
 use super::DARWIN_REBUILD;
 
 pub fn cmd_rebuild(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
@@ -36,18 +38,41 @@ pub(super) fn has_nix_extension(path: &str) -> bool {
 fn check_git_preflight(ctx: &AppContext) -> Result<(), i32> {
     ctx.printer.action("Checking tracked nix files");
     let repo = ctx.repo_root.display().to_string();
-    let args = [
+
+    // Derive directories from manifest slots when available, fall back to hardcoded list.
+    let slot_dirs = ctx.config_files.manifest().map(|m| {
+        let mut dirs: Vec<String> = m
+            .slots
+            .iter()
+            .filter_map(|s| {
+                s.file
+                    .components()
+                    .next()
+                    .and_then(|c| c.as_os_str().to_str())
+                    .map(str::to_string)
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        dirs.sort();
+        dirs
+    });
+    let default_dirs = ["home", "packages", "system", "hosts"];
+    let dir_refs: Vec<&str> = slot_dirs.as_ref().map_or_else(
+        || default_dirs.to_vec(),
+        |dirs| dirs.iter().map(String::as_str).collect(),
+    );
+
+    let mut git_args = vec![
         "-C",
         &repo,
         "ls-files",
         "--others",
         "--exclude-standard",
         "--",
-        "home",
-        "packages",
-        "system",
-        "hosts",
     ];
+    git_args.extend_from_slice(&dir_refs);
+    let args = git_args;
     let output = match run_captured_command("git", &args, None) {
         Ok(output) => output,
         Err(err) => {
@@ -120,6 +145,8 @@ fn check_flake(ctx: &AppContext) -> Result<(), i32> {
 
 fn do_rebuild(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
     let repo = ctx.repo_root.display().to_string();
+    let manifest = ctx.config_files.manifest();
+    let use_sudo = manifest.is_none_or(|m| m.platform.sudo);
 
     for attempt in 0..3 {
         if attempt == 0 {
@@ -129,11 +156,20 @@ fn do_rebuild(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
         }
         println!();
 
-        let rebuild_cmd = build_rebuild_command(&repo, args);
-        let arg_refs: Vec<&str> = rebuild_cmd.iter().map(String::as_str).collect();
+        let rebuild_cmd = build_rebuild_command_with_manifest(&repo, args, manifest);
+
+        let (runner, runner_args): (&str, Vec<&str>) = if use_sudo {
+            let arg_refs: Vec<&str> = rebuild_cmd.iter().map(String::as_str).collect();
+            ("sudo", arg_refs)
+        } else {
+            let (first, rest) = rebuild_cmd
+                .split_first()
+                .expect("non-empty rebuild command");
+            (first.as_str(), rest.iter().map(String::as_str).collect())
+        };
 
         let (code, output) =
-            match run_indented_command_collecting("sudo", &arg_refs, None, &ctx.printer, "  ") {
+            match run_indented_command_collecting(runner, &runner_args, None, &ctx.printer, "  ") {
                 Ok(result) => result,
                 Err(err) => {
                     ctx.printer.error("Rebuild failed");
@@ -161,10 +197,21 @@ fn do_rebuild(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
     1
 }
 
-/// Build sudo args for `darwin-rebuild switch --flake`.
+/// Build sudo args for rebuild command (backward-compat wrapper for tests).
+#[cfg(test)]
 pub(super) fn build_rebuild_command(repo: &str, args: &PassthroughArgs) -> Vec<String> {
+    build_rebuild_command_with_manifest(repo, args, None)
+}
+
+pub(super) fn build_rebuild_command_with_manifest(
+    repo: &str,
+    args: &PassthroughArgs,
+    manifest: Option<&Manifest>,
+) -> Vec<String> {
+    let rebuild_bin = manifest.map_or(DARWIN_REBUILD, |m| m.platform.rebuild_command.as_str());
+
     let mut rebuild_args = vec![
-        DARWIN_REBUILD.to_string(),
+        rebuild_bin.to_string(),
         "switch".to_string(),
         "--flake".to_string(),
         repo.to_string(),

@@ -55,7 +55,7 @@ pub fn execute(cli: Cli) -> i32 {
         CommandKind::Info(args) => cmd_info(&args, &ctx),
         CommandKind::Status => cmd_status(&ctx),
         CommandKind::Installed(args) => cmd_installed(&args, &ctx),
-        CommandKind::Undo => cmd_undo(&ctx),
+        CommandKind::Undo(args) => cmd_undo(&args, &ctx),
         CommandKind::Update(args) => cmd_update(&args, &ctx),
         CommandKind::Test => cmd_test(&ctx),
         CommandKind::Rebuild(args) => cmd_rebuild(&args, &ctx),

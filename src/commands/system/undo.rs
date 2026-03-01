@@ -1,12 +1,13 @@
 use std::path::Path;
 
+use crate::cli::UndoArgs;
 use crate::commands::context::AppContext;
 use crate::infra::shell::run_captured_command;
 use crate::output::printer::Printer;
 
 // ─── undo ────────────────────────────────────────────────────────────────────
 
-pub fn cmd_undo(ctx: &AppContext) -> i32 {
+pub fn cmd_undo(args: &UndoArgs, ctx: &AppContext) -> i32 {
     let modified = match git_modified_files(&ctx.repo_root) {
         Ok(files) => files,
         Err(err) => {
@@ -16,25 +17,25 @@ pub fn cmd_undo(ctx: &AppContext) -> i32 {
     };
 
     if modified.is_empty() {
-        println!();
-        println!("  Nothing to undo.");
+        Printer::body("Nothing to undo.");
         return 0;
     }
 
-    println!();
-    println!("  Undo Changes ({} files)", modified.len());
+    Printer::heading(&format!("Undo Changes ({} files)", modified.len()));
 
     for file in &modified {
-        println!("  {file}");
+        Printer::body(file);
         if let Some(summary) = git_diff_stat(file, &ctx.repo_root) {
-            println!("    {summary}");
+            Printer::sub_detail(&summary);
         }
     }
 
-    println!();
-    if !Printer::confirm("Revert all changes?", false) {
-        println!("  Cancelled.");
-        return 0;
+    if !args.yes {
+        println!();
+        if !Printer::confirm("Revert all changes?", false) {
+            Printer::body("Cancelled.");
+            return 0;
+        }
     }
 
     for file in &modified {

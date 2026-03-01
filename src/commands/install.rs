@@ -201,7 +201,8 @@ fn prepare_install_phase(
         return None;
     }
 
-    println!("> Routing {}", source_result.name);
+    ctx.printer
+        .action(&format!("Routing {}", source_result.name));
 
     if let Some(ref warning) = plan.routing_warning {
         ctx.printer.warn(warning);
@@ -243,7 +244,8 @@ fn apply_install_phase(
 
 fn render_dry_run_install(prepared: &PreparedInstall, ctx: &AppContext) {
     if prepared.plan.insertion_mode == InsertionMode::NixManifest
-        && let Some(insert_after_line) = find_preview_insert_after_line(&prepared.plan.target_file)
+        && let Some(insert_after_line) =
+            find_preview_insert_after_line(&prepared.plan.target_file, &prepared.plan.package_token)
     {
         let simulated_line = build_simulated_preview_line(
             &prepared.plan.package_token,
@@ -904,15 +906,31 @@ fn build_simulated_preview_line(package_token: &str, description: &str) -> Strin
     format!("{package_token}  # {truncated}...")
 }
 
-fn find_preview_insert_after_line(file_path: &Path) -> Option<usize> {
+fn find_preview_insert_after_line(file_path: &Path, package_token: &str) -> Option<usize> {
     let content = fs::read_to_string(file_path).ok()?;
-    let mut insert_after = None;
-    for (idx, line) in content.lines().enumerate() {
-        if is_preview_manifest_entry(line) {
-            insert_after = Some(idx + 1);
-        }
+    let entries: Vec<(usize, &str)> = content
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| is_preview_manifest_entry(line))
+        .collect();
+
+    if entries.is_empty() {
+        return None;
     }
-    insert_after
+
+    // Binary search for alphabetical position among existing entries.
+    let pos = entries.partition_point(|(_, line)| {
+        let token = line.split_whitespace().next().unwrap_or_default();
+        token < package_token
+    });
+
+    if pos == 0 {
+        // Insert before the first entry — use the line before it.
+        Some(entries[0].0)
+    } else {
+        // Insert after the entry at pos-1 (1-indexed line number).
+        Some(entries[pos - 1].0 + 1)
+    }
 }
 
 fn is_preview_manifest_entry(line: &str) -> bool {

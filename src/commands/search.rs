@@ -59,11 +59,12 @@ fn render_json(results: &[SourceResult]) -> i32 {
     }
 }
 
-fn render_table(results: &[SourceResult], ctx: &AppContext) {
-    println!();
-    ctx.printer
-        .action(&format!("Results for '{}'", results[0].name));
-    println!();
+fn render_table(results: &[SourceResult], _ctx: &AppContext) {
+    Printer::heading(&format!(
+        "Results for '{}' ({} sources)",
+        results[0].name,
+        results.len()
+    ));
 
     for r in results {
         let attr_display = r.attr.as_deref().unwrap_or(&r.name);
@@ -78,6 +79,6 @@ fn render_table(results: &[SourceResult], ctx: &AppContext) {
             format!(" - {}", r.description)
         };
 
-        println!("  {:<12} {attr_display}{version}{desc}", r.source,);
+        Printer::body(&format!("{:<12} {attr_display}{version}{desc}", r.source));
     }
 }

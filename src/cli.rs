@@ -121,7 +121,7 @@ pub enum CommandKind {
     #[command(about = "Check whether package(s) are installed")]
     Installed(InstalledArgs),
     #[command(about = "Revert modified tracked files via git checkout")]
-    Undo,
+    Undo(UndoArgs),
     #[command(about = "Run nix flake update")]
     Update(PassthroughArgs),
     #[command(about = "Run repo quality checks")]
@@ -372,6 +372,12 @@ pub struct InstalledArgs {
     pub json: bool,
     #[arg(long)]
     pub show_location: bool,
+}
+
+#[derive(Debug, Clone, Parser, Default)]
+pub struct UndoArgs {
+    #[arg(short, long, help = "Skip confirmation prompt")]
+    pub yes: bool,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -929,7 +935,7 @@ mod tests {
         assert_subcommand_local_long_flags("where", &[]);
         assert_subcommand_local_long_flags("installed", &["show-location"]);
         assert_subcommand_local_long_flags("status", &[]);
-        assert_subcommand_local_long_flags("undo", &[]);
+        assert_subcommand_local_long_flags("undo", &["yes"]);
         assert_subcommand_local_long_flags("update", &[]);
         assert_subcommand_local_long_flags("test", &[]);
         assert_subcommand_local_long_flags("rebuild", &[]);

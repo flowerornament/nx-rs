@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 
 use crate::output::style::{IconSet, OutputStyle};
 
@@ -7,6 +7,7 @@ struct GlyphSet {
     success: &'static str,
     warning: &'static str,
     error: &'static str,
+    removal: &'static str,
     dry_run: &'static str,
 }
 
@@ -33,6 +34,22 @@ impl Printer {
 
     pub fn error(&self, text: &str) {
         eprintln!("{}", self.error_line(text));
+    }
+
+    pub fn removal(&self, text: &str) {
+        println!("{}", self.removal_line(text));
+    }
+
+    pub fn heading(text: &str) {
+        println!("\n  \x1b[1m{text}\x1b[0m");
+    }
+
+    pub fn body(text: &str) {
+        println!("  {text}");
+    }
+
+    pub fn sub_detail(text: &str) {
+        println!("    {text}");
     }
 
     pub fn dry_run_banner(&self) {
@@ -63,6 +80,9 @@ impl Printer {
         let _ = io::stdout().flush();
         let mut line = String::new();
         let read_result = io::stdin().lock().read_line(&mut line);
+        if !io::stdin().is_terminal() {
+            println!();
+        }
         match read_result {
             Ok(0) | Err(_) => default_yes,
             Ok(_) => parse_confirm_response(&line, default_yes),
@@ -76,6 +96,7 @@ impl Printer {
                 success: "✔",
                 warning: "!",
                 error: "✘",
+                removal: "-",
                 dry_run: "~",
             },
             IconSet::Minimal => GlyphSet {
@@ -83,6 +104,7 @@ impl Printer {
                 success: "+",
                 warning: "!",
                 error: "x",
+                removal: "-",
                 dry_run: "~",
             },
         }
@@ -102,6 +124,10 @@ impl Printer {
 
     fn error_line(&self, text: &str) -> String {
         self.paint(format!("{} {text}", self.glyphs().error), "1;31")
+    }
+
+    fn removal_line(&self, text: &str) -> String {
+        self.paint(format!("{} {text}", self.glyphs().removal), "1;31")
     }
 
     fn dry_run_line(&self) -> String {

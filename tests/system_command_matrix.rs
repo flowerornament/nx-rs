@@ -102,7 +102,7 @@ const GH_NIXPKGS_COMPARE_ARGS: &[&str] = &["api", "repos/NixOS/nixpkgs/compare/a
 const UPGRADE_TOKEN_OPTION: &str = "github.com=ghp_system_matrix_token";
 
 const INFO_FOUND_STDOUT: &[&str] = &[
-    "ripgrep (installed (nxs))",
+    "ripgrep  installed (nxs)",
     "Location: packages/nix/cli.nix:5",
 ];
 const INFO_JSON_FOUND_STDOUT: &[&str] = &[

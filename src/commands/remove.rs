@@ -44,7 +44,7 @@ fn remove_single_package(package: &str, args: &RemoveArgs, ctx: &AppContext) -> 
             ctx.printer.error(&format!("{package} not found"));
             println!();
             Printer::detail(&format!("Check installed: nx list | grep -i {package}"));
-            return Ok(());
+            return Err(1);
         }
         Err(err) => {
             ctx.printer.error(&format!("remove lookup failed: {err}"));
@@ -75,14 +75,14 @@ fn remove_with_line(
     show_snippet(file_path, line_num, 1, SnippetMode::Remove, args.dry_run);
 
     if args.dry_run {
-        println!("\n- Would remove {package}");
+        ctx.printer.removal(&format!("Would remove {package}"));
         return Ok(());
     }
 
     if !args.yes {
         println!();
         if !Printer::confirm(&format!("Remove {package}?"), false) {
-            Printer::detail("Cancelled.");
+            Printer::body("Cancelled.");
             return Ok(());
         }
     }
@@ -113,14 +113,14 @@ fn remove_via_ai(
 
     if args.dry_run {
         Printer::detail(&format!("[DRY RUN] Would run AI to remove {package}"));
-        println!("\n- Would remove {package}");
+        ctx.printer.removal(&format!("Would remove {package}"));
         return Ok(());
     }
 
     if !args.yes {
         println!();
         if !Printer::confirm(&format!("Remove {package}?"), false) {
-            Printer::detail("Cancelled.");
+            Printer::body("Cancelled.");
             return Ok(());
         }
     }
@@ -167,10 +167,9 @@ fn report_success(package: &str, file_path: &Path, ctx: &AppContext) {
         .file_name()
         .and_then(|name| name.to_str())
         .map_or_else(|| file_path.display().to_string(), str::to_string);
-    println!("* {file_name}");
     println!();
     ctx.printer
-        .success(&format!("{package} removed from {file_name}"));
+        .removal(&format!("{package} removed from {file_name}"));
 }
 
 fn remove_line_directly(file_path: &Path, line_num: usize) -> anyhow::Result<()> {

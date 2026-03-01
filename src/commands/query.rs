@@ -25,7 +25,7 @@ use crate::output::json::to_string_compact;
 use crate::output::printer::Printer;
 
 const VALID_SOURCES_TEXT: &str =
-    "  Valid sources: brew, brews, cask, casks, homebrew, mas, nix, nxs, service,\n  services";
+    "Valid sources: brew, brews, cask, casks, homebrew, mas, nix, nxs, service, services";
 
 pub fn cmd_where(args: &WhereArgs, ctx: &AppContext) -> i32 {
     let Some(package) = &args.package else {
@@ -68,7 +68,7 @@ pub fn cmd_list(args: &ListArgs, ctx: &AppContext) -> i32 {
     let source = if let Some(raw) = args.source.as_deref() {
         let Some(valid) = normalize_source_filter(raw) else {
             ctx.printer.error(&format!("Unknown source: {raw}"));
-            println!("{VALID_SOURCES_TEXT}");
+            Printer::body(VALID_SOURCES_TEXT);
             return 1;
         };
         Some(valid)
@@ -83,13 +83,28 @@ pub fn cmd_list(args: &ListArgs, ctx: &AppContext) -> i32 {
     if let Some(source_key) = source {
         let mut only = source_values(source_key, &buckets).to_vec();
         only.sort();
+        Printer::heading(&format!(
+            "Installed ({source_key}) ({} packages)",
+            only.len()
+        ));
         for package in &only {
-            println!("  {package}");
+            if args.verbose {
+                let rel = find_package(package, &ctx.repo_root)
+                    .ok()
+                    .flatten()
+                    .map(|loc| relative_location(&loc, &ctx.repo_root))
+                    .unwrap_or_default();
+                Printer::body(&format!("{package:<28} {rel}"));
+            } else {
+                Printer::body(package);
+            }
         }
         return 0;
     }
 
-    print_plain_list(&buckets);
+    let count = count_all_packages(&buckets);
+    Printer::heading(&format!("Installed ({count} packages)"));
+    print_plain_list(&buckets, args.verbose, &ctx.repo_root);
     0
 }
 
@@ -147,8 +162,7 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
     );
     let flakehub = collect_info_flakehub(package, args.bleeding_edge, search_flakehub);
 
-    println!();
-    Printer::detail(&format!("{package} ({status})"));
+    Printer::heading(&format!("{package}  {status}"));
     if let Some(location) = location.as_ref() {
         Printer::detail(&format!(
             "Location: {}",
@@ -323,9 +337,9 @@ fn render_info_sources_plain(sources: &[SourceResult], installed_source: Option<
 
         println!();
         if is_current {
-            println!("  {label} (current)");
+            Printer::body(&format!("{label} (current)"));
         } else {
-            println!("  {label}");
+            Printer::body(&label);
         }
 
         render_info_metadata_plain(&metadata);
@@ -350,28 +364,31 @@ fn info_source_label(source: &SourceResult) -> String {
 
 fn render_info_metadata_plain(source: &InfoSourceJson) {
     if let Some(value) = source.version.as_deref() {
-        println!("  {:<13} {value}", "Version:");
+        Printer::body(&format!("{:<13} {value}", "Version:"));
     }
     if let Some(value) = source.description.as_deref() {
-        println!("  {:<13} {value}", "Description:");
+        Printer::body(&format!("{:<13} {value}", "Description:"));
     }
     if let Some(value) = source.homepage.as_deref() {
-        println!("  {:<13} {value}", "Homepage:");
+        Printer::body(&format!("{:<13} {value}", "Homepage:"));
     }
     if let Some(value) = source.license.as_deref() {
-        println!("  {:<13} {value}", "License:");
+        Printer::body(&format!("{:<13} {value}", "License:"));
     }
     if source.head_available {
-        println!("  {:<13} Available (brew install --HEAD)", "HEAD build:");
+        Printer::body(&format!(
+            "{:<13} Available (brew install --HEAD)",
+            "HEAD build:"
+        ));
     }
 }
 
 fn render_info_warnings_plain(source: &InfoSourceJson) {
     if source.broken {
-        println!("! This package is marked as BROKEN");
+        Printer::body("! This package is marked as BROKEN");
     }
     if source.insecure {
-        println!("! This package is marked as INSECURE");
+        Printer::body("! This package is marked as INSECURE");
     }
 }
 
@@ -390,7 +407,7 @@ fn render_info_dependencies_plain(source: &InfoSourceJson) {
         } else {
             String::new()
         };
-        println!("  {:<13} {shown}{more}", "Dependencies:");
+        Printer::body(&format!("{:<13} {shown}{more}", "Dependencies:"));
     }
 
     if let Some(build_dependencies) = source.build_dependencies.as_ref()
@@ -407,7 +424,7 @@ fn render_info_dependencies_plain(source: &InfoSourceJson) {
         } else {
             String::new()
         };
-        println!("  {:<13} {shown}{more}", "Build deps:");
+        Printer::body(&format!("{:<13} {shown}{more}", "Build deps:"));
     }
 }
 
@@ -421,7 +438,7 @@ fn render_info_artifacts_plain(source: &InfoSourceJson) {
             .cloned()
             .collect::<Vec<_>>()
             .join(", ");
-        println!("  {:<13} {shown}", "Installs:");
+        Printer::body(&format!("{:<13} {shown}", "Installs:"));
     }
 }
 
@@ -435,12 +452,12 @@ fn render_info_caveats_plain(source: &InfoSourceJson) {
     }
 
     println!();
-    println!("  Caveats:");
+    Printer::body("Caveats:");
     for line in trimmed.split('\n').take(5) {
-        println!("    {line}");
+        Printer::sub_detail(line);
     }
     if caveats.matches('\n').count() > 5 {
-        println!("    ...");
+        Printer::sub_detail("...");
     }
 }
 
@@ -451,9 +468,9 @@ fn render_config_option_plain(title: &str, kind: &str, info: Option<ConfigOption
     let tag = if info.enabled { " (enabled)" } else { "" };
 
     println!();
-    println!("  {title}{tag}");
-    println!("  {kind}: {}", info.path);
-    println!("  Example: {}", info.example);
+    Printer::body(&format!("{title}{tag}"));
+    Printer::body(&format!("{kind}: {}", info.path));
+    Printer::body(&format!("Example: {}", info.example));
 }
 
 fn render_flakehub_plain(results: &[FlakeHubInfo]) {
@@ -461,31 +478,32 @@ fn render_flakehub_plain(results: &[FlakeHubInfo]) {
         return;
     }
 
-    println!();
-    println!("  FlakeHub flakes ({})", results.len());
+    Printer::heading(&format!("FlakeHub flakes ({})", results.len()));
     for result in results.iter().take(3) {
-        println!("  {}", result.name);
+        Printer::body(&result.name);
         if !result.description.is_empty() {
             let summary = result.description.chars().take(60).collect::<String>();
-            println!("    {summary}...");
+            Printer::sub_detail(&format!("{summary}..."));
         }
         if let Some(version) = result.version.as_deref() {
-            println!("    Latest: {version}");
+            Printer::sub_detail(&format!("Latest: {version}"));
         }
     }
 
     println!();
     let first = &results[0];
     let flake_short = first.name.split('/').nth(1).unwrap_or(&first.name);
-    println!("  To use a FlakeHub flake, add to flake.nix inputs:");
-    println!("    {flake_short} = {{");
-    println!(
-        "      url = \"https://flakehub.com/f/{name}/*.tar.gz\";",
+    Printer::body("To use a FlakeHub flake, add to flake.nix inputs:");
+    Printer::sub_detail(&format!("{flake_short} = {{"));
+    Printer::sub_detail(&format!(
+        "  url = \"https://flakehub.com/f/{name}/*.tar.gz\";",
         name = first.name
-    );
-    println!("    }};");
+    ));
+    Printer::sub_detail("}};");
     println!();
-    println!("  Then use: inputs.{flake_short}.packages.${{system}}.default");
+    Printer::body(&format!(
+        "Then use: inputs.{flake_short}.packages.${{system}}.default"
+    ));
 }
 
 fn render_install_hints_plain(name: &str, infos: &[SourceResult], installed: bool) {
@@ -493,10 +511,10 @@ fn render_install_hints_plain(name: &str, infos: &[SourceResult], installed: boo
         return;
     }
 
-    println!("  Available from multiple sources. Install with:");
+    Printer::body("Available from multiple sources. Install with:");
     for info in infos {
         let hint = install_hint_for_source(name, info.source);
-        println!("  {hint}");
+        Printer::sub_detail(&hint);
     }
 }
 
@@ -530,8 +548,8 @@ pub fn cmd_status(ctx: &AppContext) -> i32 {
     .into_iter()
     .sum::<usize>();
 
-    println!("\n  Package Status ({total} packages installed)");
-    println!("\n  Source       Count  Examples");
+    Printer::heading(&format!("Package Status ({total} packages installed)"));
+    Printer::body("Source       Count  Examples");
 
     for (label, packages) in [
         ("nxs", &buckets.nxs),
@@ -544,7 +562,7 @@ pub fn cmd_status(ctx: &AppContext) -> i32 {
             continue;
         }
         let examples = render_examples(packages);
-        println!("  {label:<12} {:>5}  {examples}", packages.len());
+        Printer::body(&format!("{label:<12} {:>5}  {examples}", packages.len()));
     }
 
     0
@@ -656,6 +674,7 @@ fn render_single_installed(result: &InstalledResult, ctx: &AppContext, show_loca
             .warn(&format!("{} is not installed", result.query));
         return 1;
     };
+    println!();
     let name_part = if found.name == result.query {
         found.name.clone()
     } else {
@@ -673,8 +692,7 @@ fn render_single_installed(result: &InstalledResult, ctx: &AppContext, show_loca
 fn render_multi_installed(results: &[InstalledResult], ctx: &AppContext) -> i32 {
     let all_installed = results.iter().all(|r| r.matched.is_some());
     let installed_count = results.iter().filter(|r| r.matched.is_some()).count();
-    println!();
-    Printer::detail(&format!(
+    Printer::heading(&format!(
         "Package Check ({installed_count}/{} installed)",
         results.len()
     ));
@@ -733,7 +751,15 @@ fn render_examples(packages: &[String]) -> String {
     examples
 }
 
-fn print_plain_list(buckets: &PackageBuckets) {
+fn count_all_packages(buckets: &PackageBuckets) -> usize {
+    buckets.nxs.len()
+        + buckets.brews.len()
+        + buckets.casks.len()
+        + buckets.mas.len()
+        + buckets.services.len()
+}
+
+fn print_plain_list(buckets: &PackageBuckets, verbose: bool, repo_root: &Path) {
     for source in [
         &buckets.nxs,
         &buckets.brews,
@@ -744,7 +770,16 @@ fn print_plain_list(buckets: &PackageBuckets) {
         let mut packages = source.clone();
         packages.sort();
         for package in &packages {
-            println!("  {package}");
+            if verbose {
+                let rel = find_package(package, repo_root)
+                    .ok()
+                    .flatten()
+                    .map(|loc| relative_location(&loc, repo_root))
+                    .unwrap_or_default();
+                Printer::body(&format!("{package:<28} {rel}"));
+            } else {
+                Printer::body(package);
+            }
         }
     }
 }

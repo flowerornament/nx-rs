@@ -77,23 +77,24 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<Vec<InputChan
     }
 
     if !diff.changed.is_empty() {
-        println!("\n  Flake Inputs Changed ({})", diff.changed.len());
+        Printer::heading(&format!("Flake Inputs Changed ({})", diff.changed.len()));
         for change in &diff.changed {
-            println!("\n  {}", change.name);
-            println!(
-                "    {}/{} {} \u{2192} {}",
+            println!();
+            Printer::body(&change.name);
+            Printer::sub_detail(&format!(
+                "{}/{} {} \u{2192} {}",
                 change.owner,
                 change.repo,
                 short_rev(&change.old_rev),
                 short_rev(&change.new_rev),
-            );
+            ));
 
             if let Some(summary) = fetch_flake_compare_summary(change) {
-                println!("    summary: {}", format_compare_summary(&summary));
+                Printer::sub_detail(&format!("summary: {}", format_compare_summary(&summary)));
                 if let Some(ai_summary) =
                     maybe_ai_summary(args.no_ai(), || summarize_flake_change_ai(change, &summary))
                 {
-                    println!("    ai summary: {ai_summary}");
+                    Printer::sub_detail(&format!("ai summary: {ai_summary}"));
                 }
             } else {
                 ctx.printer.warn("Failed to fetch comparison from GitHub");
@@ -401,28 +402,27 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
         return;
     }
 
-    println!();
-    println!("  Homebrew Outdated ({})", outdated.len());
+    Printer::heading(&format!("Homebrew Outdated ({})", outdated.len()));
 
     for package in &outdated {
         println!();
-        println!("  {}", package.name);
-        println!(
-            "    {} \u{2192} {}",
+        Printer::body(&package.name);
+        Printer::sub_detail(&format!(
+            "{} \u{2192} {}",
             package.installed_version, package.current_version
-        );
+        ));
 
         if let Some(changelog_url) = &package.changelog_url {
-            println!("    {changelog_url}");
+            Printer::sub_detail(changelog_url);
         } else if let Some(homepage) = &package.homepage {
-            println!("    {homepage}");
+            Printer::sub_detail(homepage);
         }
 
         if let Some(ai_summary) = maybe_ai_summary(args.no_ai(), || {
             fetch_brew_compare_summary(package)
                 .and_then(|summary| summarize_brew_change_ai(package, &summary))
         }) {
-            println!("    ai summary: {ai_summary}");
+            Printer::sub_detail(&format!("ai summary: {ai_summary}"));
         }
     }
 

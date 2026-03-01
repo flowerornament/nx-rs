@@ -48,12 +48,22 @@ nx status
 nx upgrade
 ```
 
-### Command Groups
+### Commands
 
-- `install`, `remove` (`rm`, `uninstall`)
-- `where`, `list`, `info`, `status`, `installed`, `search`
-- `undo`, `update`, `test`, `rebuild`, `upgrade`
-- `secret` (`secrets`) with `secret add`
+- `install`
+- `remove` (aliases: `rm`, `uninstall`)
+- `search`
+- `where`
+- `list`
+- `info`
+- `status`
+- `installed`
+- `secret add` (top-level command `secret`, alias `secrets`)
+- `undo`
+- `update`
+- `test`
+- `rebuild`
+- `upgrade`
 
 Use command help for full options:
 
@@ -117,4 +127,4 @@ bd sync
 
 ## License
 
-Private.
+MIT.

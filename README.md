@@ -81,7 +81,7 @@ nx <command> --help
 
 ### Toolchain
 
-Rust is pinned in `rust-toolchain.toml` (`1.92.0`).
+Rust is pinned in `rust-toolchain.toml` (`1.93.1`).
 
 ### Workflow
 

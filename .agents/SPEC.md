@@ -113,7 +113,8 @@ Defined at root callback and persisted in app state:
 Resolution order:
 
 1. `NX_REPO_ROOT` env var
-2. error if unset
+2. Walk up from `cwd` looking for `flake.nix`
+3. Error if neither found
 
 ## 3.2 Config File Discovery
 

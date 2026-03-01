@@ -1,5 +1,5 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::bail;
 
@@ -64,16 +64,30 @@ pub fn execute(cli: Cli) -> i32 {
 }
 
 fn find_repo_root() -> anyhow::Result<PathBuf> {
-    resolve_repo_root(env::var_os(NX_REPO_ROOT_ENV).map(PathBuf::from))
+    resolve_repo_root(
+        env::var_os(NX_REPO_ROOT_ENV).map(PathBuf::from),
+        env::current_dir().ok(),
+    )
 }
 
-fn resolve_repo_root(env_root: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+fn resolve_repo_root(env_root: Option<PathBuf>, cwd: Option<PathBuf>) -> anyhow::Result<PathBuf> {
     if let Some(env_path) = env_root {
         return Ok(std::fs::canonicalize(&env_path).unwrap_or(env_path));
     }
+    if let Some(detected) = cwd.and_then(|d| detect_repo_root(&d)) {
+        return Ok(detected);
+    }
     bail!(
-        "Could not resolve repository root. Set {NX_REPO_ROOT_ENV} to your config repository path."
+        "Could not resolve repository root. Set {NX_REPO_ROOT_ENV} or run from inside a directory containing flake.nix."
     )
+}
+
+/// Walk up from `start` looking for a directory containing `flake.nix`.
+fn detect_repo_root(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .find(|dir| dir.join("flake.nix").is_file())
+        .map(Path::to_path_buf)
 }
 
 pub fn dirs_home() -> PathBuf {
@@ -82,14 +96,15 @@ pub fn dirs_home() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_repo_root;
+    use super::{detect_repo_root, resolve_repo_root};
+    use std::fs;
     use tempfile::TempDir;
 
     #[test]
     fn resolve_repo_root_uses_env_path() {
         let repo = TempDir::new().expect("temp dir should be created");
-        let resolved = resolve_repo_root(Some(repo.path().to_path_buf())).expect("resolve");
-        let expected = std::fs::canonicalize(repo.path()).expect("canonical path");
+        let resolved = resolve_repo_root(Some(repo.path().to_path_buf()), None).expect("resolve");
+        let expected = fs::canonicalize(repo.path()).expect("canonical path");
         assert_eq!(resolved, expected);
     }
 
@@ -97,16 +112,40 @@ mod tests {
     fn resolve_repo_root_keeps_missing_env_path_unmodified() {
         let repo = TempDir::new().expect("temp dir should be created");
         let missing = repo.path().join("missing-config-root");
-        let resolved = resolve_repo_root(Some(missing.clone())).expect("resolve");
+        let resolved = resolve_repo_root(Some(missing.clone()), None).expect("resolve");
         assert_eq!(resolved, missing);
     }
 
     #[test]
     fn resolve_repo_root_errors_without_env_var() {
-        let err = resolve_repo_root(None).expect_err("must fail");
+        let empty = TempDir::new().expect("temp dir");
+        let err = resolve_repo_root(None, Some(empty.path().to_path_buf())).expect_err("must fail");
         assert!(
             err.to_string()
-                .contains("Set NX_REPO_ROOT to your config repository path")
+                .contains("Set NX_REPO_ROOT or run from inside a directory containing flake.nix")
         );
+    }
+
+    #[test]
+    fn detect_finds_flake_in_dir() {
+        let dir = TempDir::new().expect("temp dir");
+        fs::write(dir.path().join("flake.nix"), "{}").expect("write flake.nix");
+        assert_eq!(detect_repo_root(dir.path()), Some(dir.path().to_path_buf()));
+    }
+
+    #[test]
+    fn detect_walks_up_to_parent() {
+        let parent = TempDir::new().expect("temp dir");
+        fs::write(parent.path().join("flake.nix"), "{}").expect("write flake.nix");
+        let child = parent.path().join("subdir");
+        fs::create_dir(&child).expect("create subdir");
+        assert_eq!(detect_repo_root(&child), Some(parent.path().to_path_buf()));
+    }
+
+    #[test]
+    fn detect_returns_none_without_flake() {
+        let dir = TempDir::new().expect("temp dir");
+        // Temp dirs are typically under /tmp which has no flake.nix ancestors
+        assert_eq!(detect_repo_root(dir.path()), None);
     }
 }

@@ -76,11 +76,13 @@ pub fn build_install_plan(sr: &SourceResult, config: &ConfigFiles) -> Result<Ins
             None,
         ),
         PackageSource::Mas => (config.darwin(), InsertionMode::MasApps, None),
-        _ if language_info.is_some() => (
-            config.languages(),
-            InsertionMode::LanguageWithPackages,
-            None,
-        ),
+        _ if language_info.is_some() => {
+            let lang = language_info.as_ref().unwrap();
+            let target = config
+                .with_packages_for(&lang.runtime)
+                .unwrap_or_else(|| config.languages());
+            (target, InsertionMode::LanguageWithPackages, None)
+        }
         _ => {
             // Deterministic fallback: MCP tools and general nix → cli.nix
             let target = config.packages();

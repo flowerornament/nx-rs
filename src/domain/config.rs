@@ -146,6 +146,16 @@ impl ConfigFiles {
             .unwrap_or_else(|| self.repo_root.join("packages/nix/languages.nix"))
     }
 
+    /// Find the file containing a specific runtime's withPackages block.
+    pub fn with_packages_for(&self, runtime: &str) -> Option<PathBuf> {
+        let manifest = self.manifest.as_ref()?;
+        let slot = manifest
+            .slots
+            .iter()
+            .find(|s| s.kind == SlotKind::WithPackages && s.runtime.as_deref() == Some(runtime))?;
+        Some(self.repo_root.join(&slot.file))
+    }
+
     pub fn services(&self) -> PathBuf {
         if let Some(slot) = self.manifest_slot_for(SlotKind::Services, None) {
             return self.repo_root.join(&slot.file);
@@ -484,6 +494,27 @@ mod tests {
         let cf = ConfigFiles::from_manifest(&manifest, tmp.path());
 
         assert_eq!(cf.languages(), tmp.path().join("modules/langs.nix"));
+    }
+
+    #[test]
+    fn with_packages_for_finds_matching_runtime() {
+        let tmp = TempDir::new().unwrap();
+        let manifest = test_manifest();
+        let cf = ConfigFiles::from_manifest(&manifest, tmp.path());
+
+        assert_eq!(
+            cf.with_packages_for("python3"),
+            Some(tmp.path().join("modules/langs.nix"))
+        );
+    }
+
+    #[test]
+    fn with_packages_for_returns_none_for_unknown_runtime() {
+        let tmp = TempDir::new().unwrap();
+        let manifest = test_manifest();
+        let cf = ConfigFiles::from_manifest(&manifest, tmp.path());
+
+        assert_eq!(cf.with_packages_for("perl"), None);
     }
 
     #[test]

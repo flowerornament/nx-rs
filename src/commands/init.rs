@@ -234,25 +234,51 @@ fn scan_expr_for_slots(node: &rnix::SyntaxNode, rel_path: &Path, slots: &mut Vec
 
 fn detect_with_packages(apply: &ast::Apply) -> Option<(String, String)> {
     let func = apply.lambda()?;
-    if let ast::Expr::Select(sel) = func {
-        let attr = sel.attrpath()?;
-        let attrs: Vec<String> = attr
-            .attrs()
-            .filter_map(|a| match a {
-                ast::Attr::Ident(id) => Some(id.ident_token()?.text().to_string()),
-                _ => None,
-            })
-            .collect();
+    let ast::Expr::Select(sel) = func else {
+        return None;
+    };
 
-        if let Some(last) = attrs.last()
-            && last == "withPackages"
-            && attrs.len() >= 2
-        {
-            let runtime = attrs[attrs.len() - 2].clone();
-            return Some((runtime, "withPackages".to_string()));
-        }
+    let attrs: Vec<String> = sel
+        .attrpath()?
+        .attrs()
+        .filter_map(|a| match a {
+            ast::Attr::Ident(id) => Some(id.ident_token()?.text().to_string()),
+            _ => None,
+        })
+        .collect();
+
+    if attrs.last().map(String::as_str) != Some("withPackages") {
+        return None;
     }
-    None
+
+    // Build runtime from expr + attrpath segments (minus "withPackages").
+    //
+    // rnix AST splits differently depending on prefix depth:
+    //   `python3.withPackages`                → expr=Ident("python3"), attrs=["withPackages"]
+    //   `pkgs.python3.withPackages`           → expr=Ident("pkgs"),   attrs=["python3", "withPackages"]
+    //   `haskellPackages.ghc.withPackages`    → expr=Ident("haskellPackages"), attrs=["ghc", "withPackages"]
+    //   `pkgs.haskellPackages.ghc.withPackages` → expr=Ident("pkgs"), attrs=["haskellPackages", "ghc", "withPackages"]
+    let expr_name = match sel.expr()? {
+        ast::Expr::Ident(id) => Some(id.ident_token()?.text().to_string()),
+        _ => None,
+    };
+
+    let runtime_attrs = &attrs[..attrs.len() - 1]; // everything before "withPackages"
+    let mut segments: Vec<&str> = Vec::new();
+
+    if let Some(ref name) = expr_name
+        && name != "pkgs"
+        && name != "self"
+    {
+        segments.push(name);
+    }
+    segments.extend(runtime_attrs.iter().map(String::as_str));
+
+    if segments.is_empty() {
+        return None; // bare `pkgs.withPackages` doesn't make sense
+    }
+
+    Some((segments.join("."), "withPackages".to_string()))
 }
 
 fn attrpath_segments(apv: &ast::AttrpathValue) -> Vec<String> {
@@ -836,6 +862,97 @@ mod tests {
                 slot.attr_path
             );
         }
+    }
+
+    // --- detect_with_packages: implicit scope (1-segment attrpath) ---
+
+    #[test]
+    fn scan_finds_with_packages_implicit_scope() {
+        let tmp = TempDir::new().unwrap();
+        write_file(
+            tmp.path(),
+            "packages/languages.nix",
+            r"{ pkgs, ... }: {
+  home.packages = [
+    (python3.withPackages (ps: with ps; [ requests pyyaml ]))
+  ];
+}",
+        );
+
+        let slots = scan_repo_slots(tmp.path());
+        assert!(
+            slots
+                .iter()
+                .any(|s| s.kind == SlotKind::WithPackages
+                    && s.runtime == Some("python3".to_string())),
+            "should find python3 from implicit-scope `python3.withPackages`, got: {slots:?}"
+        );
+    }
+
+    #[test]
+    fn scan_finds_with_packages_lua_implicit() {
+        let tmp = TempDir::new().unwrap();
+        write_file(
+            tmp.path(),
+            "packages/languages.nix",
+            r"{ pkgs, ... }: {
+  home.packages = [
+    (lua5_4.withPackages (ps: [ lpeg ]))
+  ];
+}",
+        );
+
+        let slots = scan_repo_slots(tmp.path());
+        assert!(
+            slots.iter().any(
+                |s| s.kind == SlotKind::WithPackages && s.runtime == Some("lua5_4".to_string())
+            ),
+            "should find lua5_4 from implicit-scope, got: {slots:?}"
+        );
+    }
+
+    // --- detect_with_packages: multi-segment runtimes ---
+
+    #[test]
+    fn scan_finds_haskell_with_packages() {
+        let tmp = TempDir::new().unwrap();
+        write_file(
+            tmp.path(),
+            "packages/languages.nix",
+            r"{ pkgs, ... }: {
+  home.packages = [
+    (haskellPackages.ghc.withPackages (ps: [ ps.pandoc ]))
+  ];
+}",
+        );
+
+        let slots = scan_repo_slots(tmp.path());
+        assert!(
+            slots.iter().any(|s| s.kind == SlotKind::WithPackages
+                && s.runtime == Some("haskellPackages.ghc".to_string())),
+            "should find haskellPackages.ghc, got: {slots:?}"
+        );
+    }
+
+    #[test]
+    fn scan_finds_haskell_with_pkgs_prefix() {
+        let tmp = TempDir::new().unwrap();
+        write_file(
+            tmp.path(),
+            "packages/languages.nix",
+            r"{ pkgs, ... }: {
+  home.packages = [
+    (pkgs.haskellPackages.ghc.withPackages (ps: [ ps.pandoc ]))
+  ];
+}",
+        );
+
+        let slots = scan_repo_slots(tmp.path());
+        assert!(
+            slots.iter().any(|s| s.kind == SlotKind::WithPackages
+                && s.runtime == Some("haskellPackages.ghc".to_string())),
+            "should find haskellPackages.ghc with pkgs. prefix, got: {slots:?}"
+        );
     }
 
     #[test]

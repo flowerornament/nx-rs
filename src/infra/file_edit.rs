@@ -62,7 +62,12 @@ fn dispatch_insert(content: &str, plan: &InstallPlan) -> Result<(String, Option<
             let lang = plan.language_info.as_ref().ok_or_else(|| {
                 anyhow!("invalid install plan: language_info required for LanguageWithPackages")
             })?;
-            insert_language_package(content, &lang.bare_name, &lang.runtime)
+            let lines: Vec<&str> = content.lines().collect();
+            if find_with_packages_block(&lines, &lang.runtime).is_some() {
+                insert_language_package(content, &lang.bare_name, &lang.runtime)
+            } else {
+                scaffold_language_block(content, &lang.bare_name, &lang.runtime)
+            }
         }
         InsertionMode::HomebrewManifest => insert_homebrew_manifest(content, &plan.package_token),
         InsertionMode::MasApps => Ok(insert_mas_app(content, &plan.package_token)),
@@ -83,6 +88,20 @@ fn dispatch_remove(content: &str, plan: &InstallPlan) -> Result<(String, Option<
     }
 }
 
+/// Check if a file has an editable nix package list.
+///
+/// Returns `true` if the file contains a multi-line or inline `home.packages`
+/// or `environment.systemPackages` bracket region.
+pub fn has_editable_package_list(path: &Path) -> bool {
+    let Ok(content) = fs::read_to_string(path) else {
+        return false;
+    };
+    find_bracket_region(&content, "home.packages").is_some()
+        || find_bracket_region(&content, "environment.systemPackages").is_some()
+        || find_inline_bracket(&content, "home.packages").is_some()
+        || find_inline_bracket(&content, "environment.systemPackages").is_some()
+}
+
 // --- Per-mode Inserters
 //
 // Each returns `(new_content, Some(line_number))` on insertion,
@@ -94,12 +113,28 @@ fn dispatch_remove(content: &str, plan: &InstallPlan) -> Result<(String, Option<
 /// section headers (`# === ... ===`). Skips comment-only and blank lines
 /// when finding alphabetical position.
 fn insert_nix_manifest(content: &str, token: &str) -> Result<(String, Option<usize>)> {
-    // Check idempotency: token already present as a standalone identifier
+    // Expand single-line lists to multi-line first, so idempotency check
+    // can find tokens that are inline (e.g. `[ vim git ];` → separate lines).
+    let content = if find_bracket_region(content, "home.packages").is_none()
+        && find_bracket_region(content, "environment.systemPackages").is_none()
+    {
+        if let Some(expanded) = expand_inline_list(content, "home.packages")
+            .or_else(|| expand_inline_list(content, "environment.systemPackages"))
+        {
+            std::borrow::Cow::Owned(expanded)
+        } else {
+            std::borrow::Cow::Borrowed(content)
+        }
+    } else {
+        std::borrow::Cow::Borrowed(content)
+    };
+    let content = content.as_ref();
+
+    // Check idempotency after expansion so inline tokens are found
     if nix_manifest_contains(content, token) {
         return Ok((content.to_string(), None));
     }
 
-    // Find the bracket region of `home.packages = with pkgs; [`
     let (bracket_start, bracket_end) = find_bracket_region(content, "home.packages")
         .or_else(|| find_bracket_region(content, "environment.systemPackages"))
         .ok_or_else(|| {
@@ -163,6 +198,56 @@ fn insert_language_package(
         out.push('\n');
     }
     out.push_str(&new_line);
+    out.push('\n');
+    for line in &lines[insert_at..] {
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    if !content.ends_with('\n') {
+        out.pop();
+    }
+
+    Ok((out, Some(insert_at + 1)))
+}
+
+/// Scaffold a new `withPackages` block for a runtime that doesn't have one yet.
+///
+/// Inserts a multi-line `(runtime.withPackages (ps: [ bare_name ]))` expression
+/// into the `home.packages` list, ensuring subsequent installs can find the block.
+fn scaffold_language_block(
+    content: &str,
+    bare_name: &str,
+    runtime: &str,
+) -> Result<(String, Option<usize>)> {
+    // Check idempotency: if the package is already present under any runtime block, skip
+    if lang_package_contains(content, bare_name, runtime) {
+        return Ok((content.to_string(), None));
+    }
+
+    let (bracket_start, bracket_end) = find_bracket_region(content, "home.packages")
+        .or_else(|| find_bracket_region(content, "environment.systemPackages"))
+        .ok_or_else(|| {
+            anyhow!("no home.packages or environment.systemPackages list to scaffold into")
+        })?;
+
+    let lines: Vec<&str> = content.lines().collect();
+    let indent = detect_indent_in_region(&lines, bracket_start, bracket_end).unwrap_or("    ");
+    let inner_indent = format!("{indent}  ");
+
+    // Build multi-line withPackages expression
+    let block =
+        format!("{indent}({runtime}.withPackages (ps: [\n{inner_indent}{bare_name}\n{indent}]))");
+
+    // Insert before closing bracket
+    let insert_at = bracket_end;
+
+    let mut out = String::with_capacity(content.len() + block.len() + 1);
+    for line in &lines[..insert_at] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str(&block);
     out.push('\n');
     for line in &lines[insert_at..] {
         out.push_str(line);
@@ -496,6 +581,10 @@ fn homebrew_manifest_contains(content: &str, token: &str) -> bool {
 }
 
 /// Find the line range (`bracket_open`, `bracket_close`) of a `[ ... ]` region after a key.
+///
+/// Returns `Some((open_line, close_line))`. For single-line lists like
+/// `key = with pkgs; [ vim git ];`, returns `None` — callers should use
+/// `expand_inline_list` first to convert to multi-line.
 fn find_bracket_region(content: &str, key: &str) -> Option<(usize, usize)> {
     let lines: Vec<&str> = content.lines().collect();
     for (i, line) in lines.iter().enumerate() {
@@ -510,6 +599,79 @@ fn find_bracket_region(content: &str, key: &str) -> Option<(usize, usize)> {
         }
     }
     None
+}
+
+/// Detect a single-line bracket list for a key (e.g. `key = with pkgs; [ vim git ];`).
+fn find_inline_bracket(content: &str, key: &str) -> Option<usize> {
+    content.lines().enumerate().find_map(|(i, line)| {
+        if line.contains(key) && line.contains('[') && line.contains("];") {
+            Some(i)
+        } else {
+            None
+        }
+    })
+}
+
+/// Expand a single-line bracket list to multi-line format.
+///
+/// `"  key = with pkgs; [ vim git ];"` becomes:
+/// ```text
+///   key = with pkgs; [
+///     vim
+///     git
+///   ];
+/// ```
+fn expand_inline_list(content: &str, key: &str) -> Option<String> {
+    let line_idx = find_inline_bracket(content, key)?;
+    let lines: Vec<&str> = content.lines().collect();
+    let line = lines[line_idx];
+
+    let bracket_open = line.find('[')?;
+    let bracket_close = line.rfind(']')?;
+    if bracket_close <= bracket_open + 1 {
+        return None; // empty or malformed
+    }
+
+    // Extract items between brackets
+    let inner = line[bracket_open + 1..bracket_close].trim();
+    let items: Vec<&str> = inner.split_whitespace().collect();
+
+    // Detect indent from the line itself
+    let line_indent_len = line.len() - line.trim_start().len();
+    let line_indent = &line[..line_indent_len];
+    let item_indent = format!("{line_indent}  ");
+
+    // Build the prefix (everything before `[`) and the expanded form
+    let prefix = &line[..=bracket_open];
+    // Check for `];` suffix (there may be trailing content after `]`)
+    let suffix_start = bracket_close;
+    let suffix = &line[suffix_start..]; // includes `];` and any trailing
+
+    let mut out = String::with_capacity(content.len() + items.len() * 10);
+    for l in &lines[..line_idx] {
+        out.push_str(l);
+        out.push('\n');
+    }
+    out.push_str(prefix);
+    out.push('\n');
+    for item in &items {
+        out.push_str(&item_indent);
+        out.push_str(item);
+        out.push('\n');
+    }
+    out.push_str(line_indent);
+    out.push_str(suffix);
+    out.push('\n');
+    for l in &lines[line_idx + 1..] {
+        out.push_str(l);
+        out.push('\n');
+    }
+
+    if !content.ends_with('\n') {
+        out.pop();
+    }
+
+    Some(out)
 }
 
 /// Find the top-level `[` ... `]` brackets in a homebrew manifest.
@@ -757,6 +919,69 @@ mod tests {
 ";
         let (_, line) = insert_nix_manifest(content, "ripgrep").unwrap();
         assert!(line.is_none());
+    }
+
+    // --- single-line bracket expansion ---
+
+    #[test]
+    fn expand_inline_list_works() {
+        let content = "\
+{ pkgs, ... }:
+{
+  environment.systemPackages = with pkgs; [ vim git ];
+}
+";
+        let expanded = expand_inline_list(content, "environment.systemPackages").unwrap();
+        assert!(expanded.contains("environment.systemPackages = with pkgs; [\n"));
+        assert!(expanded.contains("    vim\n"));
+        assert!(expanded.contains("    git\n"));
+        assert!(expanded.contains("  ];\n"));
+    }
+
+    #[test]
+    fn insert_into_single_line_list() {
+        let content = "\
+{ pkgs, ... }:
+{
+  environment.systemPackages = with pkgs; [ vim git ];
+}
+";
+        let (result, line) = insert_nix_manifest(content, "fd").unwrap();
+        assert!(line.is_some());
+        assert!(result.contains("fd"));
+        assert!(result.contains("vim"));
+        assert!(result.contains("git"));
+        // Should be multi-line now
+        assert!(!result.contains("[ vim git ]"));
+    }
+
+    #[test]
+    fn insert_into_single_line_list_idempotent() {
+        let content = "\
+{ pkgs, ... }:
+{
+  environment.systemPackages = with pkgs; [ vim git ];
+}
+";
+        let (_, line) = insert_nix_manifest(content, "vim").unwrap();
+        assert!(line.is_none(), "vim already present — should be idempotent");
+    }
+
+    #[test]
+    fn scaffold_into_system_packages() {
+        let content = "\
+{ pkgs, ... }:
+{
+  environment.systemPackages = with pkgs; [
+    git
+  ];
+}
+";
+        let (result, line) =
+            scaffold_language_block(content, "pandoc", "haskellPackages.ghc").unwrap();
+        assert!(line.is_some());
+        assert!(result.contains("haskellPackages.ghc.withPackages"));
+        assert!(result.contains("pandoc"));
     }
 
     #[test]
@@ -1298,6 +1523,82 @@ mod tests {
         assert!(!result.contains("requests"));
         assert!(result.contains("      pyyaml\n"));
         assert!(result.contains("      rich\n"));
+    }
+
+    // --- scaffold_language_block ---
+
+    #[test]
+    fn scaffold_creates_with_packages_block() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    ripgrep
+  ];
+}
+";
+        let (result, line) =
+            scaffold_language_block(content, "pandoc", "haskellPackages.ghc").unwrap();
+        assert!(line.is_some());
+        assert!(result.contains("haskellPackages.ghc.withPackages"));
+        assert!(result.contains("pandoc"));
+        // The block should be multi-line
+        assert!(result.contains("(haskellPackages.ghc.withPackages (ps: [\n"));
+    }
+
+    #[test]
+    fn scaffold_then_insert_works() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    ripgrep
+  ];
+}
+";
+        // First scaffold creates the block
+        let (with_block, _) =
+            scaffold_language_block(content, "pandoc", "haskellPackages.ghc").unwrap();
+        // Second insert into the existing block should work
+        let (result, line) =
+            insert_language_package(&with_block, "xmonad", "haskellPackages.ghc").unwrap();
+        assert!(line.is_some());
+        assert!(result.contains("pandoc"));
+        assert!(result.contains("xmonad"));
+    }
+
+    #[test]
+    fn dispatch_insert_falls_back_to_scaffold() {
+        use crate::domain::plan::{InsertionMode, InstallPlan, LanguageInfo};
+        use crate::domain::source::{PackageSource, SourceResult};
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let lang_path = tmp.path().join("languages.nix");
+        fs::write(
+            &lang_path,
+            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    ripgrep\n  ];\n}\n",
+        )
+        .unwrap();
+
+        let plan = InstallPlan {
+            source_result: SourceResult::new("perlPackages.JSON", PackageSource::Nxs),
+            package_token: "perlPackages.JSON".to_string(),
+            target_file: lang_path.clone(),
+            insertion_mode: InsertionMode::LanguageWithPackages,
+            language_info: Some(LanguageInfo {
+                bare_name: "JSON".to_string(),
+                runtime: "perl".to_string(),
+                method: "withPackages".to_string(),
+            }),
+            routing_warning: None,
+        };
+
+        let outcome = apply_edit(&plan).unwrap();
+        assert!(outcome.file_changed);
+
+        let written = fs::read_to_string(&lang_path).unwrap();
+        assert!(written.contains("perl.withPackages"));
+        assert!(written.contains("JSON"));
     }
 
     #[test]

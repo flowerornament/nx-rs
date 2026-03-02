@@ -985,6 +985,11 @@ fn is_preview_manifest_entry(line: &str) -> bool {
         return false;
     }
 
+    // Attribute assignments (key = value) are not package entries.
+    if trimmed.contains('=') {
+        return false;
+    }
+
     let token = trimmed.split_whitespace().next().unwrap_or_default();
     !token.is_empty()
         && token

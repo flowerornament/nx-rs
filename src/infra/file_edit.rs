@@ -837,6 +837,10 @@ fn detect_comment_column_in_region(lines: &[&str], start: usize, end: usize) -> 
         if !first_char.is_ascii_alphanumeric() && first_char != '_' {
             continue;
         }
+        // Attribute assignments (key = value) are not package entries
+        if trimmed.contains('=') {
+            continue;
+        }
         if let Some(pos) = trimmed.find("# ") {
             if pos > 0 {
                 *counts.entry(pos).or_insert(0) += 1;

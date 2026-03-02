@@ -50,6 +50,7 @@ pub trait AiEngine: Send + Sync {
     fn route_package(
         &self,
         package: &str,
+        description: &str,
         context: &str,
         candidates: &[String],
         fallback: &str,
@@ -85,12 +86,14 @@ impl AiEngine for CodexEngine {
     fn route_package(
         &self,
         package: &str,
+        description: &str,
         context: &str,
         candidates: &[String],
         fallback: &str,
         cwd: &Path,
     ) -> RouteDecision {
-        let prompt = build_routing_prompt(package, context, Some(candidates));
+        let prompt =
+            build_routing_prompt(package, description, context, Some(candidates), fallback);
         resolve_routing_run_result(
             package,
             run_captured_command(
@@ -147,12 +150,14 @@ impl AiEngine for ClaudeEngine {
     fn route_package(
         &self,
         package: &str,
+        description: &str,
         context: &str,
         candidates: &[String],
         fallback: &str,
         cwd: &Path,
     ) -> RouteDecision {
-        let prompt = build_routing_prompt(package, context, Some(candidates));
+        let prompt =
+            build_routing_prompt(package, description, context, Some(candidates), fallback);
         let mut args = vec!["--print", "-p", &prompt];
         let model_str;
         if let Some(ref m) = self.model {
@@ -287,6 +292,7 @@ pub fn build_routing_context(config: &ConfigFiles) -> String {
     lines.push("- Homebrew formulas go in packages/homebrew/brews.nix".to_string());
     lines.push("- GUI apps (casks) go in packages/homebrew/casks.nix".to_string());
     lines.push(format!("- Homebrew taps go in {taps_rel}"));
+    lines.push("- When unsure, use the default install target".to_string());
     lines.push(String::new());
     lines.push("Language packages (add to withPackages, not as standalone):".to_string());
     lines.push(
@@ -431,21 +437,41 @@ pub fn resolve_candidate_routing(
 // --- Prompt Builders
 
 /// Build a routing prompt for the AI engine.
-pub fn build_routing_prompt(package: &str, context: &str, candidates: Option<&[String]>) -> String {
+///
+/// `description` is the human-readable package summary (e.g. "Yet another
+/// language server for Nix") and `fallback` marks the default candidate.
+pub fn build_routing_prompt(
+    package: &str,
+    description: &str,
+    context: &str,
+    candidates: Option<&[String]>,
+    fallback: &str,
+) -> String {
+    let desc_suffix = if description.is_empty() {
+        String::new()
+    } else {
+        format!(" ({description})")
+    };
     candidates.map_or_else(
         || {
             format!(
-                "{context}\n\nWhich packages/nix/*.nix file for '{package}'? Just the path (e.g., packages/nix/cli.nix)."
+                "{context}\n\nWhich packages/nix/*.nix file for '{package}'{desc_suffix}? Just the path (e.g., packages/nix/cli.nix)."
             )
         },
         |candidates| {
             let list = candidates
                 .iter()
-                .map(|c| format!("- {c}"))
+                .map(|c| {
+                    if c == fallback {
+                        format!("- {c}  (default install target)")
+                    } else {
+                        format!("- {c}")
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
             format!(
-                "{context}\n\nChoose exactly one file for '{package}' from this allowed list:\n{list}\n\nReply with only one exact path from the list."
+                "{context}\n\nChoose exactly one file for '{package}'{desc_suffix} from this allowed list:\n{list}\n\nReply with only one exact path from the list."
             )
         },
     )
@@ -519,6 +545,7 @@ mod tests {
         fn route_package(
             &self,
             _package: &str,
+            _description: &str,
             _context: &str,
             _candidates: &[String],
             fallback: &str,
@@ -795,6 +822,7 @@ mod tests {
         assert!(context.contains("CLI tools go in packages/nix/cli.nix"));
         assert!(context.contains("MCP tools"));
         assert!(context.contains("Homebrew taps go in packages/homebrew/taps.nix"));
+        assert!(context.contains("When unsure, use the default install target"));
     }
 
     #[test]
@@ -875,18 +903,42 @@ mod tests {
             "packages/nix/cli.nix".to_string(),
             "packages/nix/dev.nix".to_string(),
         ];
-        let prompt = build_routing_prompt("ripgrep", "context here", Some(&candidates));
-        assert!(prompt.contains("ripgrep"));
+        let prompt = build_routing_prompt(
+            "nil",
+            "Yet another language server for Nix",
+            "context here",
+            Some(&candidates),
+            "packages/nix/cli.nix",
+        );
+        assert!(prompt.contains("nil"));
+        assert!(prompt.contains("Yet another language server for Nix"));
         assert!(prompt.contains("packages/nix/cli.nix"));
+        assert!(prompt.contains("(default install target)"));
         assert!(prompt.contains("packages/nix/dev.nix"));
+        assert!(!prompt.contains("dev.nix  (default"));
         assert!(prompt.contains("Choose exactly one file"));
     }
 
     #[test]
     fn routing_prompt_without_candidates() {
-        let prompt = build_routing_prompt("ripgrep", "context here", None);
+        let prompt = build_routing_prompt("ripgrep", "fast grep", "context here", None, "");
         assert!(prompt.contains("ripgrep"));
+        assert!(prompt.contains("(fast grep)"));
         assert!(prompt.contains("Which packages/nix/*.nix file"));
+    }
+
+    #[test]
+    fn routing_prompt_empty_description() {
+        let candidates = vec!["packages/nix/cli.nix".to_string()];
+        let prompt = build_routing_prompt(
+            "ripgrep",
+            "",
+            "context here",
+            Some(&candidates),
+            "packages/nix/cli.nix",
+        );
+        assert!(prompt.contains("for 'ripgrep' from"));
+        assert!(!prompt.contains("()"));
     }
 
     // --- build_edit_prompt ---

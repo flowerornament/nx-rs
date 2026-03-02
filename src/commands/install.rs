@@ -245,8 +245,7 @@ fn apply_install_phase(
 fn render_dry_run_install(prepared: &PreparedInstall, ctx: &AppContext) {
     if prepared.plan.insertion_mode == InsertionMode::NixManifest
         && let Ok(content) = fs::read_to_string(&prepared.plan.target_file)
-        && let Some(info) =
-            analyse_manifest_for_preview(&content, &prepared.plan.package_token)
+        && let Some(info) = analyse_manifest_for_preview(&content, &prepared.plan.package_token)
     {
         let simulated_line = build_simulated_preview_line(
             &prepared.plan.package_token,
@@ -282,6 +281,8 @@ fn refine_routing(
     routing_context: &str,
     ctx: &AppContext,
 ) {
+    use crate::infra::file_edit::list_bracket_entries;
+
     if plan.routing_warning.is_none() || plan.insertion_mode != InsertionMode::NixManifest {
         return;
     }
@@ -303,9 +304,37 @@ fn refine_routing(
         .to_string_lossy()
         .to_string();
 
+    // Build file-contents summary so the LLM sees what each candidate contains.
+    let mut content_lines: Vec<String> = Vec::new();
+    for rel in &candidates {
+        let abs = ctx.repo_root.join(rel);
+        if let Ok(text) = fs::read_to_string(&abs) {
+            let entries = list_bracket_entries(&text);
+            let total = entries.len();
+            let sample: Vec<&str> = entries.iter().take(6).map(String::as_str).collect();
+            let display = if total > sample.len() {
+                format!("{}, ... ({total} packages)", sample.join(", "))
+            } else if total > 0 {
+                format!("{} ({total} packages)", sample.join(", "))
+            } else {
+                "(empty)".to_string()
+            };
+            content_lines.push(format!("- {rel}: {display}"));
+        }
+    }
+    let enriched_context = if content_lines.is_empty() {
+        routing_context.to_string()
+    } else {
+        format!(
+            "{routing_context}\n\nFile contents:\n{}",
+            content_lines.join("\n")
+        )
+    };
+
     let decision = engine.route_package(
         &plan.package_token,
-        routing_context,
+        &plan.source_result.description,
+        &enriched_context,
         &candidates,
         &fallback,
         &ctx.repo_root,
@@ -909,11 +938,11 @@ fn build_simulated_preview_line(
         return package_token.to_string();
     }
     let truncated = truncate_text(description, 40);
-    if let Some(col) = comment_col {
-        if package_token.len() < col {
-            let pad = col - package_token.len();
-            return format!("{package_token}{:pad$}# {truncated}", "");
-        }
+    if let Some(col) = comment_col
+        && package_token.len() < col
+    {
+        let pad = col - package_token.len();
+        return format!("{package_token}{:pad$}# {truncated}", "");
     }
     format!("{package_token}  # {truncated}")
 }
@@ -1065,6 +1094,7 @@ mod tests {
         fn route_package(
             &self,
             _package: &str,
+            _description: &str,
             _context: &str,
             _candidates: &[String],
             fallback: &str,

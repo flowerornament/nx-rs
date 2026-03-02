@@ -134,7 +134,11 @@ fn dispatch_remove(content: &str, plan: &InstallPlan) -> Result<(String, Option<
 /// Real format: 4-space indent, bare identifiers, optional `# comment` suffixes,
 /// section headers (`# === ... ===`). Skips comment-only and blank lines
 /// when finding alphabetical position.
-fn insert_nix_manifest(content: &str, token: &str, description: &str) -> Result<(String, Option<usize>)> {
+fn insert_nix_manifest(
+    content: &str,
+    token: &str,
+    description: &str,
+) -> Result<(String, Option<usize>)> {
     // Expand single-line lists to multi-line first, so idempotency check
     // can find tokens that are inline (e.g. `[ vim git ];` → separate lines).
     let content = if find_bracket_region(content, "home.packages").is_none()
@@ -541,6 +545,42 @@ fn splice_out_line(content: &str, lines: &[&str], remove_idx: usize) -> String {
     out
 }
 
+/// Extract bare package identifiers from a nix manifest's bracket region.
+///
+/// Scans `home.packages` / `environment.systemPackages` and returns all bare
+/// identifiers (skipping comments, blanks, and parenthesised withPackages blocks).
+pub fn list_bracket_entries(content: &str) -> Vec<String> {
+    let (start, end) = find_bracket_region(content, "home.packages")
+        .or_else(|| find_bracket_region(content, "environment.systemPackages"))
+        .unwrap_or((0, 0));
+    if start == end {
+        return Vec::new();
+    }
+    let lines: Vec<&str> = content.lines().collect();
+    let mut entries = Vec::new();
+    let mut in_paren = 0usize;
+    for line in lines.iter().take(end).skip(start + 1) {
+        let trimmed = line.trim();
+        if trimmed.starts_with('(') {
+            in_paren += 1;
+        }
+        if in_paren > 0 {
+            if trimmed.contains(')') {
+                in_paren = in_paren.saturating_sub(1);
+            }
+            continue;
+        }
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let ident = extract_bare_ident(trimmed);
+        if !ident.is_empty() {
+            entries.push(ident.to_string());
+        }
+    }
+    entries
+}
+
 /// Find the line index of a bare identifier within a region.
 fn find_ident_line(lines: &[&str], start: usize, end: usize, token: &str) -> Option<usize> {
     for (i, line) in lines.iter().enumerate().take(end).skip(start) {
@@ -873,14 +913,17 @@ fn detect_comment_column_in_region(lines: &[&str], start: usize, end: usize) -> 
         if trimmed.contains('=') {
             continue;
         }
-        if let Some(pos) = trimmed.find("# ") {
-            if pos > 0 {
-                *counts.entry(pos).or_insert(0) += 1;
-            }
+        if let Some(pos) = trimmed.find("# ")
+            && pos > 0
+        {
+            *counts.entry(pos).or_insert(0) += 1;
         }
     }
 
-    counts.into_iter().max_by_key(|&(_, c)| c).map(|(col, _)| col)
+    counts
+        .into_iter()
+        .max_by_key(|&(_, c)| c)
+        .map(|(col, _)| col)
 }
 
 /// Format a package entry line with a trailing comment, aligned to the given column.
@@ -897,11 +940,11 @@ fn format_entry_with_comment(
         description.to_string()
     };
 
-    if let Some(col) = comment_col {
-        if token.len() < col {
-            let pad = col - token.len();
-            return format!("{indent}{token}{:pad$}# {desc}", "");
-        }
+    if let Some(col) = comment_col
+        && token.len() < col
+    {
+        let pad = col - token.len();
+        return format!("{indent}{token}{:pad$}# {desc}", "");
     }
     format!("{indent}{token}  # {desc}")
 }
@@ -1173,7 +1216,10 @@ mod tests {
         assert!(
             result.contains("    jq            # JSON processor"),
             "expected aligned comment, got: {}",
-            result.lines().find(|l| l.contains("jq")).unwrap_or("NOT FOUND"),
+            result
+                .lines()
+                .find(|l| l.contains("jq"))
+                .unwrap_or("NOT FOUND"),
         );
     }
 
@@ -1194,7 +1240,10 @@ mod tests {
         assert!(
             result.contains("    jq  # JSON processor"),
             "expected fallback comment, got: {}",
-            result.lines().find(|l| l.contains("jq")).unwrap_or("NOT FOUND"),
+            result
+                .lines()
+                .find(|l| l.contains("jq"))
+                .unwrap_or("NOT FOUND"),
         );
     }
 
@@ -1226,7 +1275,8 @@ mod tests {
 }
 ";
         // Insert nil between jq and ripgrep
-        let (result, line) = insert_nix_manifest(content, "nil", "Yet another language server for Nix").unwrap();
+        let (result, line) =
+            insert_nix_manifest(content, "nil", "Yet another language server for Nix").unwrap();
         assert!(line.is_some());
         let nil_line = result.lines().find(|l| l.contains("nil")).unwrap();
         assert!(
@@ -1236,9 +1286,18 @@ mod tests {
 
         // Verify it's between jq and ripgrep
         let lines: Vec<&str> = result.lines().collect();
-        let jq_idx = lines.iter().position(|l| l.trim().starts_with("jq")).unwrap();
-        let nil_idx = lines.iter().position(|l| l.trim().starts_with("nil")).unwrap();
-        let rg_idx = lines.iter().position(|l| l.trim().starts_with("ripgrep")).unwrap();
+        let jq_idx = lines
+            .iter()
+            .position(|l| l.trim().starts_with("jq"))
+            .unwrap();
+        let nil_idx = lines
+            .iter()
+            .position(|l| l.trim().starts_with("nil"))
+            .unwrap();
+        let rg_idx = lines
+            .iter()
+            .position(|l| l.trim().starts_with("ripgrep"))
+            .unwrap();
         assert!(nil_idx > jq_idx);
         assert!(nil_idx < rg_idx);
     }
@@ -1283,8 +1342,14 @@ mod tests {
         // jq goes between fd (line 4) and ripgrep (line 5), so insert_after_line = 5
         // (0-indexed line of ripgrep, where the new line would be inserted before it)
         let lines: Vec<&str> = content.lines().collect();
-        assert_eq!(lines[info.insert_after_line - 1], "    fd            # find replacement");
-        assert_eq!(lines[info.insert_after_line], "    ripgrep       # grep replacement");
+        assert_eq!(
+            lines[info.insert_after_line - 1],
+            "    fd            # find replacement"
+        );
+        assert_eq!(
+            lines[info.insert_after_line],
+            "    ripgrep       # grep replacement"
+        );
         assert_eq!(info.comment_column, Some(14));
     }
 

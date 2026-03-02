@@ -80,6 +80,7 @@ pub fn build_install_plan(sr: &SourceResult, config: &ConfigFiles) -> Result<Ins
             let lang = language_info.as_ref().unwrap();
             let target = config
                 .with_packages_for(&lang.runtime)
+                .filter(|p| p.exists())
                 .unwrap_or_else(|| config.languages());
             (target, InsertionMode::LanguageWithPackages, None)
         }
@@ -119,6 +120,7 @@ pub fn nix_manifest_candidates(config: &ConfigFiles) -> Vec<PathBuf> {
         return manifest
             .slots_by_kind(super::manifest::SlotKind::NixPackages)
             .into_iter()
+            .filter(|slot| slot.attr_path == "home.packages")
             .map(|slot| config.repo_root().join(&slot.file))
             .collect();
     }
@@ -365,6 +367,70 @@ mod tests {
     }
 
     // --- nix_manifest_candidates
+
+    #[test]
+    fn manifest_candidates_filter_to_home_packages_only() {
+        use crate::domain::manifest::{Manifest, PlatformConfig, PlatformKind, Slot, SlotKind};
+        use std::collections::HashMap;
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_nix(root, "modules/cli.nix", "# cli tools\n[]");
+        write_nix(root, "modules/editors.nix", "# editors\n[]");
+        write_nix(root, "system/darwin.nix", "# system config\n{}");
+
+        let manifest = Manifest {
+            schema_version: 1,
+            platform: PlatformConfig {
+                kind: PlatformKind::Darwin,
+                rebuild_command: "darwin-rebuild".to_string(),
+                sudo: true,
+                flake_root: ".".to_string(),
+            },
+            slots: vec![
+                Slot {
+                    kind: SlotKind::NixPackages,
+                    file: "modules/cli.nix".into(),
+                    attr_path: "home.packages".to_string(),
+                    tags: vec!["cli".to_string()],
+                    runtime: None,
+                    default_for: Some(vec!["install".to_string()]),
+                },
+                Slot {
+                    kind: SlotKind::NixPackages,
+                    file: "modules/editors.nix".into(),
+                    attr_path: "home.packages".to_string(),
+                    tags: vec!["editors".to_string()],
+                    runtime: None,
+                    default_for: None,
+                },
+                Slot {
+                    kind: SlotKind::NixPackages,
+                    file: "system/darwin.nix".into(),
+                    attr_path: "environment.systemPackages".to_string(),
+                    tags: vec![],
+                    runtime: None,
+                    default_for: None,
+                },
+            ],
+            aliases: HashMap::new(),
+            overlays: HashMap::new(),
+        };
+
+        let config = ConfigFiles::from_manifest(&manifest, root);
+        let candidates = nix_manifest_candidates(&config);
+
+        // Only home.packages slots returned — darwin.nix excluded
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates.iter().any(|p| p.ends_with("modules/cli.nix")));
+        assert!(
+            candidates
+                .iter()
+                .any(|p| p.ends_with("modules/editors.nix"))
+        );
+        assert!(!candidates.iter().any(|p| p.ends_with("system/darwin.nix")));
+    }
 
     #[test]
     fn candidates_include_cli_siblings_and_exclude_languages() {

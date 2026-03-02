@@ -88,20 +88,6 @@ fn dispatch_remove(content: &str, plan: &InstallPlan) -> Result<(String, Option<
     }
 }
 
-/// Check if a file has an editable nix package list.
-///
-/// Returns `true` if the file contains a multi-line or inline `home.packages`
-/// or `environment.systemPackages` bracket region.
-pub fn has_editable_package_list(path: &Path) -> bool {
-    let Ok(content) = fs::read_to_string(path) else {
-        return false;
-    };
-    find_bracket_region(&content, "home.packages").is_some()
-        || find_bracket_region(&content, "environment.systemPackages").is_some()
-        || find_inline_bracket(&content, "home.packages").is_some()
-        || find_inline_bracket(&content, "environment.systemPackages").is_some()
-}
-
 // --- Per-mode Inserters
 //
 // Each returns `(new_content, Some(line_number))` on insertion,

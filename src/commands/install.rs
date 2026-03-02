@@ -309,16 +309,8 @@ fn refine_routing(
         &ctx.repo_root,
     );
 
-    let ai_target = ctx.repo_root.join(&decision.target_file);
-
-    // Validate the AI-picked target has an editable package list.
-    // If not, keep the deterministic fallback to avoid broken inserts
-    // (e.g. AI routing into a Homebrew onActivation block).
-    if crate::infra::file_edit::has_editable_package_list(&ai_target) {
-        plan.target_file = ai_target;
-        plan.routing_warning = decision.warning;
-    }
-    // else: keep original plan.target_file (cli.nix fallback)
+    plan.target_file = ctx.repo_root.join(&decision.target_file);
+    plan.routing_warning = decision.warning;
 }
 
 /// Handle flake input gating (SPEC 7.5). Returns `true` to proceed, `false` to skip.

@@ -32,6 +32,34 @@ pub fn apply_removal(plan: &InstallPlan) -> Result<EditOutcome> {
     apply_plan(plan, dispatch_remove)
 }
 
+/// Preview metadata for a nix manifest insertion.
+pub struct ManifestPreviewInfo {
+    /// 1-indexed line number after which the new entry would appear.
+    pub insert_after_line: usize,
+    /// Most common comment column among existing entries, if any.
+    pub comment_column: Option<usize>,
+}
+
+/// Analyse a nix manifest file for dry-run preview purposes.
+///
+/// Finds the `home.packages` or `environment.systemPackages` bracket region,
+/// locates the alphabetical insertion point for `token`, and detects the
+/// comment column — all scoped to the bracket region so non-package lines
+/// (attribute assignments, nested sets, etc.) are never considered.
+pub fn analyse_manifest_for_preview(content: &str, token: &str) -> Option<ManifestPreviewInfo> {
+    let (start, end) = find_bracket_region(content, "home.packages")
+        .or_else(|| find_bracket_region(content, "environment.systemPackages"))?;
+    let lines: Vec<&str> = content.lines().collect();
+    let insert_at = find_alpha_position(&lines, start + 1, end, token);
+    let comment_column = detect_comment_column_in_region(&lines, start, end);
+    Some(ManifestPreviewInfo {
+        // find_alpha_position returns a 0-indexed line; preview wants
+        // the 1-indexed line number of the preceding line.
+        insert_after_line: insert_at,
+        comment_column,
+    })
+}
+
 /// Shared read-dispatch-write skeleton for both insertion and removal.
 fn apply_plan(
     plan: &InstallPlan,

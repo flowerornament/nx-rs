@@ -21,7 +21,7 @@ use crate::infra::ai_engine::{
     run_edit_with_callback, select_engine,
 };
 use crate::infra::cache::MultiSourceCache;
-use crate::infra::file_edit::{EditOutcome, apply_edit};
+use crate::infra::file_edit::{EditOutcome, analyse_manifest_for_preview, apply_edit};
 use crate::infra::finder::find_package;
 use crate::infra::flake_input::{FlakeInputEdit, add_flake_input};
 use crate::infra::shell::git_diff;
@@ -244,18 +244,18 @@ fn apply_install_phase(
 
 fn render_dry_run_install(prepared: &PreparedInstall, ctx: &AppContext) {
     if prepared.plan.insertion_mode == InsertionMode::NixManifest
-        && let Some(insert_after_line) =
-            find_preview_insert_after_line(&prepared.plan.target_file, &prepared.plan.package_token)
+        && let Ok(content) = fs::read_to_string(&prepared.plan.target_file)
+        && let Some(info) =
+            analyse_manifest_for_preview(&content, &prepared.plan.package_token)
     {
-        let comment_col = detect_comment_column(&prepared.plan.target_file);
         let simulated_line = build_simulated_preview_line(
             &prepared.plan.package_token,
             &prepared.source_description,
-            comment_col,
+            info.comment_column,
         );
         show_dry_run_preview(
             &prepared.plan.target_file,
-            insert_after_line,
+            info.insert_after_line,
             &simulated_line,
             1,
         );
@@ -916,85 +916,6 @@ fn build_simulated_preview_line(
         }
     }
     format!("{package_token}  # {truncated}")
-}
-
-/// Scan a manifest file for the most common `# ` comment column among entries.
-///
-/// Returns the offset (within the trimmed/indented content) where `# ` appears,
-/// measured from the start of the trimmed line (i.e. after leading whitespace).
-fn detect_comment_column(file_path: &Path) -> Option<usize> {
-    let content = fs::read_to_string(file_path).ok()?;
-    let mut counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-
-    for line in content.lines() {
-        if !is_preview_manifest_entry(line) {
-            continue;
-        }
-        let trimmed = line.trim_start();
-        if let Some(pos) = trimmed.find("# ") {
-            // Only count if the `#` is preceded by whitespace (a trailing comment,
-            // not a line that starts with `#`).
-            if pos > 0 {
-                *counts.entry(pos).or_insert(0) += 1;
-            }
-        }
-    }
-
-    counts.into_iter().max_by_key(|&(_, c)| c).map(|(col, _)| col)
-}
-
-fn find_preview_insert_after_line(file_path: &Path, package_token: &str) -> Option<usize> {
-    let content = fs::read_to_string(file_path).ok()?;
-    let entries: Vec<(usize, &str)> = content
-        .lines()
-        .enumerate()
-        .filter(|(_, line)| is_preview_manifest_entry(line))
-        .collect();
-
-    if entries.is_empty() {
-        return None;
-    }
-
-    // Binary search for alphabetical position among existing entries.
-    let pos = entries.partition_point(|(_, line)| {
-        let token = line.split_whitespace().next().unwrap_or_default();
-        token < package_token
-    });
-
-    if pos == 0 {
-        // Insert before the first entry — use the line before it.
-        Some(entries[0].0)
-    } else {
-        // Insert after the entry at pos-1 (1-indexed line number).
-        Some(entries[pos - 1].0 + 1)
-    }
-}
-
-fn is_preview_manifest_entry(line: &str) -> bool {
-    if !line.starts_with("    ") {
-        return false;
-    }
-    let trimmed = line.trim();
-    if trimmed.is_empty()
-        || trimmed.starts_with('#')
-        || trimmed.starts_with('[')
-        || trimmed.starts_with(']')
-        || trimmed.starts_with('{')
-        || trimmed.starts_with('}')
-    {
-        return false;
-    }
-
-    // Attribute assignments (key = value) are not package entries.
-    if trimmed.contains('=') {
-        return false;
-    }
-
-    let token = trimmed.split_whitespace().next().unwrap_or_default();
-    !token.is_empty()
-        && token
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.')
 }
 
 fn prompt_source_choice(count: usize) -> Option<usize> {

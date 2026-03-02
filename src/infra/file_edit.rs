@@ -34,7 +34,10 @@ pub fn apply_removal(plan: &InstallPlan) -> Result<EditOutcome> {
 
 /// Preview metadata for a nix manifest insertion.
 pub struct ManifestPreviewInfo {
-    /// 1-indexed line number after which the new entry would appear.
+    /// 0-indexed insertion point: the new entry will appear at this line
+    /// index, pushing subsequent lines down.  `show_dry_run_preview` renders
+    /// the simulated line after the preceding display line using
+    /// `idx + 1 == insert_after_line`.
     pub insert_after_line: usize,
     /// Most common comment column among existing entries, if any.
     pub comment_column: Option<usize>,
@@ -46,6 +49,9 @@ pub struct ManifestPreviewInfo {
 /// locates the alphabetical insertion point for `token`, and detects the
 /// comment column — all scoped to the bracket region so non-package lines
 /// (attribute assignments, nested sets, etc.) are never considered.
+///
+/// Returns `None` when no multi-line bracket region is found (e.g. inline
+/// `home.packages = [ pkgs.mosh ];`).
 pub fn analyse_manifest_for_preview(content: &str, token: &str) -> Option<ManifestPreviewInfo> {
     let (start, end) = find_bracket_region(content, "home.packages")
         .or_else(|| find_bracket_region(content, "environment.systemPackages"))?;
@@ -53,8 +59,6 @@ pub fn analyse_manifest_for_preview(content: &str, token: &str) -> Option<Manife
     let insert_at = find_alpha_position(&lines, start + 1, end, token);
     let comment_column = detect_comment_column_in_region(&lines, start, end);
     Some(ManifestPreviewInfo {
-        // find_alpha_position returns a 0-indexed line; preview wants
-        // the 1-indexed line number of the preceding line.
         insert_after_line: insert_at,
         comment_column,
     })
@@ -1192,6 +1196,112 @@ mod tests {
             "expected fallback comment, got: {}",
             result.lines().find(|l| l.contains("jq")).unwrap_or("NOT FOUND"),
         );
+    }
+
+    // --- analyse_manifest_for_preview ---
+
+    #[test]
+    fn preview_inserts_alphabetically_middle() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    bat           # cat replacement
+    fd            # find replacement
+    ripgrep       # grep replacement
+  ];
+}
+";
+        let info = analyse_manifest_for_preview(content, "jq").unwrap();
+        // jq goes between fd (line 4) and ripgrep (line 5), so insert_after_line = 5
+        // (0-indexed line of ripgrep, where the new line would be inserted before it)
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines[info.insert_after_line - 1], "    fd            # find replacement");
+        assert_eq!(lines[info.insert_after_line], "    ripgrep       # grep replacement");
+        assert_eq!(info.comment_column, Some(14));
+    }
+
+    #[test]
+    fn preview_inserts_before_first() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    bat
+    ripgrep
+  ];
+}
+";
+        let info = analyse_manifest_for_preview(content, "aaa").unwrap();
+        // aaa goes before bat; insert_after_line should point to the bracket line
+        let lines: Vec<&str> = content.lines().collect();
+        assert!(
+            lines[info.insert_after_line - 1].contains("home.packages"),
+            "should insert right after the opening bracket line, got line {}: '{}'",
+            info.insert_after_line - 1,
+            lines[info.insert_after_line - 1],
+        );
+    }
+
+    #[test]
+    fn preview_inserts_after_last() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    bat
+    ripgrep
+  ];
+}
+";
+        let info = analyse_manifest_for_preview(content, "zzz").unwrap();
+        // zzz goes after everything; insert_after_line should point to closing bracket
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines[info.insert_after_line - 1], "    ripgrep");
+    }
+
+    #[test]
+    fn preview_returns_none_for_inline_list() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [ mosh ];
+}
+";
+        assert!(analyse_manifest_for_preview(content, "nil").is_none());
+    }
+
+    #[test]
+    fn preview_returns_none_for_no_bracket_region() {
+        let content = "\
+{ pkgs, ... }:
+{
+  programs.ssh.enable = true;
+}
+";
+        assert!(analyse_manifest_for_preview(content, "nil").is_none());
+    }
+
+    #[test]
+    fn preview_ignores_attribute_assignments_for_comment_col() {
+        // A file that has attribute assignments with comments but no package comments
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    bat
+    ripgrep
+  ];
+
+  programs.ssh.matchBlocks.synology = {
+    hostname = \"100.104.52.83\";  # Tailscale IP
+    user = \"morgan\";
+  };
+}
+";
+        let info = analyse_manifest_for_preview(content, "nil").unwrap();
+        // The attribute assignment comment should NOT be picked up
+        assert_eq!(info.comment_column, None);
     }
 
     // --- insert_language_package ---

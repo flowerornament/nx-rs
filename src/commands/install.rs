@@ -247,9 +247,11 @@ fn render_dry_run_install(prepared: &PreparedInstall, ctx: &AppContext) {
         && let Some(insert_after_line) =
             find_preview_insert_after_line(&prepared.plan.target_file, &prepared.plan.package_token)
     {
+        let comment_col = detect_comment_column(&prepared.plan.target_file);
         let simulated_line = build_simulated_preview_line(
             &prepared.plan.package_token,
             &prepared.source_description,
+            comment_col,
         );
         show_dry_run_preview(
             &prepared.plan.target_file,
@@ -898,12 +900,47 @@ fn truncate_text(text: &str, max_chars: usize) -> String {
     format!("{}...", text.chars().take(take).collect::<String>())
 }
 
-fn build_simulated_preview_line(package_token: &str, description: &str) -> String {
+fn build_simulated_preview_line(
+    package_token: &str,
+    description: &str,
+    comment_col: Option<usize>,
+) -> String {
     if description.is_empty() {
         return package_token.to_string();
     }
-    let truncated = description.chars().take(40).collect::<String>();
-    format!("{package_token}  # {truncated}...")
+    let truncated = truncate_text(description, 40);
+    if let Some(col) = comment_col {
+        if package_token.len() < col {
+            let pad = col - package_token.len();
+            return format!("{package_token}{:pad$}# {truncated}", "");
+        }
+    }
+    format!("{package_token}  # {truncated}")
+}
+
+/// Scan a manifest file for the most common `# ` comment column among entries.
+///
+/// Returns the offset (within the trimmed/indented content) where `# ` appears,
+/// measured from the start of the trimmed line (i.e. after leading whitespace).
+fn detect_comment_column(file_path: &Path) -> Option<usize> {
+    let content = fs::read_to_string(file_path).ok()?;
+    let mut counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+
+    for line in content.lines() {
+        if !is_preview_manifest_entry(line) {
+            continue;
+        }
+        let trimmed = line.trim_start();
+        if let Some(pos) = trimmed.find("# ") {
+            // Only count if the `#` is preceded by whitespace (a trailing comment,
+            // not a line that starts with `#`).
+            if pos > 0 {
+                *counts.entry(pos).or_insert(0) += 1;
+            }
+        }
+    }
+
+    counts.into_iter().max_by_key(|&(_, c)| c).map(|(col, _)| col)
 }
 
 fn find_preview_insert_after_line(file_path: &Path, package_token: &str) -> Option<usize> {

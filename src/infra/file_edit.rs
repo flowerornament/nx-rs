@@ -57,7 +57,11 @@ fn apply_plan(
 
 fn dispatch_insert(content: &str, plan: &InstallPlan) -> Result<(String, Option<usize>)> {
     match plan.insertion_mode {
-        InsertionMode::NixManifest => insert_nix_manifest(content, &plan.package_token),
+        InsertionMode::NixManifest => insert_nix_manifest(
+            content,
+            &plan.package_token,
+            &plan.source_result.description,
+        ),
         InsertionMode::LanguageWithPackages => {
             let lang = plan.language_info.as_ref().ok_or_else(|| {
                 anyhow!("invalid install plan: language_info required for LanguageWithPackages")
@@ -98,7 +102,7 @@ fn dispatch_remove(content: &str, plan: &InstallPlan) -> Result<(String, Option<
 /// Real format: 4-space indent, bare identifiers, optional `# comment` suffixes,
 /// section headers (`# === ... ===`). Skips comment-only and blank lines
 /// when finding alphabetical position.
-fn insert_nix_manifest(content: &str, token: &str) -> Result<(String, Option<usize>)> {
+fn insert_nix_manifest(content: &str, token: &str, description: &str) -> Result<(String, Option<usize>)> {
     // Expand single-line lists to multi-line first, so idempotency check
     // can find tokens that are inline (e.g. `[ vim git ];` → separate lines).
     let content = if find_bracket_region(content, "home.packages").is_none()
@@ -132,7 +136,12 @@ fn insert_nix_manifest(content: &str, token: &str) -> Result<(String, Option<usi
 
     // Find alphabetical insertion point among package identifiers
     let insert_at = find_alpha_position(&lines, bracket_start + 1, bracket_end, token);
-    let new_line = format!("{indent}{token}");
+    let new_line = if description.is_empty() {
+        format!("{indent}{token}")
+    } else {
+        let comment_col = detect_comment_column_in_region(&lines, bracket_start, bracket_end);
+        format_entry_with_comment(indent, token, description, comment_col)
+    };
 
     // Build the final string with the inserted line
     let mut out = String::with_capacity(content.len() + new_line.len() + 1);
@@ -810,6 +819,57 @@ fn detect_indent_in_region<'a>(lines: &'a [&str], start: usize, end: usize) -> O
     None
 }
 
+/// Detect the most common comment column among package entries in a bracket region.
+///
+/// Returns the offset within the trimmed line where `# ` appears, or `None` if
+/// no trailing comments are found.
+fn detect_comment_column_in_region(lines: &[&str], start: usize, end: usize) -> Option<usize> {
+    use std::collections::HashMap;
+    let mut counts: HashMap<usize, usize> = HashMap::new();
+
+    for line in &lines[start + 1..end] {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('[') {
+            continue;
+        }
+        // Must start with an identifier character (a package entry)
+        let first_char = trimmed.chars().next().unwrap_or(' ');
+        if !first_char.is_ascii_alphanumeric() && first_char != '_' {
+            continue;
+        }
+        if let Some(pos) = trimmed.find("# ") {
+            if pos > 0 {
+                *counts.entry(pos).or_insert(0) += 1;
+            }
+        }
+    }
+
+    counts.into_iter().max_by_key(|&(_, c)| c).map(|(col, _)| col)
+}
+
+/// Format a package entry line with a trailing comment, aligned to the given column.
+fn format_entry_with_comment(
+    indent: &str,
+    token: &str,
+    description: &str,
+    comment_col: Option<usize>,
+) -> String {
+    let desc = if description.chars().count() > 40 {
+        let take: String = description.chars().take(37).collect();
+        format!("{take}...")
+    } else {
+        description.to_string()
+    };
+
+    if let Some(col) = comment_col {
+        if token.len() < col {
+            let pad = col - token.len();
+            return format!("{indent}{token}{:pad$}# {desc}", "");
+        }
+    }
+    format!("{indent}{token}  # {desc}")
+}
+
 /// Find the alphabetical insertion point among bare identifiers.
 ///
 /// Skips comment-only lines, blank lines, and section headers when comparing.
@@ -882,7 +942,7 @@ mod tests {
   ];
 }
 ";
-        let (result, line) = insert_nix_manifest(content, "jq").unwrap();
+        let (result, line) = insert_nix_manifest(content, "jq", "").unwrap();
         assert!(line.is_some());
         let lines: Vec<&str> = result.lines().collect();
         // jq should be between fd and ripgrep
@@ -903,7 +963,7 @@ mod tests {
   ];
 }
 ";
-        let (_, line) = insert_nix_manifest(content, "ripgrep").unwrap();
+        let (_, line) = insert_nix_manifest(content, "ripgrep", "").unwrap();
         assert!(line.is_none());
     }
 
@@ -932,7 +992,7 @@ mod tests {
   environment.systemPackages = with pkgs; [ vim git ];
 }
 ";
-        let (result, line) = insert_nix_manifest(content, "fd").unwrap();
+        let (result, line) = insert_nix_manifest(content, "fd", "").unwrap();
         assert!(line.is_some());
         assert!(result.contains("fd"));
         assert!(result.contains("vim"));
@@ -949,7 +1009,7 @@ mod tests {
   environment.systemPackages = with pkgs; [ vim git ];
 }
 ";
-        let (_, line) = insert_nix_manifest(content, "vim").unwrap();
+        let (_, line) = insert_nix_manifest(content, "vim", "").unwrap();
         assert!(line.is_none(), "vim already present — should be idempotent");
     }
 
@@ -981,7 +1041,7 @@ mod tests {
   ];
 }
 ";
-        let (result, line) = insert_nix_manifest(content, "fd").unwrap();
+        let (result, line) = insert_nix_manifest(content, "fd", "").unwrap();
         assert!(line.is_some());
         assert!(result.contains("bat           # cat replacement"));
         assert!(result.contains("ripgrep       # grep replacement"));
@@ -1000,7 +1060,7 @@ mod tests {
   ];
 }
 ";
-        let (result, _) = insert_nix_manifest(content, "fd").unwrap();
+        let (result, _) = insert_nix_manifest(content, "fd", "").unwrap();
         let lines: Vec<&str> = result.lines().collect();
         let fd_idx = lines.iter().position(|l| l.trim() == "fd").unwrap();
         let bat_idx = lines.iter().position(|l| l.trim() == "bat").unwrap();
@@ -1017,7 +1077,7 @@ mod tests {
   ];
 }
 ";
-        let (result, line) = insert_nix_manifest(content, "bat").unwrap();
+        let (result, line) = insert_nix_manifest(content, "bat", "").unwrap();
         assert!(line.is_some());
         let lines: Vec<&str> = result.lines().collect();
         let bat_idx = lines.iter().position(|l| l.trim() == "bat").unwrap();
@@ -1036,7 +1096,7 @@ mod tests {
   ];
 }
 ";
-        let (result, line) = insert_nix_manifest(content, "zoxide").unwrap();
+        let (result, line) = insert_nix_manifest(content, "zoxide", "").unwrap();
         assert!(line.is_some());
         let lines: Vec<&str> = result.lines().collect();
         let zox_idx = lines.iter().position(|l| l.trim() == "zoxide").unwrap();
@@ -1054,9 +1114,52 @@ mod tests {
   ];
 }
 ";
-        let (result, _) = insert_nix_manifest(content, "fd").unwrap();
+        let (result, _) = insert_nix_manifest(content, "fd", "").unwrap();
         // Should use 4-space indent matching existing entries
         assert!(result.contains("    fd"));
+    }
+
+    #[test]
+    fn nix_manifest_adds_aligned_comment() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    bat           # cat replacement with syntax highlighting
+    fd            # find replacement
+    ripgrep       # grep replacement
+  ];
+}
+";
+        let (result, line) = insert_nix_manifest(content, "jq", "JSON processor").unwrap();
+        assert!(line.is_some());
+        // The comment should be aligned with the others at column 14
+        assert!(
+            result.contains("    jq            # JSON processor"),
+            "expected aligned comment, got: {}",
+            result.lines().find(|l| l.contains("jq")).unwrap_or("NOT FOUND"),
+        );
+    }
+
+    #[test]
+    fn nix_manifest_comment_fallback_when_no_comments() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    bat
+    ripgrep
+  ];
+}
+";
+        let (result, line) = insert_nix_manifest(content, "jq", "JSON processor").unwrap();
+        assert!(line.is_some());
+        // No existing comments, so fallback: two spaces before #
+        assert!(
+            result.contains("    jq  # JSON processor"),
+            "expected fallback comment, got: {}",
+            result.lines().find(|l| l.contains("jq")).unwrap_or("NOT FOUND"),
+        );
     }
 
     // --- insert_language_package ---
@@ -1833,7 +1936,7 @@ mod tests {
   ];
 }
 ";
-        let (with_fd, _) = insert_nix_manifest(original, "fd").unwrap();
+        let (with_fd, _) = insert_nix_manifest(original, "fd", "").unwrap();
         assert!(with_fd.contains("    fd\n"));
 
         let (restored, _) = remove_nix_manifest(&with_fd, "fd").unwrap();

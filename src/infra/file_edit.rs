@@ -1198,6 +1198,73 @@ mod tests {
         );
     }
 
+    #[test]
+    fn nix_manifest_realistic_cli_with_sections_and_mixed_comments() {
+        let content = "\
+{ pkgs, inputs, ... }:
+
+{
+  home.packages = with pkgs; [
+    # === Batch 1: Core CLI tools ===
+
+    # File/text utilities
+    bat           # cat replacement with syntax highlighting
+    eza           # ls replacement with icons
+    fd            # find replacement
+    fzf           # fuzzy finder
+    help2man
+    jq            # JSON processor
+    ripgrep       # grep replacement (provides 'rg')
+    tree          # Directory tree viewer
+
+    # Navigation
+    zoxide        # smart cd (learns your habits)
+
+    # === External flake packages ===
+    inputs.nx-rs.packages.aarch64-darwin.default  # nx (Rust)
+  ];
+}
+";
+        // Insert nil between jq and ripgrep
+        let (result, line) = insert_nix_manifest(content, "nil", "Yet another language server for Nix").unwrap();
+        assert!(line.is_some());
+        let nil_line = result.lines().find(|l| l.contains("nil")).unwrap();
+        assert!(
+            nil_line.contains("    nil           # Yet another language server for Nix"),
+            "expected aligned comment, got: '{nil_line}'",
+        );
+
+        // Verify it's between jq and ripgrep
+        let lines: Vec<&str> = result.lines().collect();
+        let jq_idx = lines.iter().position(|l| l.trim().starts_with("jq")).unwrap();
+        let nil_idx = lines.iter().position(|l| l.trim().starts_with("nil")).unwrap();
+        let rg_idx = lines.iter().position(|l| l.trim().starts_with("ripgrep")).unwrap();
+        assert!(nil_idx > jq_idx);
+        assert!(nil_idx < rg_idx);
+    }
+
+    #[test]
+    fn nix_manifest_uncommented_entry_gets_aligned_comment() {
+        // help2man has no comment; inserting next to it should still align
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    bat           # cat replacement
+    help2man
+    ripgrep       # grep replacement
+  ];
+}
+";
+        let (result, _) = insert_nix_manifest(content, "jq", "JSON processor").unwrap();
+        let jq_line = result.lines().find(|l| l.contains("jq")).unwrap();
+        // Should align to column 14 (the dominant comment column)
+        assert!(
+            jq_line.contains("    jq            # JSON processor"),
+            "expected aligned comment, got: '{jq_line}'",
+        );
+    }
+
     // --- analyse_manifest_for_preview ---
 
     #[test]

@@ -13,11 +13,11 @@ help:
     @echo "  just bd-prime        # show AI workflow context for bd"
     @echo "  just bd-status       # database overview"
     @echo "  just bd-ready        # list ready work"
-    @echo "  just bd-sync         # sync bd state"
+    @echo "  just bd-stats        # issue database stats"
     @echo
     @echo "Bootstrap"
     @echo "  just doctor          # Show local tool versions and paths"
-    @echo "  just hooks-install   # Install git hooks (pre-commit strict checks)"
+    @echo "  just hooks-install   # Install/update bd git hooks"
     @echo
     @echo "Daily Loop (strict)"
     @echo "  just compile         # Agent compile hook: fmt + clippy + test + check"
@@ -44,12 +44,11 @@ doctor:
     @echo "just:    $(just --version)"
     @echo "cwd:     $(pwd)"
 
-# Install repository-local git hooks and ensure executability.
+# Install/update bd git hooks and ensure agent scripts are executable.
 hooks-install:
-    @mkdir -p .githooks
-    @chmod +x .githooks/pre-commit scripts/agent-hooks/*.sh
-    @git config core.hooksPath .githooks
-    @echo "Installed hooks at .githooks (git core.hooksPath configured)."
+    @bd hooks install --force
+    @chmod +x scripts/agent-hooks/*.sh
+    @echo "Hooks installed."
 
 # Show detailed AI-oriented bd workflow context.
 bd-prime:
@@ -63,9 +62,9 @@ bd-status:
 bd-ready:
     @bd ready
 
-# Sync bd state to storage/jsonl.
-bd-sync:
-    @bd sync
+# Show bd issue database stats.
+bd-stats:
+    @bd stats
 
 # Run strict pre-compile checks directly.
 guard:

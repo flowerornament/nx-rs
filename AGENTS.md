@@ -40,7 +40,7 @@ Use `just` as the primary entrypoint:
 ```bash
 just help           # show workflows and what they enforce
 just doctor         # verify local toolchain and paths
-just hooks-install  # install git pre-commit hook
+just hooks-install  # install/update bd git hooks
 just guard          # strict pre-compile checks
 just compile        # strict checks + cargo check
 just ci             # fmt-check + clippy + test + check
@@ -66,7 +66,11 @@ Agent hook pipeline (`just compile` runs this full sequence):
 1. `pre-compile.sh` — fmt-check, clippy, test (same as `just guard`)
 2. `compile.sh` — calls pre-compile, then `cargo check`
 3. `post-compile.sh` — success confirmation
-4. `.githooks/pre-commit` — runs pre-compile on every commit
+
+Quality gate enforcement:
+- **Primary**: AGENTS.md instruction to run `just ci` before finishing code changes
+- **Safety net**: Claude Code Stop hook runs `just check` before session ends
+- **Git hooks**: Owned by bd for beads sync (installed via `just hooks-install`)
 
 ## Issue Tracking
 
@@ -89,7 +93,7 @@ bd prime              # full context about using bd
 bd ready              # find available work
 bd create --title="..." --type=task --priority=2
 bd close <id>         # complete work
-bd dolt push          # push beads to remote (run at session end)
+bd hooks install      # update git hooks after bd upgrades
 ```
 
 ## Landing the Plane (Session Completion)
@@ -105,7 +109,6 @@ bd dolt push          # push beads to remote (run at session end)
    ```bash
    # If shipping a release change, bump version first (Cargo.toml + flake.nix).
    git pull --rebase
-   bd dolt push
    git push
    git status  # MUST show "up to date with origin"
    ```

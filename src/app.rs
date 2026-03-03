@@ -5,6 +5,7 @@ use anyhow::bail;
 
 use crate::cli::{Cli, CommandKind};
 use crate::commands::context::{AppContext, GlobalFlags};
+use crate::commands::help::cmd_help;
 use crate::commands::init::cmd_init;
 use crate::commands::install::cmd_install;
 use crate::commands::query::{cmd_info, cmd_installed, cmd_list, cmd_status, cmd_where};
@@ -25,8 +26,13 @@ pub fn execute(cli: Cli) -> i32 {
     let global_flags = GlobalFlags { json: cli.json() };
     let style = OutputStyle::from_flags(cli.plain(), cli.unicode(), cli.minimal());
     let printer = Printer::new(style);
+
+    if let CommandKind::Help(args) = &cli.command {
+        return cmd_help(args);
+    }
+
     let needs_refresh = matches!(
-        cli.command,
+        &cli.command,
         CommandKind::Rebuild(_) | CommandKind::Upgrade(_)
     );
     if let Some(code) = maybe_refresh_before_system_command(needs_refresh, &printer) {
@@ -45,6 +51,7 @@ pub fn execute(cli: Cli) -> i32 {
     let ctx = AppContext::new(repo_root, printer, config_files, global_flags);
 
     match cli.command {
+        CommandKind::Help(_) => unreachable!("help handled before repo setup"),
         CommandKind::Init(args) => cmd_init(args.refresh, &ctx),
         CommandKind::Install(args) => cmd_install(&args, &ctx),
         CommandKind::Remove(args) => cmd_remove(&args, &ctx),

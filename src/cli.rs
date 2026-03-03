@@ -3,6 +3,7 @@ use std::ffi::OsString;
 use clap::{Args, Parser, Subcommand};
 
 const KNOWN_COMMANDS: &[&str] = &[
+    "help",
     "init",
     "install",
     "remove",
@@ -23,7 +24,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "upgrade",
 ];
 
-const ROOT_HELP: &str = "Run `nx <command> --help` for command-specific usage and examples.";
+const ROOT_HELP: &str = "Run `nx help <topic>` for hierarchical help, or `nx <command> --help` for full command docs.\n\nExamples:\n  nx help install\n  nx help secret add\n  nx help dry-run";
 const SECRET_HELP: &str = "Examples:\n  nx secret add example_secret_key --value '<token>'\n  printf '%s' '<token>' | nx secret add example_secret_key --value-stdin";
 const SECRET_ADD_HELP: &str = "Examples:
   nx secret add example_secret_key --value '<token>'
@@ -98,6 +99,8 @@ pub struct GlobalOutputArgs {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum CommandKind {
+    #[command(about = "Show hierarchical help for commands and flags")]
+    Help(HelpArgs),
     #[command(about = "Scan repo and generate .nx/manifest.toml")]
     Init(InitArgs),
     #[command(about = "Install package(s) into nix config")]
@@ -134,7 +137,10 @@ pub enum CommandKind {
 
 #[derive(Debug, Clone, Parser, Default)]
 pub struct InstallArgs {
-    #[arg(value_name = "PACKAGES")]
+    #[arg(
+        value_name = "PACKAGES",
+        help = "Package names/attributes to install (defaults to interactive lookup when omitted)"
+    )]
     pub packages: Vec<String>,
     #[command(flatten)]
     pub flow: InstallFlowArgs,
@@ -142,7 +148,7 @@ pub struct InstallArgs {
     pub target: InstallTargetArgs,
     #[command(flatten)]
     pub source: InstallSourceArgs,
-    #[arg(long)]
+    #[arg(long, help = "Offer to scaffold a service definition after install")]
     pub service: bool,
     #[command(flatten)]
     pub ai: InstallAiArgs,
@@ -212,63 +218,66 @@ impl InstallArgs {
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct InstallFlowArgs {
-    #[arg(long, short = 'y')]
+    #[arg(long, short = 'y', help = "Skip prompts and accept defaults")]
     pub yes: bool,
-    #[arg(long, short = 'n')]
+    #[arg(long, short = 'n', help = "Preview changes without writing files")]
     pub dry_run: bool,
-    #[arg(long)]
+    #[arg(long, help = "Run rebuild after successful installs")]
     pub rebuild: bool,
 }
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct InstallTargetArgs {
-    #[arg(long)]
+    #[arg(long, help = "Force Homebrew cask resolution")]
     pub cask: bool,
-    #[arg(long)]
+    #[arg(long, help = "Force Mac App Store resolution")]
     pub mas: bool,
 }
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct InstallSourceArgs {
-    #[arg(long)]
+    #[arg(long, help = "Prefer unstable or latest package variants")]
     pub bleeding_edge: bool,
-    #[arg(long)]
+    #[arg(long, help = "Include NUR in source selection")]
     pub nur: bool,
-    #[arg(long)]
+    #[arg(long, help = "Pin source backend (for example: nxs, nur, homebrew)")]
     pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct InstallAiArgs {
-    #[arg(long)]
+    #[arg(long, help = "Show routing rationale for AI-assisted decisions")]
     pub explain: bool,
-    #[arg(long)]
+    #[arg(long, help = "AI engine for routing/edit fallbacks (codex|claude)")]
     pub engine: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Model identifier passed to the selected AI engine")]
     pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Parser)]
 pub struct SearchArgs {
-    #[arg(value_name = "PACKAGE")]
+    #[arg(value_name = "PACKAGE", help = "Package name to search")]
     pub package: String,
-    #[arg(long)]
+    #[arg(long, help = "Prefer unstable or latest package variants")]
     pub bleeding_edge: bool,
-    #[arg(long)]
+    #[arg(long, help = "Include NUR in search results")]
     pub nur: bool,
-    #[arg(long)]
+    #[arg(long, help = "Emit machine-readable JSON output")]
     pub json: bool,
 }
 
 #[derive(Debug, Clone, Parser)]
 pub struct RemoveArgs {
-    #[arg(value_name = "PACKAGES")]
+    #[arg(
+        value_name = "PACKAGES",
+        help = "Installed package names/attributes to remove"
+    )]
     pub packages: Vec<String>,
-    #[arg(long, short = 'y')]
+    #[arg(long, short = 'y', help = "Skip confirmation prompts")]
     pub yes: bool,
-    #[arg(long, short = 'n')]
+    #[arg(long, short = 'n', help = "Preview removals without writing files")]
     pub dry_run: bool,
-    #[arg(long)]
+    #[arg(long, help = "Model identifier for AI fallback removal path")]
     pub model: Option<String>,
 }
 
@@ -336,41 +345,50 @@ impl SecretAddArgs {
 
 #[derive(Debug, Clone, Parser)]
 pub struct WhereArgs {
-    #[arg(value_name = "PACKAGE")]
+    #[arg(
+        value_name = "PACKAGE",
+        help = "Package name to locate in configuration"
+    )]
     pub package: Option<String>,
 }
 
 #[derive(Debug, Clone, Parser)]
 pub struct ListArgs {
-    #[arg(value_name = "SOURCE")]
+    #[arg(
+        value_name = "SOURCE",
+        help = "Optional source filter (nix|homebrew|mas)"
+    )]
     pub source: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Show richer per-package details")]
     pub verbose: bool,
-    #[arg(long)]
+    #[arg(long, help = "Emit machine-readable JSON output")]
     pub json: bool,
-    #[arg(long)]
+    #[arg(long, help = "Use plain output formatting for this command")]
     pub plain: bool,
 }
 
 #[derive(Debug, Clone, Parser)]
 pub struct InfoArgs {
-    #[arg(value_name = "PACKAGE")]
+    #[arg(value_name = "PACKAGE", help = "Package name to inspect")]
     pub package: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Emit machine-readable JSON output")]
     pub json: bool,
-    #[arg(long)]
+    #[arg(long, help = "Prefer unstable or latest source variants")]
     pub bleeding_edge: bool,
-    #[arg(long)]
+    #[arg(long, help = "Show additional source candidate details")]
     pub verbose: bool,
 }
 
 #[derive(Debug, Clone, Parser)]
 pub struct InstalledArgs {
-    #[arg(value_name = "PACKAGES")]
+    #[arg(
+        value_name = "PACKAGES",
+        help = "Package names to verify (empty = summary mode)"
+    )]
     pub packages: Vec<String>,
-    #[arg(long)]
+    #[arg(long, help = "Emit machine-readable JSON output")]
     pub json: bool,
-    #[arg(long)]
+    #[arg(long, help = "Include file path and line location for matches")]
     pub show_location: bool,
 }
 
@@ -382,7 +400,10 @@ pub struct UndoArgs {
 
 #[derive(Debug, Clone, Parser)]
 pub struct PassthroughArgs {
-    #[arg(last = true)]
+    #[arg(
+        last = true,
+        help = "Arguments passed through to the underlying system command"
+    )]
     pub passthrough: Vec<String>,
 }
 
@@ -392,7 +413,10 @@ pub struct UpgradeArgs {
     pub flow: UpgradeFlowArgs,
     #[command(flatten)]
     pub skip: UpgradeSkipArgs,
-    #[arg(last = true)]
+    #[arg(
+        last = true,
+        help = "Arguments passed through to `darwin-rebuild switch` during upgrade"
+    )]
     pub passthrough: Vec<String>,
 }
 
@@ -425,22 +449,37 @@ impl UpgradeArgs {
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct UpgradeFlowArgs {
-    #[arg(long, short = 'n')]
+    #[arg(
+        long,
+        short = 'n',
+        help = "Preview upgrade actions without mutating files"
+    )]
     pub dry_run: bool,
-    #[arg(long, short = 'v')]
+    #[arg(long, short = 'v', help = "Enable verbose upgrade output")]
     pub verbose: bool,
-    #[arg(long)]
+    #[arg(long, help = "Disable AI-assisted recovery prompts")]
     pub no_ai: bool,
 }
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct UpgradeSkipArgs {
-    #[arg(long)]
+    #[arg(long, help = "Skip rebuild step")]
     pub skip_rebuild: bool,
-    #[arg(long)]
+    #[arg(long, help = "Skip git commit step")]
     pub skip_commit: bool,
-    #[arg(long)]
+    #[arg(long, help = "Skip brew update/upgrade step")]
     pub skip_brew: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct HelpArgs {
+    #[arg(
+        value_name = "TOPIC",
+        num_args = 0..,
+        allow_hyphen_values = true,
+        help = "Help topic path (command path and/or flag query)"
+    )]
+    pub topics: Vec<String>,
 }
 
 #[derive(Debug, Clone, Parser, Default)]
@@ -500,6 +539,13 @@ mod tests {
     }
 
     #[test]
+    fn preprocess_args_help_command_passes_through() {
+        let result = preprocess_args(["nx", "help", "install"]);
+        assert_eq!(result[1], OsString::from("help"));
+        assert_eq!(result[2], OsString::from("install"));
+    }
+
+    #[test]
     fn preprocess_args_search_command_passes_through() {
         let result = preprocess_args(["nx", "search", "ripgrep"]);
         assert_eq!(result[1], OsString::from("search"));
@@ -525,6 +571,7 @@ mod tests {
     #[test]
     fn known_commands_match_spec_plus_intentional_extensions() {
         let spec_commands: BTreeSet<_> = [
+            "help",
             "init",
             "install",
             "remove",
@@ -686,7 +733,7 @@ mod tests {
     #[test]
     fn root_help_lists_spec_globals_and_verbose_alias() {
         let help = render_invocation_help(["nx", "--help"]);
-        assert!(help.contains("Run `nx <command> --help`"));
+        assert!(help.contains("Run `nx help <topic>` for hierarchical help"));
 
         let expected_longs: BTreeSet<_> = ["plain", "unicode", "minimal", "verbose", "json"]
             .into_iter()
@@ -757,7 +804,7 @@ mod tests {
     #[test]
     fn secret_add_help_includes_examples_and_double_dash_note() {
         let help = render_root_help();
-        assert!(help.contains("Run `nx <command> --help`"));
+        assert!(help.contains("Run `nx help <topic>` for hierarchical help"));
 
         let mut secret_add_cmd = Cli::command();
         let secret_add = secret_add_cmd
@@ -786,6 +833,15 @@ mod tests {
     fn global_verbose_flag_parses_at_root() {
         let cli = Cli::try_parse_from(["nx", "--verbose", "status"]).expect("parse");
         assert!(cli.verbose_requested());
+    }
+
+    #[test]
+    fn help_command_parses_topic_path() {
+        let cli = Cli::try_parse_from(["nx", "help", "secret", "add"]).expect("parse help");
+        let CommandKind::Help(args) = cli.command else {
+            panic!("expected help command");
+        };
+        assert_eq!(args.topics, vec!["secret".to_string(), "add".to_string()]);
     }
 
     #[test]

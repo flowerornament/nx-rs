@@ -92,6 +92,7 @@ nx upgrade
 
 - `install`
 - `remove` (aliases: `rm`, `uninstall`)
+- `help` (hierarchical command/flag help topics)
 - `search`
 - `where`
 - `list`
@@ -109,6 +110,7 @@ Use command help for full options:
 
 ```bash
 nx --help
+nx help <topic>
 nx <command> --help
 ```
 

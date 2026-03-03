@@ -1,4 +1,5 @@
 pub mod context;
+pub mod help;
 pub mod init;
 pub mod install;
 pub mod query;

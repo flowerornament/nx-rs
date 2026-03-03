@@ -99,7 +99,9 @@ fn dispatch_insert(content: &str, plan: &InstallPlan) -> Result<(String, Option<
                 anyhow!("invalid install plan: language_info required for LanguageWithPackages")
             })?;
             let lines: Vec<&str> = content.lines().collect();
-            if find_with_packages_block(&lines, &lang.runtime).is_some() {
+            if find_with_packages_block(&lines, &lang.runtime).is_some()
+                || find_inline_with_packages_line(&lines, &lang.runtime).is_some()
+            {
                 insert_language_package(content, &lang.bare_name, &lang.runtime)
             } else {
                 scaffold_language_block(content, &lang.bare_name, &lang.runtime)
@@ -214,8 +216,12 @@ fn insert_language_package(
         return Ok((content.to_string(), None));
     }
 
-    // Find the withPackages block for this runtime
     let lines: Vec<&str> = content.lines().collect();
+    if let Some(line_idx) = find_inline_with_packages_line(&lines, runtime) {
+        return insert_inline_with_packages(content, bare_name, line_idx);
+    }
+
+    // Find the multi-line withPackages block for this runtime
     let (block_start, block_end) = find_with_packages_block(&lines, runtime)
         .ok_or_else(|| anyhow::anyhow!("no {runtime}.withPackages block found"))?;
 
@@ -240,6 +246,81 @@ fn insert_language_package(
     }
 
     Ok((out, Some(insert_at + 1)))
+}
+
+/// Insert into a same-line `withPackages` list by expanding it to multi-line first.
+fn insert_inline_with_packages(
+    content: &str,
+    bare_name: &str,
+    line_idx: usize,
+) -> Result<(String, Option<usize>)> {
+    let lines: Vec<&str> = content.lines().collect();
+    let line = lines
+        .get(line_idx)
+        .ok_or_else(|| anyhow!("inline withPackages line out of bounds: {line_idx}"))?;
+
+    let bracket_open = line
+        .find('[')
+        .ok_or_else(|| anyhow!("inline withPackages line missing '['"))?;
+    let bracket_close = line
+        .rfind(']')
+        .ok_or_else(|| anyhow!("inline withPackages line missing ']'"))?;
+    if bracket_close <= bracket_open {
+        return Err(anyhow!("malformed inline withPackages list"));
+    }
+
+    let inner = line[bracket_open + 1..bracket_close].trim();
+    let mut items: Vec<&str> = if inner.is_empty() {
+        Vec::new()
+    } else {
+        inner.split_whitespace().collect()
+    };
+
+    if items.iter().any(|item| !is_simple_nix_token(item)) {
+        return Err(anyhow!(
+            "cannot safely edit inline withPackages list with complex expressions; reformat to multi-line"
+        ));
+    }
+    if items.contains(&bare_name) {
+        return Ok((content.to_string(), None));
+    }
+
+    let bare_name_lower = bare_name.to_lowercase();
+    let insert_at = items.partition_point(|item| item.to_lowercase() < bare_name_lower);
+    items.insert(insert_at, bare_name);
+
+    let line_indent_len = line.len() - line.trim_start().len();
+    let line_indent = &line[..line_indent_len];
+    let item_indent = format!("{line_indent}  ");
+    let prefix = &line[..=bracket_open];
+    let suffix = &line[bracket_close..];
+
+    let mut out = String::with_capacity(content.len() + bare_name.len() + 8);
+    for existing in &lines[..line_idx] {
+        out.push_str(existing);
+        out.push('\n');
+    }
+    out.push_str(prefix);
+    out.push('\n');
+    for item in items {
+        out.push_str(&item_indent);
+        out.push_str(item);
+        out.push('\n');
+    }
+    out.push_str(line_indent);
+    out.push_str(suffix);
+    out.push('\n');
+    for existing in &lines[line_idx + 1..] {
+        out.push_str(existing);
+        out.push('\n');
+    }
+
+    if !content.ends_with('\n') {
+        out.pop();
+    }
+
+    // 1-indexed inserted line number in the expanded block.
+    Ok((out, Some(line_idx + 2 + insert_at)))
 }
 
 /// Scaffold a new `withPackages` block for a runtime that doesn't have one yet.
@@ -549,13 +630,11 @@ fn splice_out_line(content: &str, lines: &[&str], remove_idx: usize) -> String {
 ///
 /// Scans `home.packages` / `environment.systemPackages` and returns all bare
 /// identifiers (skipping comments, blanks, and parenthesised withPackages blocks).
-pub fn list_bracket_entries(content: &str) -> Vec<String> {
+///
+/// Returns `None` when no multi-line bracket region is found.
+pub fn list_bracket_entries(content: &str) -> Option<Vec<String>> {
     let (start, end) = find_bracket_region(content, "home.packages")
-        .or_else(|| find_bracket_region(content, "environment.systemPackages"))
-        .unwrap_or((0, 0));
-    if start == end {
-        return Vec::new();
-    }
+        .or_else(|| find_bracket_region(content, "environment.systemPackages"))?;
     let lines: Vec<&str> = content.lines().collect();
     let mut entries = Vec::new();
     let mut in_paren = 0usize;
@@ -578,7 +657,7 @@ pub fn list_bracket_entries(content: &str) -> Vec<String> {
             entries.push(ident.to_string());
         }
     }
-    entries
+    Some(entries)
 }
 
 /// Find the line index of a bare identifier within a region.
@@ -702,6 +781,9 @@ fn expand_inline_list(content: &str, key: &str) -> Option<String> {
     // Extract items between brackets
     let inner = line[bracket_open + 1..bracket_close].trim();
     let items: Vec<&str> = inner.split_whitespace().collect();
+    if items.iter().any(|item| !is_simple_nix_token(item)) {
+        return None;
+    }
 
     // Detect indent from the line itself
     let line_indent_len = line.len() - line.trim_start().len();
@@ -875,6 +957,19 @@ fn find_with_packages_block(lines: &[&str], runtime: &str) -> Option<(usize, usi
     None
 }
 
+/// Find an inline `runtime.withPackages` list where `[` and `]` are on one line.
+fn find_inline_with_packages_line(lines: &[&str], runtime: &str) -> Option<usize> {
+    let pattern = format!("{runtime}.withPackages");
+    lines.iter().enumerate().find_map(|(i, line)| {
+        if !line.contains(&pattern) {
+            return None;
+        }
+        let open = line.find('[')?;
+        let close = line.rfind(']')?;
+        (close > open).then_some(i)
+    })
+}
+
 /// Detect the indent used by entries in a bracket region.
 fn detect_indent_in_region<'a>(lines: &'a [&str], start: usize, end: usize) -> Option<&'a str> {
     for line in &lines[start + 1..end] {
@@ -993,6 +1088,14 @@ fn extract_bare_ident(line: &str) -> &str {
     before_comment.split_whitespace().next().unwrap_or("")
 }
 
+/// Return `true` for simple Nix package tokens safe to split/join by whitespace.
+fn is_simple_nix_token(token: &str) -> bool {
+    !token.is_empty()
+        && token
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '+'))
+}
+
 /// Extract the first double-quoted value from a line.
 fn extract_quoted_value(line: &str) -> Option<&str> {
     let start = line.find('"')? + 1;
@@ -1064,6 +1167,17 @@ mod tests {
     }
 
     #[test]
+    fn expand_inline_list_rejects_complex_items() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [ (python3.withPackages (ps: [ requests ])) vim ];
+}
+";
+        assert!(expand_inline_list(content, "home.packages").is_none());
+    }
+
+    #[test]
     fn insert_into_single_line_list() {
         let content = "\
 { pkgs, ... }:
@@ -1090,6 +1204,21 @@ mod tests {
 ";
         let (_, line) = insert_nix_manifest(content, "vim", "").unwrap();
         assert!(line.is_none(), "vim already present — should be idempotent");
+    }
+
+    #[test]
+    fn insert_into_complex_inline_list_errors_instead_of_rewriting() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [ (python3.withPackages (ps: [ requests ])) vim ];
+}
+";
+        let err = insert_nix_manifest(content, "fd", "").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("no home.packages or environment.systemPackages list found")
+        );
     }
 
     #[test]
@@ -1412,6 +1541,29 @@ mod tests {
 }
 ";
         assert!(analyse_manifest_for_preview(content, "nil").is_none());
+    }
+
+    #[test]
+    fn list_bracket_entries_returns_none_for_inline_list() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [ mosh ];
+}
+";
+        assert!(list_bracket_entries(content).is_none());
+    }
+
+    #[test]
+    fn list_bracket_entries_distinguishes_empty_multiline_from_unparsed() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+  ];
+}
+";
+        assert_eq!(list_bracket_entries(content), Some(Vec::new()));
     }
 
     #[test]
@@ -1931,6 +2083,25 @@ mod tests {
     }
 
     #[test]
+    fn insert_language_package_handles_inline_with_packages_without_scaffolding() {
+        let content = "\
+{ pkgs, ... }:
+{
+  home.packages = with pkgs; [
+    (python3.withPackages (ps: with ps; [ requests pyyaml ]))
+  ];
+}
+";
+        let (result, line) = insert_language_package(content, "rich", "python3").unwrap();
+        assert!(line.is_some());
+        assert_eq!(result.matches("python3.withPackages").count(), 1);
+        assert!(result.contains("    (python3.withPackages (ps: with ps; [\n"));
+        assert!(result.contains("      requests\n"));
+        assert!(result.contains("      pyyaml\n"));
+        assert!(result.contains("      rich\n"));
+    }
+
+    #[test]
     fn dispatch_insert_falls_back_to_scaffold() {
         use crate::domain::plan::{InsertionMode, InstallPlan, LanguageInfo};
         use crate::domain::source::{PackageSource, SourceResult};
@@ -1962,6 +2133,40 @@ mod tests {
         let written = fs::read_to_string(&lang_path).unwrap();
         assert!(written.contains("perl.withPackages"));
         assert!(written.contains("JSON"));
+    }
+
+    #[test]
+    fn dispatch_insert_prefers_inline_with_packages_over_scaffold() {
+        use crate::domain::plan::{InsertionMode, InstallPlan, LanguageInfo};
+        use crate::domain::source::{PackageSource, SourceResult};
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let lang_path = tmp.path().join("languages.nix");
+        fs::write(
+            &lang_path,
+            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    (python3.withPackages (ps: with ps; [ requests pyyaml ]))\n  ];\n}\n",
+        )
+        .unwrap();
+
+        let plan = InstallPlan {
+            source_result: SourceResult::new("python3Packages.rich", PackageSource::Nxs),
+            package_token: "python3Packages.rich".to_string(),
+            target_file: lang_path.clone(),
+            insertion_mode: InsertionMode::LanguageWithPackages,
+            language_info: Some(LanguageInfo {
+                bare_name: "rich".to_string(),
+                runtime: "python3".to_string(),
+                method: "withPackages".to_string(),
+            }),
+            routing_warning: None,
+        };
+
+        let outcome = apply_edit(&plan).unwrap();
+        assert!(outcome.file_changed);
+
+        let written = fs::read_to_string(&lang_path).unwrap();
+        assert_eq!(written.matches("python3.withPackages").count(), 1);
+        assert!(written.contains("      rich\n"));
     }
 
     #[test]

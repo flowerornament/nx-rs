@@ -309,15 +309,18 @@ fn refine_routing(
     for rel in &candidates {
         let abs = ctx.repo_root.join(rel);
         if let Ok(text) = fs::read_to_string(&abs) {
-            let entries = list_bracket_entries(&text);
-            let total = entries.len();
-            let sample: Vec<&str> = entries.iter().take(6).map(String::as_str).collect();
-            let display = if total > sample.len() {
-                format!("{}, ... ({total} packages)", sample.join(", "))
-            } else if total > 0 {
-                format!("{} ({total} packages)", sample.join(", "))
+            let display = if let Some(entries) = list_bracket_entries(&text) {
+                let total = entries.len();
+                let sample: Vec<&str> = entries.iter().take(6).map(String::as_str).collect();
+                if total > sample.len() {
+                    format!("{}, ... ({total} packages)", sample.join(", "))
+                } else if total > 0 {
+                    format!("{} ({total} packages)", sample.join(", "))
+                } else {
+                    "(empty)".to_string()
+                }
             } else {
-                "(empty)".to_string()
+                "(unparsed list format)".to_string()
             };
             content_lines.push(format!("- {rel}: {display}"));
         }

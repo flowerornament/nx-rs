@@ -17,6 +17,7 @@ struct FlagMatch {
     command_path: String,
     long: Option<String>,
     short: Option<char>,
+    aliases: Vec<String>,
     help: String,
 }
 
@@ -60,18 +61,26 @@ fn render_help(args: &HelpArgs) -> Result<String, String> {
     }
     let query = &remaining[0];
 
-    let flag_matches = find_flag_matches(&resolved.command, &resolved.path, query);
-    if !flag_matches.is_empty() {
-        return Ok(render_flag_matches(query, &resolved.path, &flag_matches));
-    }
-
     let command_matches = find_command_matches(&resolved.command, &resolved.path, query);
+    let flag_matches = find_flag_matches(&resolved.command, &resolved.path, query);
+
+    if !command_matches.is_empty() && !flag_matches.is_empty() {
+        return Ok(render_combined_matches(
+            query,
+            &resolved.path,
+            &command_matches,
+            &flag_matches,
+        ));
+    }
     if !command_matches.is_empty() {
         return Ok(render_command_matches(
             query,
             &resolved.path,
             &command_matches,
         ));
+    }
+    if !flag_matches.is_empty() {
+        return Ok(render_flag_matches(query, &resolved.path, &flag_matches));
     }
 
     Err(format!(
@@ -151,6 +160,7 @@ fn collect_flag_matches(
             command_path: command_path.clone(),
             long,
             short,
+            aliases: collect_flag_aliases(arg),
             help: arg
                 .get_help()
                 .map(std::string::ToString::to_string)
@@ -166,6 +176,12 @@ fn collect_flag_matches(
 }
 
 fn render_flag_matches(query: &str, scope: &[String], matches: &[FlagMatch]) -> String {
+    let mut out = render_flag_matches_section(query, scope, matches);
+    out.push_str("\nUse `nx help <command>` for full command usage.\n");
+    out
+}
+
+fn render_flag_matches_section(query: &str, scope: &[String], matches: &[FlagMatch]) -> String {
     let mut out = String::new();
     writeln!(
         out,
@@ -187,12 +203,15 @@ fn render_flag_matches(query: &str, scope: &[String], matches: &[FlagMatch]) -> 
         }
         writeln!(out, "- {}: {}", item.command_path, names.join(", "))
             .expect("writing to String should not fail");
+        if !item.aliases.is_empty() {
+            writeln!(out, "  aliases: {}", item.aliases.join(", "))
+                .expect("writing to String should not fail");
+        }
         if !item.help.is_empty() {
             writeln!(out, "  {}", item.help).expect("writing to String should not fail");
         }
     }
 
-    out.push_str("\nUse `nx help <command>` for full command usage.\n");
     out
 }
 
@@ -222,7 +241,8 @@ fn collect_command_matches(
         let name_match = child.get_name().contains(query_lower);
         let alias_match = aliases.iter().any(|alias| alias.contains(query_lower));
         let about_match = about.to_ascii_lowercase().contains(query_lower);
-        if name_match || alias_match || about_match || path_display.contains(query_lower) {
+        let path_match = path_display.to_ascii_lowercase().contains(query_lower);
+        if name_match || alias_match || about_match || path_match {
             out.push(CommandMatch {
                 path: path_display.clone(),
                 about: about.clone(),
@@ -235,6 +255,16 @@ fn collect_command_matches(
 }
 
 fn render_command_matches(query: &str, scope: &[String], matches: &[CommandMatch]) -> String {
+    let mut out = render_command_matches_section(query, scope, matches);
+    out.push_str("\nUse `nx help <command>` to open a command topic.\n");
+    out
+}
+
+fn render_command_matches_section(
+    query: &str,
+    scope: &[String],
+    matches: &[CommandMatch],
+) -> String {
     let mut out = String::new();
     writeln!(
         out,
@@ -254,7 +284,19 @@ fn render_command_matches(query: &str, scope: &[String], matches: &[CommandMatch
         }
     }
 
-    out.push_str("\nUse `nx help <command>` to open a command topic.\n");
+    out
+}
+
+fn render_combined_matches(
+    query: &str,
+    scope: &[String],
+    command_matches: &[CommandMatch],
+    flag_matches: &[FlagMatch],
+) -> String {
+    let mut out = render_command_matches_section(query, scope, command_matches);
+    out.push('\n');
+    out.push_str(&render_flag_matches_section(query, scope, flag_matches));
+    out.push_str("\nUse `nx help <command>` to open command usage, or `nx help -- <flag>` for exact flag lookup.\n");
     out
 }
 
@@ -292,6 +334,8 @@ impl FlagMatcher {
     fn matches(&self, arg: &Arg) -> bool {
         let long = arg.get_long().map(str::to_ascii_lowercase);
         let short = arg.get_short();
+        let long_aliases = collect_flag_aliases_lower(arg);
+        let short_aliases = arg.get_all_short_aliases().unwrap_or_default();
         if long.is_none() && short.is_none() {
             return false;
         }
@@ -301,17 +345,47 @@ impl FlagMatcher {
             .unwrap_or_default();
 
         match &self.query {
-            FlagQuery::Long(target) => long.as_ref().is_some_and(|value| value == target),
-            FlagQuery::Short(target) => short == Some(*target),
+            FlagQuery::Long(target) => {
+                long.as_ref().is_some_and(|value| value == target)
+                    || long_aliases.iter().any(|alias| alias == target)
+            }
+            FlagQuery::Short(target) => {
+                short == Some(*target) || short_aliases.iter().any(|alias| alias == target)
+            }
             FlagQuery::Text(target) => {
                 long.as_ref().is_some_and(|value| value.contains(target))
+                    || long_aliases.iter().any(|alias| alias.contains(target))
                     || short
                         .map(|value| value.to_string())
                         .is_some_and(|value| value == *target)
+                    || short_aliases
+                        .iter()
+                        .map(std::string::ToString::to_string)
+                        .any(|value| value == *target)
                     || help.contains(target)
             }
         }
     }
+}
+
+fn collect_flag_aliases(arg: &Arg) -> Vec<String> {
+    let long = arg.get_long();
+    let mut aliases: BTreeSet<_> = arg
+        .get_all_aliases()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|alias| Some(*alias) != long)
+        .map(str::to_owned)
+        .collect();
+    aliases.retain(|alias| !alias.is_empty());
+    aliases.into_iter().collect()
+}
+
+fn collect_flag_aliases_lower(arg: &Arg) -> Vec<String> {
+    collect_flag_aliases(arg)
+        .into_iter()
+        .map(|alias| alias.to_ascii_lowercase())
+        .collect()
 }
 
 #[cfg(test)]
@@ -362,5 +436,32 @@ mod tests {
         })
         .expect_err("unknown topic should error");
         assert!(err.contains("No help topic matched"));
+    }
+
+    #[test]
+    fn help_flag_query_matches_visible_aliases() {
+        let text = render_help(&HelpArgs {
+            topics: vec!["--key".to_string()],
+        })
+        .expect("alias flag query should render");
+        assert!(text.contains("nx secret add"));
+        assert!(text.contains("--name"));
+        assert!(text.contains("aliases: key"));
+    }
+
+    #[test]
+    fn help_ambiguous_query_prioritizes_commands_before_flags() {
+        let text = render_help(&HelpArgs {
+            topics: vec!["sec".to_string()],
+        })
+        .expect("ambiguous query should render");
+        let command_index = text
+            .find("Command topics matching 'sec'")
+            .expect("command section should render");
+        let flag_index = text
+            .find("Flag matches for 'sec'")
+            .expect("flag section should render");
+        assert!(command_index < flag_index);
+        assert!(text.contains("nx secret"));
     }
 }

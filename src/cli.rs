@@ -24,7 +24,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "upgrade",
 ];
 
-const ROOT_HELP: &str = "Run `nx help <topic>` for hierarchical help, or `nx <command> --help` for full command docs.\n\nExamples:\n  nx help install\n  nx help secret add\n  nx help dry-run";
+const ROOT_HELP: &str = "Run `nx help <topic>` for hierarchical help, or `nx <command> --help` for full command docs.\n\nExamples:\n  nx help install\n  nx help secret add\n  nx help --verbose\n  nx help dry-run";
 const SECRET_HELP: &str = "Examples:\n  nx secret add example_secret_key --value '<token>'\n  printf '%s' '<token>' | nx secret add example_secret_key --value-stdin";
 const SECRET_ADD_HELP: &str = "Examples:
   nx secret add example_secret_key --value '<token>'
@@ -499,6 +499,14 @@ where
     }
 
     let first = out[1].to_string_lossy();
+    if first == "help" && out.len() >= 3 {
+        let topic = out[2].to_string_lossy();
+        if topic.starts_with('-') && topic != "--" && topic != "-h" && topic != "--help" {
+            out.insert(2, OsString::from("--"));
+        }
+        return out;
+    }
+
     if first.starts_with('-') || KNOWN_COMMANDS.contains(&first.as_ref()) {
         return out;
     }
@@ -543,6 +551,30 @@ mod tests {
         let result = preprocess_args(["nx", "help", "install"]);
         assert_eq!(result[1], OsString::from("help"));
         assert_eq!(result[2], OsString::from("install"));
+    }
+
+    #[test]
+    fn preprocess_args_help_long_flag_query_inserts_double_dash() {
+        let result = preprocess_args(["nx", "help", "--verbose"]);
+        assert_eq!(result[1], OsString::from("help"));
+        assert_eq!(result[2], OsString::from("--"));
+        assert_eq!(result[3], OsString::from("--verbose"));
+    }
+
+    #[test]
+    fn preprocess_args_help_short_flag_query_inserts_double_dash() {
+        let result = preprocess_args(["nx", "help", "-v"]);
+        assert_eq!(result[1], OsString::from("help"));
+        assert_eq!(result[2], OsString::from("--"));
+        assert_eq!(result[3], OsString::from("-v"));
+    }
+
+    #[test]
+    fn preprocess_args_help_help_flag_does_not_insert_double_dash() {
+        let result = preprocess_args(["nx", "help", "--help"]);
+        assert_eq!(result[1], OsString::from("help"));
+        assert_eq!(result[2], OsString::from("--help"));
+        assert_eq!(result.len(), 3);
     }
 
     #[test]

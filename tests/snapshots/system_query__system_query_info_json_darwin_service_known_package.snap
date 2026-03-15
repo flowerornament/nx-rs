@@ -1,0 +1,17 @@
+---
+source: tests/system_query.rs
+expression: value
+---
+{
+  "name": "yabai",
+  "installed": false,
+  "location": null,
+  "sources": [],
+  "hm_module": null,
+  "darwin_service": {
+    "path": "services.yabai",
+    "example": "services.yabai.enable = true;",
+    "enabled": false
+  },
+  "flakehub": []
+}

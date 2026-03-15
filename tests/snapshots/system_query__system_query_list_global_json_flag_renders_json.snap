@@ -1,0 +1,24 @@
+---
+source: tests/system_query.rs
+expression: value
+---
+{
+  "nxs": [
+    "ripgrep",
+    "fd",
+    "lua5_4",
+    "python3"
+  ],
+  "brews": [
+    "htop"
+  ],
+  "casks": [
+    "raycast"
+  ],
+  "mas": [
+    "Xcode"
+  ],
+  "services": [
+    "test-agent"
+  ]
+}

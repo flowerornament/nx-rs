@@ -21,6 +21,7 @@ toml_edit = "0.22"
 walkdir = "2.5.0"
 
 [dev-dependencies]
+insta = { version = "1.46.3", features = ["json"] }
 tempfile = "3.23.0"
 
 [lints.rust]

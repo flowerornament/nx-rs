@@ -1,0 +1,17 @@
+---
+source: tests/system_query.rs
+expression: value
+---
+{
+  "name": "git",
+  "installed": false,
+  "location": null,
+  "sources": [],
+  "hm_module": {
+    "path": "programs.git",
+    "example": "programs.git.enable = true; programs.git.userName = \"...\";",
+    "enabled": false
+  },
+  "darwin_service": null,
+  "flakehub": []
+}

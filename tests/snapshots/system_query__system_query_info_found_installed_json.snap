@@ -1,0 +1,13 @@
+---
+source: tests/system_query.rs
+expression: value
+---
+{
+  "name": "ripgrep",
+  "installed": true,
+  "location": "packages/nix/cli.nix:5",
+  "sources": [],
+  "hm_module": null,
+  "darwin_service": null,
+  "flakehub": []
+}

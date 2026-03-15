@@ -11,6 +11,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+use insta::assert_json_snapshot;
+use serde_json::Value;
 use tempfile::TempDir;
 
 use support_bin::resolve_nx_bin;
@@ -38,19 +40,6 @@ const INFO_JSON_FOUND_STDOUT: &[&str] = &[
     "\"installed\": true",
     "\"sources\": []",
 ];
-const INFO_JSON_HM_MODULE_STDOUT: &[&str] = &[
-    "\"name\": \"git\"",
-    "\"hm_module\": {",
-    "\"path\": \"programs.git\"",
-    "\"enabled\": false",
-];
-const INFO_JSON_DARWIN_SERVICE_STDOUT: &[&str] = &[
-    "\"name\": \"yabai\"",
-    "\"darwin_service\": {",
-    "\"path\": \"services.yabai\"",
-    "\"enabled\": false",
-];
-const LIST_JSON_GLOBAL_STDOUT: &[&str] = &["\"nxs\": [", "\"ripgrep\"", "\"services\": ["];
 const INSTALLED_JSON_GLOBAL_STDOUT: &[&str] =
     &["\"ripgrep\": {\"match\": \"ripgrep\", \"location\": \""];
 
@@ -60,12 +49,11 @@ struct QueryCase {
     stdout_contains: &'static [&'static str],
 }
 
-fn run_query_case(
-    case_name: &str,
+fn run_query_command(
     nx_bin: &std::path::Path,
     repo_base: &std::path::Path,
-    case: &QueryCase,
-) -> Result<(), Box<dyn Error>> {
+    args: &[&str],
+) -> Result<std::process::Output, Box<dyn Error>> {
     let tmp = TempDir::new()?;
     copy_tree(repo_base, tmp.path())?;
     let stub_dir = tmp.path().join(STUB_DIR_NAME);
@@ -76,7 +64,7 @@ fn run_query_case(
 
     let output = Command::new(nx_bin)
         .args(["--plain", "--minimal"])
-        .args(case.args)
+        .args(args)
         .current_dir(tmp.path())
         .env("NX_REPO_ROOT", tmp.path())
         .env("HOME", home_dir.path())
@@ -90,6 +78,17 @@ fn run_query_case(
         .stderr(Stdio::piped())
         .output()
         .expect("failed to execute nx binary");
+
+    Ok(output)
+}
+
+fn run_query_case(
+    case_name: &str,
+    nx_bin: &std::path::Path,
+    repo_base: &std::path::Path,
+    case: &QueryCase,
+) -> Result<(), Box<dyn Error>> {
+    let output = run_query_command(nx_bin, repo_base, case.args)?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -107,6 +106,43 @@ fn run_query_case(
     }
 
     Ok(())
+}
+
+fn assert_query_json_snapshot(
+    snapshot_name: &str,
+    nx_bin: &std::path::Path,
+    repo_base: &std::path::Path,
+    args: &[&str],
+) -> Result<(), Box<dyn Error>> {
+    let output = run_query_command(nx_bin, repo_base, args)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(
+        output.status.code().unwrap_or(-1),
+        0,
+        "case {snapshot_name}: unexpected exit code\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let value = normalize_snapshot_json(serde_json::from_slice(&output.stdout)?);
+    assert_json_snapshot!(snapshot_name, value);
+
+    Ok(())
+}
+
+fn normalize_snapshot_json(mut value: Value) -> Value {
+    let normalized_location = value
+        .get("location")
+        .and_then(Value::as_str)
+        .and_then(|location| {
+            location
+                .find("packages/")
+                .map(|index| location[index..].to_string())
+        });
+    if let Some(location) = normalized_location {
+        value["location"] = Value::String(location);
+    }
+    value
 }
 
 #[test]
@@ -149,43 +185,11 @@ fn system_query_surface() -> Result<(), Box<dyn Error>> {
             },
         ),
         (
-            "info_found_installed_json",
-            QueryCase {
-                args: INFO_JSON_FOUND_ARGS,
-                expected_exit: 0,
-                stdout_contains: INFO_JSON_FOUND_STDOUT,
-            },
-        ),
-        (
             "info_found_bleeding_edge_plain",
             QueryCase {
                 args: INFO_BLEEDING_EDGE_ARGS,
                 expected_exit: 0,
                 stdout_contains: INFO_FOUND_STDOUT,
-            },
-        ),
-        (
-            "info_json_hm_module_known_package",
-            QueryCase {
-                args: INFO_JSON_HM_MODULE_ARGS,
-                expected_exit: 0,
-                stdout_contains: INFO_JSON_HM_MODULE_STDOUT,
-            },
-        ),
-        (
-            "info_json_darwin_service_known_package",
-            QueryCase {
-                args: INFO_JSON_DARWIN_SERVICE_ARGS,
-                expected_exit: 0,
-                stdout_contains: INFO_JSON_DARWIN_SERVICE_STDOUT,
-            },
-        ),
-        (
-            "list_global_json_flag_renders_json",
-            QueryCase {
-                args: LIST_JSON_GLOBAL_ARGS,
-                expected_exit: 0,
-                stdout_contains: LIST_JSON_GLOBAL_STDOUT,
             },
         ),
         (
@@ -211,4 +215,46 @@ fn system_query_surface() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+#[test]
+fn system_query_info_json_snapshots() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+
+    assert_query_json_snapshot(
+        "system_query_info_found_installed_json",
+        &nx_bin,
+        &repo_base,
+        INFO_JSON_FOUND_ARGS,
+    )?;
+    assert_query_json_snapshot(
+        "system_query_info_json_hm_module_known_package",
+        &nx_bin,
+        &repo_base,
+        INFO_JSON_HM_MODULE_ARGS,
+    )?;
+    assert_query_json_snapshot(
+        "system_query_info_json_darwin_service_known_package",
+        &nx_bin,
+        &repo_base,
+        INFO_JSON_DARWIN_SERVICE_ARGS,
+    )?;
+
+    Ok(())
+}
+
+#[test]
+fn system_query_list_json_snapshot() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+
+    assert_query_json_snapshot(
+        "system_query_list_global_json_flag_renders_json",
+        &nx_bin,
+        &repo_base,
+        LIST_JSON_GLOBAL_ARGS,
+    )
 }

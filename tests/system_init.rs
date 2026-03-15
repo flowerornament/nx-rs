@@ -17,6 +17,7 @@ use support_tree::copy_tree;
 fn run_nx(
     nx_bin: &std::path::Path,
     repo_root: &std::path::Path,
+    home_dir: &std::path::Path,
     args: &[&str],
 ) -> std::process::Output {
     Command::new(nx_bin)
@@ -24,8 +25,10 @@ fn run_nx(
         .args(args)
         .current_dir(repo_root)
         .env("NX_REPO_ROOT", repo_root)
+        .env("HOME", home_dir)
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
+        .env("PYTHONDONTWRITEBYTECODE", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -41,8 +44,9 @@ fn init_creates_valid_manifest() -> Result<(), Box<dyn Error>> {
 
     let tmp = TempDir::new()?;
     copy_tree(&repo_base, tmp.path())?;
+    let home_dir = TempDir::new()?;
 
-    let output = run_nx(&nx_bin, tmp.path(), &["init"]);
+    let output = run_nx(&nx_bin, tmp.path(), home_dir.path(), &["init"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -128,13 +132,14 @@ fn init_refresh_is_idempotent() -> Result<(), Box<dyn Error>> {
 
     let tmp = TempDir::new()?;
     copy_tree(&repo_base, tmp.path())?;
+    let home_dir = TempDir::new()?;
 
-    let out1 = run_nx(&nx_bin, tmp.path(), &["init"]);
+    let out1 = run_nx(&nx_bin, tmp.path(), home_dir.path(), &["init"]);
     assert_eq!(out1.status.code().unwrap_or(-1), 0, "first init failed");
 
     let manifest1 = fs::read(tmp.path().join(".nx/manifest.toml"))?;
 
-    let out2 = run_nx(&nx_bin, tmp.path(), &["init", "--refresh"]);
+    let out2 = run_nx(&nx_bin, tmp.path(), home_dir.path(), &["init", "--refresh"]);
     let stdout2 = String::from_utf8_lossy(&out2.stdout);
     let stderr2 = String::from_utf8_lossy(&out2.stderr);
     assert_eq!(
@@ -157,8 +162,9 @@ fn list_parity_with_manifest() -> Result<(), Box<dyn Error>> {
 
     let tmp = TempDir::new()?;
     copy_tree(&repo_base, tmp.path())?;
+    let home_dir = TempDir::new()?;
 
-    let list_before = run_nx(&nx_bin, tmp.path(), &["--json", "list"]);
+    let list_before = run_nx(&nx_bin, tmp.path(), home_dir.path(), &["--json", "list"]);
     assert_eq!(
         list_before.status.code().unwrap_or(-1),
         0,
@@ -166,7 +172,7 @@ fn list_parity_with_manifest() -> Result<(), Box<dyn Error>> {
         String::from_utf8_lossy(&list_before.stderr)
     );
 
-    let init_out = run_nx(&nx_bin, tmp.path(), &["init"]);
+    let init_out = run_nx(&nx_bin, tmp.path(), home_dir.path(), &["init"]);
     assert_eq!(
         init_out.status.code().unwrap_or(-1),
         0,
@@ -174,7 +180,7 @@ fn list_parity_with_manifest() -> Result<(), Box<dyn Error>> {
         String::from_utf8_lossy(&init_out.stderr)
     );
 
-    let list_after = run_nx(&nx_bin, tmp.path(), &["--json", "list"]);
+    let list_after = run_nx(&nx_bin, tmp.path(), home_dir.path(), &["--json", "list"]);
     assert_eq!(
         list_after.status.code().unwrap_or(-1),
         0,

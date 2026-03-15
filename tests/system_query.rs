@@ -5,6 +5,7 @@ mod support_stubs;
 #[path = "support/tree.rs"]
 mod support_tree;
 
+use std::cmp::Reverse;
 use std::env;
 use std::error::Error;
 use std::fs;
@@ -49,11 +50,16 @@ struct QueryCase {
     stdout_contains: &'static [&'static str],
 }
 
+struct QueryRun {
+    output: std::process::Output,
+    repo_root_candidates: Vec<String>,
+}
+
 fn run_query_command(
     nx_bin: &std::path::Path,
     repo_base: &std::path::Path,
     args: &[&str],
-) -> Result<std::process::Output, Box<dyn Error>> {
+) -> Result<QueryRun, Box<dyn Error>> {
     let tmp = TempDir::new()?;
     copy_tree(repo_base, tmp.path())?;
     let stub_dir = tmp.path().join(STUB_DIR_NAME);
@@ -79,7 +85,10 @@ fn run_query_command(
         .output()
         .expect("failed to execute nx binary");
 
-    Ok(output)
+    Ok(QueryRun {
+        output,
+        repo_root_candidates: repo_root_candidates(tmp.path()),
+    })
 }
 
 fn run_query_case(
@@ -88,12 +97,12 @@ fn run_query_case(
     repo_base: &std::path::Path,
     case: &QueryCase,
 ) -> Result<(), Box<dyn Error>> {
-    let output = run_query_command(nx_bin, repo_base, case.args)?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let run = run_query_command(nx_bin, repo_base, case.args)?;
+    let stdout = String::from_utf8_lossy(&run.output.stdout);
+    let stderr = String::from_utf8_lossy(&run.output.stderr);
 
     assert_eq!(
-        output.status.code().unwrap_or(-1),
+        run.output.status.code().unwrap_or(-1),
         case.expected_exit,
         "case {case_name}: unexpected exit code\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
@@ -114,35 +123,107 @@ fn assert_query_json_snapshot(
     repo_base: &std::path::Path,
     args: &[&str],
 ) -> Result<(), Box<dyn Error>> {
-    let output = run_query_command(nx_bin, repo_base, args)?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let run = run_query_command(nx_bin, repo_base, args)?;
+    let stdout = String::from_utf8_lossy(&run.output.stdout);
+    let stderr = String::from_utf8_lossy(&run.output.stderr);
 
     assert_eq!(
-        output.status.code().unwrap_or(-1),
+        run.output.status.code().unwrap_or(-1),
         0,
         "case {snapshot_name}: unexpected exit code\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
 
-    let value = normalize_snapshot_json(serde_json::from_slice(&output.stdout)?);
+    let value = normalize_snapshot_json(
+        serde_json::from_slice(&run.output.stdout)?,
+        &run.repo_root_candidates,
+    );
     assert_json_snapshot!(snapshot_name, value);
 
     Ok(())
 }
 
-fn normalize_snapshot_json(mut value: Value) -> Value {
+fn normalize_snapshot_json(mut value: Value, repo_root_candidates: &[String]) -> Value {
     let normalized_location = value
         .get("location")
         .and_then(Value::as_str)
-        .and_then(|location| {
-            location
-                .find("packages/")
-                .map(|index| location[index..].to_string())
-        });
+        .map(|location| normalize_repo_relative(location, repo_root_candidates));
     if let Some(location) = normalized_location {
         value["location"] = Value::String(location);
     }
     value
+}
+
+fn normalize_repo_relative(path: &str, repo_root_candidates: &[String]) -> String {
+    repo_root_candidates
+        .iter()
+        .find_map(|candidate| path.strip_prefix(candidate))
+        .map_or_else(
+            || path.to_string(),
+            |relative| relative.trim_start_matches('/').to_string(),
+        )
+}
+
+fn repo_root_candidates(repo_root: &std::path::Path) -> Vec<String> {
+    let mut out = Vec::new();
+    push_candidate(&mut out, repo_root.to_string_lossy().to_string());
+
+    if let Ok(canonical) = fs::canonicalize(repo_root) {
+        push_candidate(&mut out, canonical.to_string_lossy().to_string());
+    }
+
+    let aliases = out
+        .iter()
+        .filter_map(|candidate| private_path_alias(candidate))
+        .collect::<Vec<_>>();
+    for alias in aliases {
+        push_candidate(&mut out, alias);
+    }
+
+    out.sort_by_key(|value| Reverse(value.len()));
+    out
+}
+
+fn private_path_alias(path: &str) -> Option<String> {
+    if let Some(stripped) = path.strip_prefix("/private") {
+        return Some(stripped.to_string());
+    }
+    if path.starts_with("/var/") || path.starts_with("/tmp/") {
+        return Some(format!("/private{path}"));
+    }
+    None
+}
+
+fn push_candidate(out: &mut Vec<String>, value: String) {
+    if !value.is_empty() && !out.contains(&value) {
+        out.push(value);
+    }
+}
+
+#[test]
+fn normalize_snapshot_json_strips_repo_root_from_any_tracked_file() {
+    let candidates = vec!["/tmp/nx-repo".to_string()];
+    let value = serde_json::json!({
+        "location": "/tmp/nx-repo/home/services.nix:7",
+    });
+
+    let normalized = normalize_snapshot_json(value, &candidates);
+
+    assert_eq!(normalized["location"], "home/services.nix:7");
+}
+
+#[test]
+fn normalize_snapshot_json_supports_private_tmp_aliases() {
+    let candidates = vec![
+        "/tmp/nx-repo".to_string(),
+        "/private/tmp/nx-repo".to_string(),
+    ];
+    let value = serde_json::json!({
+        "location": "/private/tmp/nx-repo/system/darwin.nix:11",
+    });
+
+    let normalized = normalize_snapshot_json(value, &candidates);
+
+    assert_eq!(normalized["location"], "system/darwin.nix:11");
 }
 
 #[test]

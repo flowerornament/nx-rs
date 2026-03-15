@@ -1,3 +1,5 @@
 sync:
     mode: dolt-native
 sync-branch: beads-sync
+
+federation.remote: "file:///Users/morgan/.local/share/beads-remotes/nx-rs"

@@ -52,6 +52,7 @@ daemon.pid
 interactions.jsonl
 issues.jsonl
 sync_base.jsonl
+push-state.json
 # NOTE: Do NOT add negation patterns here.
 # They would override fork protection in .git/info/exclude.
 # Config files (metadata.json, config.yaml) are tracked by git by default

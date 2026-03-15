@@ -1,0 +1,397 @@
+#[path = "support/bin.rs"]
+mod support_bin;
+#[path = "support/command_io.rs"]
+mod support_command_io;
+#[path = "support/invocations.rs"]
+mod support_invocations;
+#[path = "support/snapshot.rs"]
+mod support_snapshot;
+#[path = "support/stubs.rs"]
+mod support_stubs;
+#[path = "support/tree.rs"]
+mod support_tree;
+
+use std::env;
+use std::error::Error;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use tempfile::TempDir;
+
+use support_bin::resolve_nx_bin;
+use support_command_io::{ensure_test_layout, run_command_with_optional_stdin};
+use support_invocations::{
+    EXPECTED_CWD_REPO_ROOT, ExpectedCall, REPO_ROOT_TOKEN, assert_invocations, read_invocations,
+};
+use support_snapshot::snapshot_repo_files;
+use support_stubs::{LOG_FILE_NAME, STUB_DIR_NAME, install_stubs, prepend_path};
+use support_tree::copy_tree;
+
+const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
+    "-C",
+    REPO_ROOT_TOKEN,
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "--",
+    "home",
+    "packages",
+    "system",
+    "hosts",
+];
+const REBUILD_FLAKE_ARGS: &[&str] = &["flake", "check", REPO_ROOT_TOKEN];
+const TEST_RUFF_ARGS: &[&str] = &["check", "."];
+const TEST_MYPY_ARGS: &[&str] = &["."];
+const TEST_UNITTEST_ARGS: &[&str] = &["-m", "unittest", "discover", "-s", "scripts/nx/tests"];
+const EXPECTED_CWD_SCRIPTS_NX: &str = "<REPO_ROOT>/scripts/nx";
+
+const UPDATE_PASSTHROUGH_ARGS: &[&str] = &["update", "--", "--commit-lock-file", "foo"];
+const UPDATE_BASE_ARGS: &[&str] = &["update"];
+const TEST_BASE_ARGS: &[&str] = &["test"];
+const REBUILD_PASSTHROUGH_ARGS: &[&str] = &["rebuild", "--", "--show-trace", "foo"];
+const REBUILD_BASE_ARGS: &[&str] = &["rebuild"];
+const UNDO_BASE_ARGS: &[&str] = &["undo"];
+
+const UPDATE_SUCCESS_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
+    "nix",
+    EXPECTED_CWD_REPO_ROOT,
+    &["flake", "update", "--commit-lock-file", "foo"],
+)];
+
+const UPDATE_FAILURE_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
+    "nix",
+    EXPECTED_CWD_REPO_ROOT,
+    &["flake", "update"],
+)];
+
+const TEST_SUCCESS_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("ruff", EXPECTED_CWD_SCRIPTS_NX, TEST_RUFF_ARGS),
+    ExpectedCall::new("mypy", EXPECTED_CWD_SCRIPTS_NX, TEST_MYPY_ARGS),
+    ExpectedCall::new("python3", EXPECTED_CWD_REPO_ROOT, TEST_UNITTEST_ARGS),
+];
+
+const TEST_RUFF_FAIL_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
+    "ruff",
+    EXPECTED_CWD_SCRIPTS_NX,
+    TEST_RUFF_ARGS,
+)];
+
+const TEST_MYPY_FAIL_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("ruff", EXPECTED_CWD_SCRIPTS_NX, TEST_RUFF_ARGS),
+    ExpectedCall::new("mypy", EXPECTED_CWD_SCRIPTS_NX, TEST_MYPY_ARGS),
+];
+
+const TEST_UNITTEST_FAIL_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("ruff", EXPECTED_CWD_SCRIPTS_NX, TEST_RUFF_ARGS),
+    ExpectedCall::new("mypy", EXPECTED_CWD_SCRIPTS_NX, TEST_MYPY_ARGS),
+    ExpectedCall::new("python3", EXPECTED_CWD_REPO_ROOT, TEST_UNITTEST_ARGS),
+];
+
+const REBUILD_SUCCESS_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
+    ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "/run/current-system/sw/bin/darwin-rebuild",
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--show-trace",
+            "foo",
+        ],
+    ),
+    ExpectedCall::new(
+        "darwin-rebuild",
+        EXPECTED_CWD_REPO_ROOT,
+        &["switch", "--flake", REPO_ROOT_TOKEN, "--show-trace", "foo"],
+    ),
+];
+
+const REBUILD_GIT_FAIL_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
+    "git",
+    EXPECTED_CWD_REPO_ROOT,
+    REBUILD_PREFLIGHT_ARGS,
+)];
+
+const REBUILD_UNTRACKED_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
+    "git",
+    EXPECTED_CWD_REPO_ROOT,
+    REBUILD_PREFLIGHT_ARGS,
+)];
+
+const REBUILD_FLAKE_FAIL_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
+];
+
+const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
+    ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "/run/current-system/sw/bin/darwin-rebuild",
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--show-trace",
+            "foo",
+        ],
+    ),
+    ExpectedCall::new(
+        "darwin-rebuild",
+        EXPECTED_CWD_REPO_ROOT,
+        &["switch", "--flake", REPO_ROOT_TOKEN, "--show-trace", "foo"],
+    ),
+];
+
+const UNDO_CLEAN_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
+    "git",
+    EXPECTED_CWD_REPO_ROOT,
+    &["status", "--porcelain"],
+)];
+
+const UNDO_CONFIRMED_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, &["status", "--porcelain"]),
+    ExpectedCall::new(
+        "git",
+        EXPECTED_CWD_REPO_ROOT,
+        &["diff", "--stat", "packages/nix/cli.nix"],
+    ),
+    ExpectedCall::new(
+        "git",
+        EXPECTED_CWD_REPO_ROOT,
+        &["checkout", "--", "packages/nix/cli.nix"],
+    ),
+];
+
+const UNDO_CANCELLED_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, &["status", "--porcelain"]),
+    ExpectedCall::new(
+        "git",
+        EXPECTED_CWD_REPO_ROOT,
+        &["diff", "--stat", "packages/nix/cli.nix"],
+    ),
+];
+
+struct CommandCase {
+    id: &'static str,
+    cli_args: &'static [&'static str],
+    mode: &'static str,
+    expected_exit: i32,
+    expected_calls: &'static [ExpectedCall],
+    stdout_contains: &'static [&'static str],
+}
+
+const COMMAND_CASES: &[CommandCase] = &[
+    CommandCase {
+        id: "undo_clean_noop",
+        cli_args: UNDO_BASE_ARGS,
+        mode: "success",
+        expected_exit: 0,
+        expected_calls: UNDO_CLEAN_CALLS,
+        stdout_contains: &["Nothing to undo."],
+    },
+    CommandCase {
+        id: "undo_dirty_confirmed_reverts",
+        cli_args: UNDO_BASE_ARGS,
+        mode: "undo_dirty",
+        expected_exit: 0,
+        expected_calls: UNDO_CONFIRMED_CALLS,
+        stdout_contains: &["Undo Changes (1 files)", "Reverted 1 files"],
+    },
+    CommandCase {
+        id: "undo_dirty_cancelled_short_circuit",
+        cli_args: UNDO_BASE_ARGS,
+        mode: "undo_dirty",
+        expected_exit: 0,
+        expected_calls: UNDO_CANCELLED_CALLS,
+        stdout_contains: &["Undo Changes (1 files)", "Cancelled."],
+    },
+    CommandCase {
+        id: "update_success_passthrough",
+        cli_args: UPDATE_PASSTHROUGH_ARGS,
+        mode: "success",
+        expected_exit: 0,
+        expected_calls: UPDATE_SUCCESS_CALLS,
+        stdout_contains: &[],
+    },
+    CommandCase {
+        id: "update_failure_exit",
+        cli_args: UPDATE_BASE_ARGS,
+        mode: "update_fail",
+        expected_exit: 1,
+        expected_calls: UPDATE_FAILURE_CALLS,
+        stdout_contains: &[],
+    },
+    CommandCase {
+        id: "test_success_sequence",
+        cli_args: TEST_BASE_ARGS,
+        mode: "success",
+        expected_exit: 0,
+        expected_calls: TEST_SUCCESS_CALLS,
+        stdout_contains: &[],
+    },
+    CommandCase {
+        id: "test_ruff_failure_short_circuit",
+        cli_args: TEST_BASE_ARGS,
+        mode: "ruff_fail",
+        expected_exit: 1,
+        expected_calls: TEST_RUFF_FAIL_CALLS,
+        stdout_contains: &[],
+    },
+    CommandCase {
+        id: "test_mypy_failure_short_circuit",
+        cli_args: TEST_BASE_ARGS,
+        mode: "mypy_fail",
+        expected_exit: 1,
+        expected_calls: TEST_MYPY_FAIL_CALLS,
+        stdout_contains: &[],
+    },
+    CommandCase {
+        id: "test_unittest_failure_exit",
+        cli_args: TEST_BASE_ARGS,
+        mode: "unittest_fail",
+        expected_exit: 1,
+        expected_calls: TEST_UNITTEST_FAIL_CALLS,
+        stdout_contains: &[],
+    },
+    CommandCase {
+        id: "rebuild_success_passthrough",
+        cli_args: REBUILD_PASSTHROUGH_ARGS,
+        mode: "success",
+        expected_exit: 0,
+        expected_calls: REBUILD_SUCCESS_CALLS,
+        stdout_contains: &[],
+    },
+    CommandCase {
+        id: "rebuild_git_preflight_failure_short_circuit",
+        cli_args: REBUILD_BASE_ARGS,
+        mode: "git_preflight_fail",
+        expected_exit: 1,
+        expected_calls: REBUILD_GIT_FAIL_CALLS,
+        stdout_contains: &[],
+    },
+    CommandCase {
+        id: "rebuild_untracked_nix_short_circuit",
+        cli_args: REBUILD_BASE_ARGS,
+        mode: "preflight_untracked",
+        expected_exit: 1,
+        expected_calls: REBUILD_UNTRACKED_CALLS,
+        stdout_contains: &[],
+    },
+    CommandCase {
+        id: "rebuild_flake_check_failure_short_circuit",
+        cli_args: REBUILD_BASE_ARGS,
+        mode: "flake_check_fail",
+        expected_exit: 1,
+        expected_calls: REBUILD_FLAKE_FAIL_CALLS,
+        stdout_contains: &[],
+    },
+    CommandCase {
+        id: "rebuild_darwin_failure_exit",
+        cli_args: REBUILD_PASSTHROUGH_ARGS,
+        mode: "darwin_rebuild_fail",
+        expected_exit: 1,
+        expected_calls: REBUILD_DARWIN_FAIL_CALLS,
+        stdout_contains: &[],
+    },
+];
+
+#[test]
+fn system_command_flows() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+
+    for case in COMMAND_CASES {
+        run_command_case(&nx_bin, &repo_base, case)?;
+    }
+
+    Ok(())
+}
+
+fn run_command_case(
+    nx_bin: &Path,
+    repo_base: &Path,
+    case: &CommandCase,
+) -> Result<(), Box<dyn Error>> {
+    let repo_root = TempDir::new()?;
+    copy_tree(repo_base, repo_root.path())?;
+    ensure_test_layout(repo_root.path())?;
+
+    let stub_dir = repo_root.path().join(STUB_DIR_NAME);
+    fs::create_dir_all(&stub_dir)?;
+    install_stubs(&stub_dir)?;
+
+    let log_path = repo_root.path().join(LOG_FILE_NAME);
+    let before = snapshot_repo_files(repo_root.path(), &should_ignore_snapshot_path)?;
+
+    let home_dir = TempDir::new()?;
+    let mut command = Command::new(nx_bin);
+    command
+        .args(["--plain", "--minimal"])
+        .args(case.cli_args)
+        .current_dir(repo_root.path())
+        .env("NX_REPO_ROOT", repo_root.path())
+        .env("HOME", home_dir.path())
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .env("NX_SYSTEM_IT_LOG", &log_path)
+        .env("NX_SYSTEM_IT_MODE", case.mode)
+        .env(
+            "NX_SYSTEM_IT_DARWIN_REBUILD",
+            stub_dir.join("darwin-rebuild"),
+        )
+        .env("PATH", prepend_path(&stub_dir));
+
+    let output = run_command_with_optional_stdin(&mut command, case_stdin(case.id))?;
+    let after = snapshot_repo_files(repo_root.path(), &should_ignore_snapshot_path)?;
+    let invocations = read_invocations(&log_path)?;
+    let exit_code = output.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(
+        exit_code, case.expected_exit,
+        "case {}: unexpected exit code\nstdout:\n{}\nstderr:\n{}",
+        case.id, stdout, stderr
+    );
+
+    assert_invocations(case.id, repo_root.path(), &invocations, case.expected_calls);
+    for expected in case.stdout_contains {
+        assert!(
+            stdout.contains(expected),
+            "case {}: stdout missing expected fragment '{}'\nstdout:\n{}\nstderr:\n{}",
+            case.id,
+            expected,
+            stdout,
+            stderr
+        );
+    }
+
+    assert_eq!(
+        before, after,
+        "case {} mutated repository files\nstdout:\n{}\nstderr:\n{}",
+        case.id, stdout, stderr
+    );
+
+    Ok(())
+}
+
+fn case_stdin(case_id: &str) -> Option<&'static str> {
+    match case_id {
+        "undo_dirty_confirmed_reverts" => Some("y\n"),
+        "undo_dirty_cancelled_short_circuit" => Some("n\n"),
+        _ => None,
+    }
+}
+
+fn should_ignore_snapshot_path(rel_path: &str) -> bool {
+    rel_path == LOG_FILE_NAME || rel_path == STUB_DIR_NAME || rel_path.starts_with(".system-stubs/")
+}

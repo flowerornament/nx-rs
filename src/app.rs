@@ -14,6 +14,7 @@ use crate::commands::search::cmd_search;
 use crate::commands::secret::cmd_secret;
 use crate::commands::system::{cmd_rebuild, cmd_test, cmd_undo, cmd_update, cmd_upgrade};
 use crate::domain::config::ConfigFiles;
+use crate::domain::drift::ManifestHealth;
 use crate::infra::self_refresh::maybe_refresh_before_system_command;
 use crate::output::printer::Printer;
 use crate::output::style::OutputStyle;
@@ -47,8 +48,18 @@ pub fn execute(cli: Cli) -> i32 {
         }
     };
 
-    let config_files = ConfigFiles::discover_or_manifest(&repo_root);
-    let ctx = AppContext::new(repo_root, printer, config_files, global_flags);
+    let manifest_health = ManifestHealth::load(&repo_root);
+    let config_files = manifest_health.manifest().map_or_else(
+        || ConfigFiles::discover(&repo_root),
+        |manifest| ConfigFiles::from_manifest(manifest, &repo_root),
+    );
+    let ctx = AppContext::new(
+        repo_root,
+        printer,
+        config_files,
+        manifest_health,
+        global_flags,
+    );
 
     match cli.command {
         CommandKind::Help(_) => unreachable!("help handled before repo setup"),

@@ -14,6 +14,9 @@ use super::cmd_rebuild;
 // ─── upgrade ─────────────────────────────────────────────────────────────────
 
 pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
+    if let Err(code) = ctx.require_manifest_write_safe("upgrade") {
+        return code;
+    }
     if args.dry_run() {
         ctx.printer.dry_run_banner();
     }

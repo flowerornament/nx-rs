@@ -9,6 +9,7 @@ use crate::commands::context::AppContext;
 use crate::commands::shared::{
     SnippetMode, missing_argument_error, relative_location, show_snippet,
 };
+use crate::domain::drift::{ManifestHealth, affects_routing, format_issue};
 use crate::domain::location::PackageLocation;
 use crate::domain::source::{
     OVERLAY_PACKAGES, PackageSource, SourcePreferences, SourceResult, normalize_name,
@@ -565,7 +566,49 @@ pub fn cmd_status(ctx: &AppContext) -> i32 {
         Printer::body(&format!("{label:<12} {:>5}  {examples}", packages.len()));
     }
 
+    render_manifest_health(ctx);
     0
+}
+
+fn render_manifest_health(ctx: &AppContext) {
+    println!();
+    Printer::heading("Manifest Health");
+
+    match &ctx.manifest_health {
+        ManifestHealth::Missing => {
+            Printer::body("No manifest detected");
+            Printer::detail("Run: nx init");
+        }
+        ManifestHealth::Invalid(err) => {
+            ctx.printer.warn("Manifest is unreadable");
+            Printer::detail(&format!("Details: {err}"));
+            Printer::detail("Run: nx init --refresh");
+        }
+        ManifestHealth::InSync(_) => {
+            ctx.printer.success("Manifest in sync");
+        }
+        ManifestHealth::Drifted { report, .. } => {
+            ctx.printer.warn(&format!(
+                "Manifest drift detected ({} issue(s))",
+                report.issues.len()
+            ));
+            for issue in report.issues.iter().take(5) {
+                Printer::detail(&format!("- {}", format_issue(issue)));
+            }
+            if report.issues.iter().any(affects_routing) {
+                Printer::detail(
+                    "Write-routing commands are blocked until the manifest is refreshed",
+                );
+            }
+            if report.issues.len() > 5 {
+                Printer::detail(&format!(
+                    "... and {} more issue(s)",
+                    report.issues.len() - 5
+                ));
+            }
+            Printer::detail("Run: nx init --refresh");
+        }
+    }
 }
 
 pub fn cmd_installed(args: &InstalledArgs, ctx: &AppContext) -> i32 {

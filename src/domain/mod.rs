@@ -1,6 +1,8 @@
 pub mod config;
+pub mod drift;
 pub mod location;
 pub mod manifest;
+pub mod manifest_scan;
 pub mod plan;
 pub mod source;
 pub mod upgrade;

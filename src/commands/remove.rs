@@ -23,6 +23,9 @@ pub fn cmd_remove(args: &RemoveArgs, ctx: &AppContext) -> i32 {
     if args.packages.is_empty() {
         return missing_argument_error("remove", "PACKAGES...");
     }
+    if let Err(code) = ctx.require_manifest_write_safe("remove") {
+        return code;
+    }
 
     if args.dry_run {
         ctx.printer.dry_run_banner();

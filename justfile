@@ -93,7 +93,7 @@ test:
 # Run system command integration matrix with deterministic stubs.
 test-system:
     @cargo build --quiet --bin nx
-    @cargo test --test system_command_matrix --test system_init --test system_query --test system_commands --test system_upgrade -- --nocapture
+    @cargo test --test system_command_matrix --test system_init --test system_manifest_drift --test system_query --test system_commands --test system_upgrade -- --nocapture
 
 # Run cargo check across workspace.
 check:

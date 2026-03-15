@@ -32,6 +32,9 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
     if args.packages.is_empty() {
         return missing_argument_error("install", "PACKAGES...");
     }
+    if let Err(code) = ctx.require_manifest_write_safe("install") {
+        return code;
+    }
 
     if args.dry_run() {
         ctx.printer.dry_run_banner();

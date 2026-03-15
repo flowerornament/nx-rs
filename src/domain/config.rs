@@ -97,18 +97,6 @@ impl ConfigFiles {
         }
     }
 
-    /// Auto-detect: load manifest if available, otherwise fall back to discovery.
-    pub fn discover_or_manifest(repo_root: &Path) -> Self {
-        match Manifest::load(repo_root) {
-            Ok(Some(manifest)) => Self::from_manifest(&manifest, repo_root),
-            Ok(None) => Self::discover(repo_root),
-            Err(err) => {
-                eprintln!("warning: failed to load manifest, falling back to discovery: {err:#}");
-                Self::discover(repo_root)
-            }
-        }
-    }
-
     pub fn manifest(&self) -> Option<&Manifest> {
         self.manifest.as_ref()
     }
@@ -547,26 +535,27 @@ mod tests {
     }
 
     #[test]
-    fn discover_or_manifest_uses_manifest_when_present() {
+    fn from_manifest_keeps_manifest_routing_when_present() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
         let manifest = test_manifest();
         manifest.save(root).unwrap();
 
-        let cf = ConfigFiles::discover_or_manifest(root);
+        let loaded = Manifest::load(root).unwrap().unwrap();
+        let cf = ConfigFiles::from_manifest(&loaded, root);
         assert!(cf.manifest().is_some());
         assert_eq!(cf.packages(), root.join("modules/packages.nix"));
     }
 
     #[test]
-    fn discover_or_manifest_falls_back_to_discovery() {
+    fn discover_falls_back_without_manifest() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
         write_nix(root, "packages/nix/cli.nix", "# nx: cli tools\n[]");
 
-        let cf = ConfigFiles::discover_or_manifest(root);
+        let cf = ConfigFiles::discover(root);
         assert!(cf.manifest().is_none());
         assert_eq!(cf.packages(), root.join("packages/nix/cli.nix"));
     }

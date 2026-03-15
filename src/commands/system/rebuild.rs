@@ -10,6 +10,9 @@ use crate::domain::manifest::Manifest;
 use super::DARWIN_REBUILD;
 
 pub fn cmd_rebuild(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
+    if let Err(code) = ctx.require_manifest_write_safe("rebuild") {
+        return code;
+    }
     if let Err(code) = check_git_preflight(ctx) {
         return code;
     }

@@ -51,6 +51,17 @@ fn write_flake_lock(root: &Path) {
     .expect("flake.lock should be written");
 }
 
+fn cache_fixture() -> (TempDir, Option<MultiSourceCache>) {
+    let tmp = TempDir::new().expect("temp dir should be created");
+    let root = tmp.path();
+    write_flake_lock(root);
+    let cache_dir = root.join(".cache/nx");
+    fs::create_dir_all(&cache_dir).expect("cache dir should be created");
+    let cache =
+        Some(MultiSourceCache::load_with_cache_dir(root, &cache_dir).expect("cache should load"));
+    (tmp, cache)
+}
+
 fn package_from_args(args: &InfoArgs) -> &str {
     args.package
         .as_deref()

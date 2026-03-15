@@ -2,9 +2,8 @@ use super::*;
 
 #[test]
 fn service_setup_skips_when_flag_disabled() {
-    let tmp = TempDir::new().expect("temp dir should be created");
+    let tmp = setup_services_root();
     let root = tmp.path();
-    write_nix(root, "home/services.nix", "# nx: services\n{}\n");
     let ctx = test_context(root);
     let args = install_args_template();
 
@@ -22,9 +21,8 @@ fn service_setup_skips_when_flag_disabled() {
 
 #[test]
 fn service_setup_dry_run_reports_without_edit_call() {
-    let tmp = TempDir::new().expect("temp dir should be created");
+    let tmp = setup_services_root();
     let root = tmp.path();
-    write_nix(root, "home/services.nix", "# nx: services\n{}\n");
     let ctx = test_context(root);
     let mut args = install_args_template();
     args.service = true;
@@ -44,9 +42,8 @@ fn service_setup_dry_run_reports_without_edit_call() {
 
 #[test]
 fn service_setup_calls_editor_with_services_target() {
-    let tmp = TempDir::new().expect("temp dir should be created");
+    let tmp = setup_services_root();
     let root = tmp.path();
-    write_nix(root, "home/services.nix", "# nx: services\n{}\n");
     let ctx = test_context(root);
     let mut args = install_args_template();
     args.service = true;

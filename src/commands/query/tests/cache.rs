@@ -2,14 +2,8 @@ use super::*;
 
 #[test]
 fn collect_info_sources_uses_cache_before_search() {
-    let tmp = TempDir::new().expect("temp dir should be created");
+    let (tmp, mut cache) = cache_fixture();
     let root = tmp.path();
-    write_flake_lock(root);
-    let cache_dir = root.join(".cache/nx");
-    fs::create_dir_all(&cache_dir).expect("cache dir should be created");
-
-    let mut cache =
-        Some(MultiSourceCache::load_with_cache_dir(root, &cache_dir).expect("cache should load"));
     cache
         .as_mut()
         .expect("cache should exist")
@@ -42,14 +36,8 @@ fn collect_info_sources_uses_cache_before_search() {
 
 #[test]
 fn collect_info_sources_falls_back_to_search_and_updates_cache() {
-    let tmp = TempDir::new().expect("temp dir should be created");
+    let (tmp, mut cache) = cache_fixture();
     let root = tmp.path();
-    write_flake_lock(root);
-    let cache_dir = root.join(".cache/nx");
-    fs::create_dir_all(&cache_dir).expect("cache dir should be created");
-
-    let mut cache =
-        Some(MultiSourceCache::load_with_cache_dir(root, &cache_dir).expect("cache should load"));
 
     let args = info_args();
     let search_calls = Cell::new(0usize);
@@ -80,14 +68,8 @@ fn collect_info_sources_falls_back_to_search_and_updates_cache() {
 
 #[test]
 fn collect_info_sources_searches_on_cache_miss() {
-    let tmp = TempDir::new().expect("temp dir should be created");
+    let (tmp, mut cache) = cache_fixture();
     let root = tmp.path();
-    write_flake_lock(root);
-    let cache_dir = root.join(".cache/nx");
-    fs::create_dir_all(&cache_dir).expect("cache dir should be created");
-
-    let mut cache =
-        Some(MultiSourceCache::load_with_cache_dir(root, &cache_dir).expect("cache should load"));
     let args = info_args();
     let searches = Cell::new(0usize);
 

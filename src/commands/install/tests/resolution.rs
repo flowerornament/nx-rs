@@ -2,13 +2,8 @@ use super::*;
 
 #[test]
 fn start_install_resolution_completes_when_package_already_installed() {
-    let tmp = TempDir::new().expect("temp dir should be created");
+    let tmp = setup_install_root("{ pkgs, ... }:\n[\n  ripgrep\n]\n");
     let root = tmp.path();
-    write_nix(
-        root,
-        "packages/nix/cli.nix",
-        "{ pkgs, ... }:\n[\n  ripgrep\n]\n",
-    );
     let ctx = test_context(root);
     let args = install_args_template();
     let mut cache = None;
@@ -19,28 +14,15 @@ fn start_install_resolution_completes_when_package_already_installed() {
 
 #[test]
 fn prepare_install_phase_stops_when_flake_input_engine_is_unsupported() {
-    let tmp = TempDir::new().expect("temp dir should be created");
+    let tmp = setup_install_root("{ pkgs, ... }:\n[\n  bat\n]\n");
     let root = tmp.path();
-    write_nix(
-        root,
-        "packages/nix/cli.nix",
-        "{ pkgs, ... }:\n[\n  bat\n]\n",
-    );
     let ctx = test_context(root);
     let args = install_args_template();
     let mut result = source_result("ripgrep", PackageSource::Nxs, Some("ripgrep"));
     result.requires_flake_mod = true;
     result.flake_url = Some("github:nix-community/NUR".to_string());
 
-    let engine = StubEngine {
-        engine_name: "codex",
-        supports_flake: false,
-        run_edit_calls: Arc::new(AtomicUsize::new(0)),
-        run_edit_outcome: CommandOutcome {
-            success: true,
-            output: String::new(),
-        },
-    };
+    let (engine, _) = stub_engine("codex", false, true, "");
 
     let prepared = prepare_install_phase("ripgrep", result, &args, &ctx, &engine, "routing");
     assert!(prepared.is_none());

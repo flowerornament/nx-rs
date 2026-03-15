@@ -60,7 +60,7 @@ fn lookup_names_includes_attr_and_language_bare_name() {
 
 #[test]
 fn find_existing_for_candidates_checks_alternates() {
-    let tmp = TempDir::new().expect("temp dir should be created");
+    let tmp = temp_root();
     let root = tmp.path();
 
     write_nix(

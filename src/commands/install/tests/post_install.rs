@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn post_install_runs_rebuild_when_requested() {
-    let tmp = TempDir::new().expect("temp dir should be created");
+    let tmp = temp_root();
     let ctx = test_context(tmp.path());
     let mut args = install_args_template();
     args.flow.rebuild = true;
@@ -19,7 +19,7 @@ fn post_install_runs_rebuild_when_requested() {
 
 #[test]
 fn post_install_skips_rebuild_without_flag() {
-    let tmp = TempDir::new().expect("temp dir should be created");
+    let tmp = temp_root();
     let ctx = test_context(tmp.path());
     let args = install_args_template();
 
@@ -35,7 +35,7 @@ fn post_install_skips_rebuild_without_flag() {
 
 #[test]
 fn post_install_skips_rebuild_in_dry_run() {
-    let tmp = TempDir::new().expect("temp dir should be created");
+    let tmp = temp_root();
     let ctx = test_context(tmp.path());
     let mut args = install_args_template();
     args.flow.rebuild = true;
@@ -53,7 +53,7 @@ fn post_install_skips_rebuild_in_dry_run() {
 
 #[test]
 fn post_install_skips_rebuild_when_nothing_installed() {
-    let tmp = TempDir::new().expect("temp dir should be created");
+    let tmp = temp_root();
     let ctx = test_context(tmp.path());
     let mut args = install_args_template();
     args.flow.rebuild = true;

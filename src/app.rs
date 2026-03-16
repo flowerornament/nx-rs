@@ -49,7 +49,7 @@ pub fn execute(cli: Cli) -> i32 {
     };
 
     let manifest_health = ManifestHealth::load(&repo_root);
-    let config_files = ConfigFiles::from_manifest(manifest_health.effective_manifest(), &repo_root);
+    let config_files = config_files_for_manifest_health(&repo_root, &manifest_health);
     let ctx = AppContext::new(
         repo_root,
         printer,
@@ -109,10 +109,24 @@ pub fn dirs_home() -> PathBuf {
     env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
 }
 
+fn config_files_for_manifest_health(
+    repo_root: &Path,
+    manifest_health: &ManifestHealth,
+) -> ConfigFiles {
+    manifest_health.routing_manifest().map_or_else(
+        || ConfigFiles::discover(repo_root),
+        |manifest| ConfigFiles::from_manifest(manifest, repo_root),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{detect_repo_root, resolve_repo_root};
+    use super::{config_files_for_manifest_health, detect_repo_root, resolve_repo_root};
+    use crate::domain::drift::{DriftReport, ManifestHealth};
+    use crate::domain::manifest::{Manifest, PlatformConfig, PlatformKind, Slot, SlotKind};
+    use std::collections::HashMap;
     use std::fs;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     #[test]
@@ -162,5 +176,86 @@ mod tests {
         let dir = TempDir::new().expect("temp dir");
         // Temp dirs are typically under /tmp which has no flake.nix ancestors
         assert_eq!(detect_repo_root(dir.path()), None);
+    }
+
+    #[test]
+    fn missing_manifest_uses_discovery_routing() {
+        let tmp = TempDir::new().expect("temp dir");
+        let root = tmp.path();
+        fs::create_dir_all(root.join("packages/homebrew")).expect("create packages dir");
+        fs::write(
+            root.join("packages/homebrew/custom-taps.nix"),
+            "# nx: taps manifest custom\n[]\n",
+        )
+        .expect("write taps file");
+
+        let config = config_files_for_manifest_health(root, &ManifestHealth::Missing);
+
+        assert!(config.manifest().is_none());
+        assert_eq!(
+            config.homebrew_taps(),
+            root.join("packages/homebrew/custom-taps.nix")
+        );
+    }
+
+    #[test]
+    fn invalid_manifest_uses_discovery_routing() {
+        let tmp = TempDir::new().expect("temp dir");
+        let root = tmp.path();
+        fs::create_dir_all(root.join("packages/homebrew")).expect("create packages dir");
+        fs::write(
+            root.join("packages/homebrew/custom-taps.nix"),
+            "# nx: taps manifest custom\n[]\n",
+        )
+        .expect("write taps file");
+
+        let config = config_files_for_manifest_health(
+            root,
+            &ManifestHealth::Invalid {
+                error: "broken toml".to_string(),
+            },
+        );
+
+        assert!(config.manifest().is_none());
+        assert_eq!(
+            config.homebrew_taps(),
+            root.join("packages/homebrew/custom-taps.nix")
+        );
+    }
+
+    #[test]
+    fn drifted_manifest_uses_effective_manifest_routing() {
+        let tmp = TempDir::new().expect("temp dir");
+        let root = tmp.path();
+        let effective_manifest = Manifest {
+            schema_version: 1,
+            platform: PlatformConfig {
+                kind: PlatformKind::Darwin,
+                rebuild_command: "darwin-rebuild".to_string(),
+                sudo: true,
+                flake_root: ".".to_string(),
+            },
+            slots: vec![Slot {
+                kind: SlotKind::NixPackages,
+                file: PathBuf::from("modules/packages.nix"),
+                attr_path: "home.packages".to_string(),
+                tags: vec![],
+                runtime: None,
+                default_for: Some(vec!["install".to_string()]),
+            }],
+            aliases: HashMap::new(),
+            overlays: HashMap::new(),
+        };
+
+        let config = config_files_for_manifest_health(
+            root,
+            &ManifestHealth::Drifted {
+                effective_manifest,
+                report: DriftReport::default(),
+            },
+        );
+
+        assert!(config.manifest().is_some());
+        assert_eq!(config.packages(), root.join("modules/packages.nix"));
     }
 }

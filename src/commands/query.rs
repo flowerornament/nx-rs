@@ -575,11 +575,11 @@ fn render_manifest_health(ctx: &AppContext) {
     Printer::heading("Manifest Health");
 
     match &ctx.manifest_health {
-        ManifestHealth::Missing { .. } => {
+        ManifestHealth::Missing => {
             Printer::body("No manifest detected");
             Printer::detail("Run: nx init");
         }
-        ManifestHealth::Invalid { error, .. } => {
+        ManifestHealth::Invalid { error } => {
             ctx.printer.warn("Manifest is unreadable");
             Printer::detail(&format!("Details: {error}"));
             Printer::detail("Run: nx init --refresh");

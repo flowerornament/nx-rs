@@ -242,7 +242,7 @@ fn rebuild_blocks_when_manifest_is_invalid() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn upgrade_blocks_when_manifest_is_invalid() -> Result<(), Box<dyn Error>> {
+fn upgrade_dry_run_skip_brew_works_when_manifest_is_invalid() -> Result<(), Box<dyn Error>> {
     let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let nx_bin = resolve_nx_bin(&workspace_root)?;
 
@@ -252,7 +252,13 @@ fn upgrade_blocks_when_manifest_is_invalid() -> Result<(), Box<dyn Error>> {
 
     let home_dir = TempDir::new()?;
     let output = Command::new(nx_bin)
-        .args(["--plain", "--minimal", "upgrade", "--dry-run"])
+        .args([
+            "--plain",
+            "--minimal",
+            "upgrade",
+            "--dry-run",
+            "--skip-brew",
+        ])
         .current_dir(tmp.path())
         .env("NX_REPO_ROOT", tmp.path())
         .env("HOME", home_dir.path())
@@ -267,14 +273,13 @@ fn upgrade_blocks_when_manifest_is_invalid() -> Result<(), Box<dyn Error>> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(
         output.status.code().unwrap_or(-1),
-        1,
+        0,
         "unexpected exit code\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    assert!(stderr.contains("Cannot upgrade while .nx/manifest.toml is unreadable"));
-    assert!(
-        stdout
-            .contains("Run: nx init --refresh so custom platform settings can be recovered safely")
-    );
+    assert!(stderr.is_empty(), "stderr should be empty:\n{stderr}");
+    assert!(stdout.contains("All flake inputs up to date"));
+    assert!(stdout.contains("Dry run complete - no changes made"));
+    assert!(!stdout.contains("Cannot upgrade while .nx/manifest.toml is unreadable"));
 
     Ok(())
 }

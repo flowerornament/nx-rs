@@ -26,7 +26,6 @@ impl ConfigFiles {
     /// routing targets. Note: `config_scan::collect_nix_files` intentionally
     /// includes `default.nix` for package/service scanning.
     /// Silently skips files that can't be read.
-    #[allow(dead_code)]
     pub fn discover(repo_root: &Path) -> Self {
         let mut by_purpose = BTreeMap::new();
         let mut all_files = Vec::new();
@@ -228,7 +227,6 @@ impl ConfigFiles {
 }
 
 /// Read the `# nx:` purpose comment from the first line of a file.
-#[allow(dead_code)]
 fn read_nx_comment(path: &Path) -> Option<String> {
     let file = File::open(path).ok()?;
     let mut reader = BufReader::new(file);

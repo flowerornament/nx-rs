@@ -149,3 +149,52 @@ fn build_command_with_ulimit() {
     assert!(result[1].contains("ulimit -n 8192"));
     assert!(result[1].contains("exec nix flake update"));
 }
+
+#[test]
+fn upgrade_manifest_guard_not_required_for_dry_run() {
+    let args = UpgradeArgs {
+        flow: UpgradeFlowArgs {
+            dry_run: true,
+            verbose: false,
+            no_ai: true,
+        },
+        skip: UpgradeSkipArgs::default(),
+        passthrough: Vec::new(),
+    };
+
+    assert!(!upgrade_requires_manifest_system_safety(&args));
+}
+
+#[test]
+fn upgrade_manifest_guard_not_required_when_rebuild_is_skipped() {
+    let args = UpgradeArgs {
+        flow: UpgradeFlowArgs {
+            dry_run: false,
+            verbose: false,
+            no_ai: true,
+        },
+        skip: UpgradeSkipArgs {
+            skip_rebuild: true,
+            skip_commit: false,
+            skip_brew: false,
+        },
+        passthrough: Vec::new(),
+    };
+
+    assert!(!upgrade_requires_manifest_system_safety(&args));
+}
+
+#[test]
+fn upgrade_manifest_guard_required_for_full_upgrade() {
+    let args = UpgradeArgs {
+        flow: UpgradeFlowArgs {
+            dry_run: false,
+            verbose: false,
+            no_ai: true,
+        },
+        skip: UpgradeSkipArgs::default(),
+        passthrough: Vec::new(),
+    };
+
+    assert!(upgrade_requires_manifest_system_safety(&args));
+}

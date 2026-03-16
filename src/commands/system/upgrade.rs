@@ -14,9 +14,6 @@ use super::cmd_rebuild;
 // ─── upgrade ─────────────────────────────────────────────────────────────────
 
 pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
-    if let Err(code) = ctx.require_manifest_system_safe("upgrade") {
-        return code;
-    }
     if args.dry_run() {
         ctx.printer.dry_run_banner();
     }
@@ -39,6 +36,11 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
 
     // Phase 3: Rebuild
     if !args.skip_rebuild() {
+        if upgrade_requires_manifest_system_safety(args)
+            && let Err(code) = ctx.require_manifest_system_safe("upgrade")
+        {
+            return code;
+        }
         let passthrough = PassthroughArgs {
             passthrough: Vec::new(),
         };
@@ -53,6 +55,10 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
     }
 
     0
+}
+
+pub(super) const fn upgrade_requires_manifest_system_safety(args: &UpgradeArgs) -> bool {
+    !args.dry_run() && !args.skip_rebuild()
 }
 
 /// Flake phase: load old lock → update → load new lock → diff → report.

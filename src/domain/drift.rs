@@ -6,12 +6,9 @@ use super::manifest_scan::{ScannedRepo, manifest_from_scan, scan_repo};
 
 #[derive(Debug, Clone)]
 pub enum ManifestHealth {
-    Missing {
-        effective_manifest: Manifest,
-    },
+    Missing,
     Invalid {
         error: String,
-        effective_manifest: Manifest,
     },
     InSync {
         manifest: Manifest,
@@ -38,26 +35,20 @@ impl ManifestHealth {
                     }
                 }
             }
-            Ok(None) => Self::Missing {
-                effective_manifest: manifest_from_scan(scanned, repo_root, None),
-            },
+            Ok(None) => Self::Missing,
             Err(err) => Self::Invalid {
                 error: format!("{err:#}"),
-                effective_manifest: manifest_from_scan(scanned, repo_root, None),
             },
         }
     }
 
-    pub fn effective_manifest(&self) -> &Manifest {
+    pub fn routing_manifest(&self) -> Option<&Manifest> {
         match self {
-            Self::Missing { effective_manifest }
-            | Self::Invalid {
+            Self::InSync { manifest } => Some(manifest),
+            Self::Drifted {
                 effective_manifest, ..
-            }
-            | Self::Drifted {
-                effective_manifest, ..
-            } => effective_manifest,
-            Self::InSync { manifest } => manifest,
+            } => Some(effective_manifest),
+            Self::Missing | Self::Invalid { .. } => None,
         }
     }
 

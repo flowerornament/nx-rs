@@ -51,6 +51,9 @@ log_path="${NX_SYSTEM_IT_LOG:?NX_SYSTEM_IT_LOG must be set}"
 mode="${NX_SYSTEM_IT_MODE:-success}"
 
 printf "%s\t%s" "$program" "$PWD" >> "$log_path"
+if [ "${NIX_CONFIG:-}" != "" ]; then
+  printf "\tENV:NIX_CONFIG=%s" "$NIX_CONFIG" >> "$log_path"
+fi
 for arg in "$@"; do
   printf "\t%s" "$arg" >> "$log_path"
 done

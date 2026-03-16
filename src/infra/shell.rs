@@ -9,6 +9,8 @@ use serde_json::Value;
 
 use crate::output::printer::Printer;
 
+type CommandEnv<'a> = &'a [(&'a str, &'a str)];
+
 pub struct CapturedCommand {
     pub code: i32,
     pub stdout: String,
@@ -43,11 +45,17 @@ pub fn run_captured_command(
     args: &[&str],
     cwd: Option<&Path>,
 ) -> anyhow::Result<CapturedCommand> {
+    run_captured_command_with_env(program, args, cwd, None)
+}
+
+pub fn run_captured_command_with_env(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: Option<CommandEnv<'_>>,
+) -> anyhow::Result<CapturedCommand> {
     let mut command = Command::new(program);
-    command.args(args);
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
+    configure_command(&mut command, args, cwd, env);
 
     let output = command
         .output()
@@ -64,17 +72,23 @@ pub fn run_indented_command(
     program: &str,
     args: &[&str],
     cwd: Option<&Path>,
+    printer: &Printer,
+    indent: &str,
+) -> anyhow::Result<i32> {
+    run_indented_command_with_env(program, args, cwd, None, printer, indent)
+}
+
+pub fn run_indented_command_with_env(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: Option<CommandEnv<'_>>,
     _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<i32> {
     let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
+    configure_command(&mut command, args, cwd, env);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = command
         .spawn()
@@ -114,17 +128,23 @@ pub fn run_indented_command_collecting(
     program: &str,
     args: &[&str],
     cwd: Option<&Path>,
+    printer: &Printer,
+    indent: &str,
+) -> anyhow::Result<(i32, String)> {
+    run_indented_command_collecting_with_env(program, args, cwd, None, printer, indent)
+}
+
+pub fn run_indented_command_collecting_with_env(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: Option<CommandEnv<'_>>,
     _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<(i32, String)> {
     let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
+    configure_command(&mut command, args, cwd, env);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = command
         .spawn()
@@ -162,6 +182,21 @@ pub fn run_indented_command_collecting(
 
     let status = child.wait().context("waiting for child process")?;
     Ok((status.code().unwrap_or(1), collected))
+}
+
+fn configure_command(
+    command: &mut Command,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: Option<CommandEnv<'_>>,
+) {
+    command.args(args);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    if let Some(env) = env {
+        command.envs(env.iter().copied());
+    }
 }
 
 fn spawn_line_reader(

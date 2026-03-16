@@ -12,6 +12,7 @@ pub struct ExpectedCall {
     program: &'static str,
     cwd: &'static str,
     args: &'static [&'static str],
+    env: &'static [(&'static str, &'static str)],
 }
 
 impl ExpectedCall {
@@ -20,7 +21,17 @@ impl ExpectedCall {
         cwd: &'static str,
         args: &'static [&'static str],
     ) -> Self {
-        Self { program, cwd, args }
+        Self {
+            program,
+            cwd,
+            args,
+            env: &[],
+        }
+    }
+
+    #[allow(dead_code)]
+    pub const fn with_env(self, env: &'static [(&'static str, &'static str)]) -> Self {
+        Self { env, ..self }
     }
 }
 
@@ -29,6 +40,7 @@ pub struct Invocation {
     program: String,
     cwd: PathBuf,
     args: Vec<String>,
+    env: Vec<(String, String)>,
 }
 
 pub fn assert_invocations(
@@ -73,6 +85,22 @@ pub fn assert_invocations(
             actual_args, expected_args,
             "case {case_id}: unexpected args at step {index}: {actual_call:?}"
         );
+
+        let actual_env = actual_call
+            .env
+            .iter()
+            .map(|(key, value)| (key.clone(), normalize_value(value, repo_root)))
+            .collect::<Vec<_>>();
+        let expected_env = expected_call
+            .env
+            .iter()
+            .map(|(key, value)| (key.to_string(), (*value).to_string()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            actual_env, expected_env,
+            "case {case_id}: unexpected env at step {index}: {actual_call:?}"
+        );
     }
 }
 
@@ -103,11 +131,22 @@ pub fn read_invocations(path: &Path) -> Result<Vec<Invocation>, Box<dyn Error>> 
             )
         })?;
 
-        let args = parts.map(str::to_string).collect();
+        let mut args = Vec::new();
+        let mut env = Vec::new();
+        for part in parts {
+            if let Some(raw) = part.strip_prefix("ENV:")
+                && let Some((key, value)) = raw.split_once('=')
+            {
+                env.push((key.to_string(), value.to_string()));
+                continue;
+            }
+            args.push(part.to_string());
+        }
         out.push(Invocation {
             program: program.to_string(),
             cwd: PathBuf::from(cwd),
             args,
+            env,
         });
     }
 

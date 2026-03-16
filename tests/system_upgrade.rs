@@ -93,7 +93,7 @@ const UPGRADE_DRY_RUN_BREW_ARGS: &[&str] = &[
 ];
 const GH_AUTH_TOKEN_ARGS: &[&str] = &["auth", "token"];
 const GH_NIXPKGS_COMPARE_ARGS: &[&str] = &["api", "repos/NixOS/nixpkgs/compare/aaaaaaa...bbbbbbb"];
-const UPGRADE_TOKEN_OPTION: &str = "github.com=ghp_system_matrix_token";
+const UPGRADE_NIX_CONFIG: &str = "access-tokens = github.com=ghp_system_matrix_token";
 
 const UPGRADE_FLAKE_LOCK_OLD: &str = r#"{
   "nodes": {
@@ -189,17 +189,8 @@ const UPGRADE_PASSTHROUGH_CALLS: &[ExpectedCall] = &[
 
 const UPGRADE_TOKEN_MODE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new(
-        "nix",
-        EXPECTED_CWD_REPO_ROOT,
-        &[
-            "flake",
-            "update",
-            "--option",
-            "access-tokens",
-            UPGRADE_TOKEN_OPTION,
-        ],
-    ),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"])
+        .with_env(&[("NIX_CONFIG", UPGRADE_NIX_CONFIG)]),
 ];
 
 const UPGRADE_CACHE_RETRY_CALLS: &[ExpectedCall] = &[

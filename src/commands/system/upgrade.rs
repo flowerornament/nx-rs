@@ -5,7 +5,7 @@ use crate::commands::context::AppContext;
 use crate::domain::upgrade::{InputChange, diff_locks, load_flake_lock, short_rev};
 use crate::infra::ai_engine::DEFAULT_CODEX_MODEL;
 use crate::infra::shell::{
-    run_captured_command, run_indented_command, run_indented_command_collecting,
+    run_captured_command, run_indented_command, run_indented_command_collecting_with_env,
 };
 use crate::output::printer::Printer;
 
@@ -759,16 +759,10 @@ pub(super) fn is_cache_corruption(output: &str) -> bool {
 /// Execute `nix flake update` with GitHub token, ulimit raising, and retry.
 fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext) -> bool {
     let token = gh_auth_token();
+    let nix_config = nix_access_tokens_config(&token);
 
     let mut base_args: Vec<String> = vec!["flake".into(), "update".into()];
     base_args.extend(args.passthrough.clone());
-    if !token.is_empty() {
-        base_args.extend([
-            "--option".into(),
-            "access-tokens".into(),
-            format!("github.com={token}"),
-        ]);
-    }
 
     // Proactively raise FD limit to avoid "Too many open files" from libgit2.
     let mut raise_nofile: Option<u32> = Some(8192);
@@ -787,11 +781,14 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext) -> bool {
         } else {
             ("nix", cmd_args.iter().map(String::as_str).collect())
         };
+        let env_pairs = nix_config.as_deref().map(|config| [("NIX_CONFIG", config)]);
+        let env = env_pairs.as_ref().map(<[(&str, &str); 1]>::as_slice);
 
-        let (code, output) = match run_indented_command_collecting(
+        let (code, output) = match run_indented_command_collecting_with_env(
             program,
             &arg_refs,
             Some(&ctx.repo_root),
+            env,
             &ctx.printer,
             "  ",
         ) {
@@ -840,6 +837,10 @@ fn gh_auth_token() -> String {
     run_captured_command("gh", &["auth", "token"], None)
         .map(|cmd| cmd.stdout.trim().to_string())
         .unwrap_or_default()
+}
+
+fn nix_access_tokens_config(token: &str) -> Option<String> {
+    (!token.is_empty()).then(|| format!("access-tokens = github.com={token}"))
 }
 
 /// Clear the nix fetcher cache to fix corruption issues.

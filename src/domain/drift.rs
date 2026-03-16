@@ -2,39 +2,73 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::manifest::{Manifest, PlatformKind};
-use super::manifest_scan::scan_repo;
+use super::manifest_scan::{ScannedRepo, manifest_from_scan, scan_repo};
 
 #[derive(Debug, Clone)]
 pub enum ManifestHealth {
-    Missing,
-    Invalid(String),
-    InSync(Manifest),
-    Drifted {
+    Missing {
+        effective_manifest: Manifest,
+    },
+    Invalid {
+        error: String,
+        effective_manifest: Manifest,
+    },
+    InSync {
         manifest: Manifest,
+    },
+    Drifted {
+        effective_manifest: Manifest,
         report: DriftReport,
     },
 }
 
 impl ManifestHealth {
     pub fn load(repo_root: &Path) -> Self {
+        let scanned = scan_repo(repo_root);
         match Manifest::load(repo_root) {
             Ok(Some(manifest)) => {
-                let report = detect_manifest_drift(repo_root, &manifest);
+                let report = detect_manifest_drift_with_scan(&scanned, repo_root, &manifest);
+                let effective_manifest = manifest_from_scan(scanned, repo_root, Some(&manifest));
                 if report.is_empty() {
-                    Self::InSync(manifest)
+                    Self::InSync { manifest }
                 } else {
-                    Self::Drifted { manifest, report }
+                    Self::Drifted {
+                        effective_manifest,
+                        report,
+                    }
                 }
             }
-            Ok(None) => Self::Missing,
-            Err(err) => Self::Invalid(format!("{err:#}")),
+            Ok(None) => Self::Missing {
+                effective_manifest: manifest_from_scan(scanned, repo_root, None),
+            },
+            Err(err) => Self::Invalid {
+                error: format!("{err:#}"),
+                effective_manifest: manifest_from_scan(scanned, repo_root, None),
+            },
         }
     }
 
-    pub fn manifest(&self) -> Option<&Manifest> {
+    pub fn effective_manifest(&self) -> &Manifest {
         match self {
-            Self::InSync(manifest) | Self::Drifted { manifest, .. } => Some(manifest),
-            Self::Missing | Self::Invalid(_) => None,
+            Self::Missing { effective_manifest }
+            | Self::Invalid {
+                effective_manifest, ..
+            }
+            | Self::Drifted {
+                effective_manifest, ..
+            } => effective_manifest,
+            Self::InSync { manifest } => manifest,
+        }
+    }
+
+    pub fn blocks_system_commands(&self) -> bool {
+        matches!(self, Self::Invalid { .. })
+    }
+
+    pub fn invalid_error(&self) -> Option<&str> {
+        match self {
+            Self::Invalid { error, .. } => Some(error),
+            _ => None,
         }
     }
 }
@@ -86,8 +120,17 @@ pub enum DriftIssue {
     },
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn detect_manifest_drift(repo_root: &Path, manifest: &Manifest) -> DriftReport {
     let scanned = scan_repo(repo_root);
+    detect_manifest_drift_with_scan(&scanned, repo_root, manifest)
+}
+
+fn detect_manifest_drift_with_scan(
+    scanned: &ScannedRepo,
+    repo_root: &Path,
+    manifest: &Manifest,
+) -> DriftReport {
     let mut issues = Vec::new();
 
     if manifest.platform.kind != scanned.platform.kind {

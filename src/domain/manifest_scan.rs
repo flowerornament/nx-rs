@@ -21,7 +21,14 @@ pub fn scan_repo(repo_root: &Path) -> ScannedRepo {
 }
 
 pub fn build_manifest(repo_root: &Path, existing: Option<&Manifest>) -> Manifest {
-    let mut scanned = scan_repo(repo_root);
+    manifest_from_scan(scan_repo(repo_root), repo_root, existing)
+}
+
+pub fn manifest_from_scan(
+    mut scanned: ScannedRepo,
+    repo_root: &Path,
+    existing: Option<&Manifest>,
+) -> Manifest {
     mark_default_install_slot(&mut scanned.slots, repo_root);
 
     if let Some(existing) = existing {
@@ -30,13 +37,24 @@ pub fn build_manifest(repo_root: &Path, existing: Option<&Manifest>) -> Manifest
 
     let aliases = existing.map_or_else(HashMap::new, |m| m.aliases.clone());
     let overlays = existing.map_or_else(HashMap::new, |m| m.overlays.clone());
+    let platform = existing.map_or(scanned.platform.clone(), |manifest| {
+        merge_platform_config(&manifest.platform, &scanned.platform)
+    });
 
     Manifest {
         schema_version: CURRENT_SCHEMA_VERSION,
-        platform: scanned.platform,
+        platform,
         slots: scanned.slots,
         aliases,
         overlays,
+    }
+}
+
+fn merge_platform_config(existing: &PlatformConfig, scanned: &PlatformConfig) -> PlatformConfig {
+    if existing.kind == scanned.kind {
+        existing.clone()
+    } else {
+        scanned.clone()
     }
 }
 
@@ -650,6 +668,46 @@ mod tests {
 
         merge_user_annotations(&mut new_slots, &existing);
         assert_eq!(new_slots[0].runtime, Some("python3".to_string()));
+    }
+
+    #[test]
+    fn manifest_from_scan_preserves_custom_platform_settings_when_kind_matches() {
+        let tmp = TempDir::new().unwrap();
+        write_file(
+            tmp.path(),
+            "packages/cli.nix",
+            "{ pkgs, ... }: { home.packages = with pkgs; [ ripgrep ]; }",
+        );
+
+        let scanned = ScannedRepo {
+            platform: Manifest::default_darwin(),
+            slots: vec![Slot {
+                kind: SlotKind::NixPackages,
+                file: PathBuf::from("packages/cli.nix"),
+                attr_path: "home.packages".to_string(),
+                tags: vec![],
+                runtime: None,
+                default_for: None,
+            }],
+        };
+        let existing = Manifest {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            platform: PlatformConfig {
+                kind: PlatformKind::Darwin,
+                rebuild_command: "custom-rebuild".to_string(),
+                sudo: false,
+                flake_root: "hosts/workstation".to_string(),
+            },
+            slots: Vec::new(),
+            aliases: HashMap::new(),
+            overlays: HashMap::new(),
+        };
+
+        let merged = manifest_from_scan(scanned, tmp.path(), Some(&existing));
+
+        assert_eq!(merged.platform.rebuild_command, "custom-rebuild");
+        assert!(!merged.platform.sudo);
+        assert_eq!(merged.platform.flake_root, "hosts/workstation");
     }
 
     #[test]

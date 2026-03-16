@@ -575,16 +575,16 @@ fn render_manifest_health(ctx: &AppContext) {
     Printer::heading("Manifest Health");
 
     match &ctx.manifest_health {
-        ManifestHealth::Missing => {
+        ManifestHealth::Missing { .. } => {
             Printer::body("No manifest detected");
             Printer::detail("Run: nx init");
         }
-        ManifestHealth::Invalid(err) => {
+        ManifestHealth::Invalid { error, .. } => {
             ctx.printer.warn("Manifest is unreadable");
-            Printer::detail(&format!("Details: {err}"));
+            Printer::detail(&format!("Details: {error}"));
             Printer::detail("Run: nx init --refresh");
         }
-        ManifestHealth::InSync(_) => {
+        ManifestHealth::InSync { .. } => {
             ctx.printer.success("Manifest in sync");
         }
         ManifestHealth::Drifted { report, .. } => {
@@ -597,7 +597,7 @@ fn render_manifest_health(ctx: &AppContext) {
             }
             if report.issues.iter().any(affects_routing) {
                 Printer::detail(
-                    "Write-routing commands are blocked until the manifest is refreshed",
+                    "Using live discovery fallback for routing until the manifest is refreshed",
                 );
             }
             if report.issues.len() > 5 {

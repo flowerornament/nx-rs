@@ -49,10 +49,7 @@ pub fn execute(cli: Cli) -> i32 {
     };
 
     let manifest_health = ManifestHealth::load(&repo_root);
-    let config_files = manifest_health.manifest().map_or_else(
-        || ConfigFiles::discover(&repo_root),
-        |manifest| ConfigFiles::from_manifest(manifest, &repo_root),
-    );
+    let config_files = ConfigFiles::from_manifest(manifest_health.effective_manifest(), &repo_root);
     let ctx = AppContext::new(
         repo_root,
         printer,

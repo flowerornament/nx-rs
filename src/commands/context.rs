@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::domain::config::ConfigFiles;
-use crate::domain::drift::{DriftReport, ManifestHealth, format_issue};
+use crate::domain::drift::ManifestHealth;
 use crate::output::printer::Printer;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -38,36 +38,19 @@ impl AppContext {
         local_json_flag || self.flags.json
     }
 
-    pub fn require_manifest_write_safe(&self, action: &str) -> Result<(), i32> {
-        match &self.manifest_health {
-            ManifestHealth::Invalid(err) => {
+    pub fn require_manifest_system_safe(&self, action: &str) -> Result<(), i32> {
+        if self.manifest_health.blocks_system_commands() {
+            if let Some(err) = self.manifest_health.invalid_error() {
                 self.printer.error(&format!(
                     "Cannot {action} while .nx/manifest.toml is unreadable"
                 ));
                 Printer::detail(&format!("Details: {err}"));
-                Printer::detail("Run: nx init --refresh");
-                Err(1)
             }
-            ManifestHealth::Drifted { report, .. } => {
-                self.printer
-                    .error(&format!("Cannot {action} while manifest drift is detected"));
-                render_drift_hint(report);
-                Err(1)
-            }
-            ManifestHealth::Missing | ManifestHealth::InSync(_) => Ok(()),
+            Printer::detail(
+                "Run: nx init --refresh so custom platform settings can be recovered safely",
+            );
+            return Err(1);
         }
+        Ok(())
     }
-}
-
-fn render_drift_hint(report: &DriftReport) {
-    for issue in report.issues.iter().take(3) {
-        Printer::detail(&format!("- {}", format_issue(issue)));
-    }
-    if report.issues.len() > 3 {
-        Printer::detail(&format!(
-            "... and {} more issue(s)",
-            report.issues.len() - 3
-        ));
-    }
-    Printer::detail("Run: nx init --refresh");
 }

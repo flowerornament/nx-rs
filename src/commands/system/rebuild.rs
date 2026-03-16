@@ -10,7 +10,7 @@ use crate::domain::manifest::Manifest;
 use super::DARWIN_REBUILD;
 
 pub fn cmd_rebuild(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
-    if let Err(code) = ctx.require_manifest_write_safe("rebuild") {
+    if let Err(code) = ctx.require_manifest_system_safe("rebuild") {
         return code;
     }
     if let Err(code) = check_git_preflight(ctx) {
@@ -44,7 +44,7 @@ fn check_git_preflight(ctx: &AppContext) -> Result<(), i32> {
 
     // Derive directories from manifest slots when available, fall back to hardcoded list.
     let slot_dirs = ctx.config_files.manifest().map(|m| {
-        let mut dirs: Vec<String> = m
+        let mut extras: Vec<String> = m
             .slots
             .iter()
             .filter(|s| s.file.components().count() > 1)
@@ -55,11 +55,20 @@ fn check_git_preflight(ctx: &AppContext) -> Result<(), i32> {
                     .and_then(|c| c.as_os_str().to_str())
                     .map(str::to_string)
             })
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
             .collect();
-        dirs.sort();
-        dirs
+        extras.sort();
+        extras.dedup();
+
+        let mut out: Vec<String> = ["home", "packages", "system", "hosts"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        for dir in extras {
+            if !out.contains(&dir) {
+                out.push(dir);
+            }
+        }
+        out
     });
     let default_dirs = ["home", "packages", "system", "hosts"];
     let dir_refs: Vec<&str> = slot_dirs.as_ref().map_or_else(

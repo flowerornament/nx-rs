@@ -10,6 +10,7 @@ use tempfile::TempDir;
 use crate::commands::context::GlobalFlags;
 use crate::domain::config::ConfigFiles;
 use crate::domain::drift::ManifestHealth;
+use crate::domain::manifest_scan::build_manifest;
 use crate::domain::source::PackageSource;
 use crate::infra::ai_engine::RouteDecision;
 use crate::output::printer::Printer;
@@ -70,7 +71,9 @@ fn test_context(root: &Path) -> AppContext {
         root.to_path_buf(),
         Printer::new(OutputStyle::from_flags(true, false, false)),
         ConfigFiles::discover(root),
-        ManifestHealth::Missing,
+        ManifestHealth::Missing {
+            effective_manifest: build_manifest(root, None),
+        },
         GlobalFlags::default(),
     )
 }

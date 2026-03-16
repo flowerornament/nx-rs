@@ -20,12 +20,12 @@ pub enum ManifestHealth {
 }
 
 impl ManifestHealth {
-    pub fn load(repo_root: &Path) -> Self {
-        let scanned = scan_repo(repo_root);
+    pub fn from_scan(scanned: &ScannedRepo, repo_root: &Path) -> Self {
         match Manifest::load(repo_root) {
             Ok(Some(manifest)) => {
-                let report = detect_manifest_drift_with_scan(&scanned, repo_root, &manifest);
-                let effective_manifest = manifest_from_scan(scanned, repo_root, Some(&manifest));
+                let report = detect_manifest_drift_with_scan(scanned, repo_root, &manifest);
+                let effective_manifest =
+                    manifest_from_scan(scanned.clone(), repo_root, Some(&manifest));
                 if report.is_empty() {
                     Self::InSync { manifest }
                 } else {
@@ -371,5 +371,27 @@ mod tests {
         let report = detect_manifest_drift(tmp.path(), &manifest);
 
         assert!(report.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn manifest_health_from_scan_reports_missing_without_manifest() {
+        let tmp = TempDir::new().unwrap();
+        write_file(
+            tmp.path(),
+            "flake.nix",
+            "{ outputs = { self, nix-darwin, ... }: { darwinConfigurations.host = {}; }; }",
+        );
+        write_file(
+            tmp.path(),
+            "packages/cli.nix",
+            "{ pkgs, ... }: { home.packages = with pkgs; [ ripgrep ]; }",
+        );
+
+        let scanned = scan_repo(tmp.path());
+
+        assert!(matches!(
+            ManifestHealth::from_scan(&scanned, tmp.path()),
+            ManifestHealth::Missing
+        ));
     }
 }

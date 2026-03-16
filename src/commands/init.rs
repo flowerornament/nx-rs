@@ -1,6 +1,6 @@
 use crate::commands::context::AppContext;
 use crate::domain::manifest::{Manifest, SlotKind};
-use crate::domain::manifest_scan::build_manifest;
+use crate::domain::manifest_scan::manifest_from_scan;
 use crate::output::printer::Printer;
 
 pub fn cmd_init(refresh: bool, ctx: &AppContext) -> i32 {
@@ -23,7 +23,7 @@ pub fn cmd_init(refresh: bool, ctx: &AppContext) -> i32 {
         None
     };
 
-    let manifest = build_manifest(&ctx.repo_root, existing.as_ref());
+    let manifest = manifest_from_scan(ctx.scanned_repo.clone(), &ctx.repo_root, existing.as_ref());
 
     print_summary(&manifest, &ctx.printer);
 

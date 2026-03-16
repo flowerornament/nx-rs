@@ -15,6 +15,7 @@ use crate::commands::secret::cmd_secret;
 use crate::commands::system::{cmd_rebuild, cmd_test, cmd_undo, cmd_update, cmd_upgrade};
 use crate::domain::config::ConfigFiles;
 use crate::domain::drift::ManifestHealth;
+use crate::domain::manifest_scan::scan_repo;
 use crate::infra::self_refresh::maybe_refresh_before_system_command;
 use crate::output::printer::Printer;
 use crate::output::style::OutputStyle;
@@ -48,13 +49,15 @@ pub fn execute(cli: Cli) -> i32 {
         }
     };
 
-    let manifest_health = ManifestHealth::load(&repo_root);
+    let scanned_repo = scan_repo(&repo_root);
+    let manifest_health = ManifestHealth::from_scan(&scanned_repo, &repo_root);
     let config_files = config_files_for_manifest_health(&repo_root, &manifest_health);
     let ctx = AppContext::new(
         repo_root,
         printer,
         config_files,
         manifest_health,
+        scanned_repo,
         global_flags,
     );
 

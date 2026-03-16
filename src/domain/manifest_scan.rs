@@ -20,10 +20,6 @@ pub fn scan_repo(repo_root: &Path) -> ScannedRepo {
     ScannedRepo { platform, slots }
 }
 
-pub fn build_manifest(repo_root: &Path, existing: Option<&Manifest>) -> Manifest {
-    manifest_from_scan(scan_repo(repo_root), repo_root, existing)
-}
-
 pub fn manifest_from_scan(
     mut scanned: ScannedRepo,
     repo_root: &Path,

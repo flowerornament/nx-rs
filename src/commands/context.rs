@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crate::domain::config::ConfigFiles;
 use crate::domain::drift::ManifestHealth;
+use crate::domain::manifest_scan::ScannedRepo;
 use crate::output::printer::Printer;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -14,6 +15,7 @@ pub struct AppContext {
     pub printer: Printer,
     pub config_files: ConfigFiles,
     pub manifest_health: ManifestHealth,
+    pub scanned_repo: ScannedRepo,
     pub flags: GlobalFlags,
 }
 
@@ -23,6 +25,7 @@ impl AppContext {
         printer: Printer,
         config_files: ConfigFiles,
         manifest_health: ManifestHealth,
+        scanned_repo: ScannedRepo,
         flags: GlobalFlags,
     ) -> Self {
         Self {
@@ -30,6 +33,7 @@ impl AppContext {
             printer,
             config_files,
             manifest_health,
+            scanned_repo,
             flags,
         }
     }

@@ -26,7 +26,7 @@ Primary priorities:
 ## Key Documents
 
 - Behavior contract: `.agents/SPEC.md`
-- Legacy context repo: configure via `NX_REPO_ROOT`
+- Managed repo root override: `NX_REPO_ROOT`
 
 ## Toolchain And Workflow
 

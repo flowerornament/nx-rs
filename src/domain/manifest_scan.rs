@@ -174,12 +174,7 @@ fn scan_expr_for_slots(node: &rnix::SyntaxNode, rel_path: &Path, slots: &mut Vec
                 _ => {}
             }
 
-            if segments_str.len() >= 3
-                && matches!(
-                    segments_str[..2],
-                    ["launchd", "agents" | "daemons"] | ["services", _] | ["systemd", "services"]
-                )
-            {
+            if is_service_slot_attrpath(&segments_str) {
                 slots.push(Slot {
                     kind: SlotKind::Services,
                     file: rel_path.to_path_buf(),
@@ -204,6 +199,13 @@ fn scan_expr_for_slots(node: &rnix::SyntaxNode, rel_path: &Path, slots: &mut Vec
             });
         }
     }
+}
+
+fn is_service_slot_attrpath(segments: &[&str]) -> bool {
+    matches!(
+        segments,
+        ["launchd", "agents", ..] | ["launchd", "user", "agents", ..]
+    )
 }
 
 fn detect_with_packages(apply: &ast::Apply) -> Option<(String, String)> {
@@ -501,6 +503,57 @@ mod tests {
 
         let slots = scan_repo_slots(tmp.path());
         assert!(slots.iter().any(|slot| slot.kind == SlotKind::Services));
+    }
+
+    #[test]
+    fn scan_finds_launchd_user_services() {
+        let tmp = TempDir::new().unwrap();
+        write_file(
+            tmp.path(),
+            "home/services.nix",
+            r"{ ... }: {
+  launchd.user.agents.syncthing = {
+    config = {};
+  };
+}",
+        );
+
+        let slots = scan_repo_slots(tmp.path());
+        assert!(slots.iter().any(|slot| {
+            slot.kind == SlotKind::Services && slot.attr_path == "launchd.user.agents.syncthing"
+        }));
+    }
+
+    #[test]
+    fn scan_ignores_generic_services_attrpaths() {
+        let tmp = TempDir::new().unwrap();
+        write_file(
+            tmp.path(),
+            "system/darwin.nix",
+            r"{ ... }: {
+  services.yabai.enable = true;
+}",
+        );
+
+        let slots = scan_repo_slots(tmp.path());
+        assert!(!slots.iter().any(|slot| slot.kind == SlotKind::Services));
+    }
+
+    #[test]
+    fn scan_ignores_systemd_service_attrpaths() {
+        let tmp = TempDir::new().unwrap();
+        write_file(
+            tmp.path(),
+            "hosts/workstation.nix",
+            r#"{ ... }: {
+  systemd.services.demo = {
+    wantedBy = [ "multi-user.target" ];
+  };
+}"#,
+        );
+
+        let slots = scan_repo_slots(tmp.path());
+        assert!(!slots.iter().any(|slot| slot.kind == SlotKind::Services));
     }
 
     #[test]

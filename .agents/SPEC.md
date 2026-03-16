@@ -1,26 +1,23 @@
-# nx Behavior Specification (Python Reference)
+# nx Behavior Specification
 
-Status: Final v1.0
-Date: 2026-02-16
-Scope: Defines observable behavior of `~/code/nx-python` as migration target for Rust.
-Reconciled against: fixture coverage, Python source audit, and production validation.
+Status: Final v1.1
+Date: 2026-03-16
+Scope: Defines the observable behavior contract for `nx-rs`.
+Historical parity notes from earlier `nx` implementations are informative only when this
+document explicitly preserves them; deprecated implementations are not a maintenance dependency.
+Reconciled against: repository test coverage, source audit, and production validation.
 
 ## 1. Source Of Truth
 
-This spec is derived from:
+This spec is maintained for `nx-rs`.
 
-- CLI wiring and command implementations in:
-  - `~/code/nx-python/cli.py`
-  - `~/code/nx-python/commands.py`
-  - `~/code/nx-python/search.py`
-  - `~/code/nx-python/sources.py`
-  - `~/code/nx-python/config.py`
-  - `~/code/nx-python/finder.py`
-  - `~/code/nx-python/cache.py`
-  - `~/code/nx-python/upgrade/*.py`
-- Behavior asserted in `~/code/nx-python/tests/`.
+Source inputs used to shape it include:
 
-When implementation and this document disagree, tests are considered normative.
+- behavior asserted in this repository's tests
+- current `nx-rs` source behavior where it is intentionally documented here
+- audited historical `nx` behavior only where parity is still an explicit goal
+
+When implementation and this document disagree, this repository's tests are considered normative.
 
 ## 2. CLI Surface Contract
 
@@ -144,6 +141,8 @@ Note: the finder (Section 4) independently collects all `.nix` files in the same
 - Searches parsed index hints first, then regex scan.
 - Returns `file_path:line` or `None`.
 - Must avoid false positives from alias assignments like `vim = "nvim";`.
+- Location matching may resolve module-style entries such as `programs.<name>`,
+  `services.<name>`, and `launchd.(user.)agents.<name>` when those are present in managed config.
 
 ## 4.2 `find_all_packages()`
 
@@ -162,6 +161,10 @@ Parsing targets include:
 - `homebrew.casks`, dedicated `casks.nix`
 - `homebrew.masApps`
 - `launchd.agents.*` and `launchd.user.agents.*`
+
+Note: this bucket scan intentionally stays narrower than `find_package(name)`.
+Generic `services.<name>` and `systemd.services.<name>` attrpaths are not counted in the
+`services` source bucket.
 
 ## 4.3 Finder Index Performance Contract
 

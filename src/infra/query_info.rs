@@ -8,7 +8,7 @@ use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::domain::repo_scan::{ManagedNixScanPolicy, collect_managed_nix_files};
+use crate::domain::repo_scan::{NixFileScanPolicy, collect_managed_nix_files};
 use crate::domain::source::normalize_name;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -266,7 +266,7 @@ fn option_enabled(path: &str, repo_root: &Path) -> bool {
         return false;
     };
 
-    collect_managed_nix_files(repo_root, ManagedNixScanPolicy::all_files())
+    collect_managed_nix_files(repo_root, NixFileScanPolicy::all_files())
         .into_iter()
         .any(|nix_file| {
             fs::read_to_string(&nix_file)

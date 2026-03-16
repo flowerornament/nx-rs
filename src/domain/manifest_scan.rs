@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rnix::ast;
 use rowan::ast::AstNode;
-use walkdir::WalkDir;
 
 use super::manifest::{CURRENT_SCHEMA_VERSION, Manifest, PlatformConfig, Slot, SlotKind};
+use super::repo_scan::{NixFileScanPolicy, collect_repo_nix_files};
 
 #[derive(Debug, Clone)]
 pub struct ScannedRepo {
@@ -85,7 +85,7 @@ fn detect_platform(repo_root: &Path) -> Option<PlatformConfig> {
 fn scan_repo_slots(repo_root: &Path) -> Vec<Slot> {
     let mut slots = Vec::new();
 
-    for nix_file in collect_all_nix_files(repo_root) {
+    for nix_file in collect_repo_nix_files(repo_root, NixFileScanPolicy::for_repo_manifest_scan()) {
         let Ok(content) = fs::read_to_string(&nix_file) else {
             eprintln!(
                 "warning: could not read {}",
@@ -284,34 +284,6 @@ fn find_attrpath_value_recursive(
     None
 }
 
-fn collect_all_nix_files(repo_root: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    for entry in WalkDir::new(repo_root)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_map(Result::ok)
-    {
-        let path = entry.path();
-        let rel = path.strip_prefix(repo_root).unwrap_or(path);
-        if rel
-            .components()
-            .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
-        {
-            continue;
-        }
-
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        if path.extension().and_then(|e| e.to_str()) != Some("nix") {
-            continue;
-        }
-        files.push(path.to_path_buf());
-    }
-    files.sort();
-    files
-}
-
 fn mark_default_install_slot(slots: &mut [Slot], repo_root: &Path) {
     if slots
         .iter()
@@ -368,6 +340,7 @@ fn merge_user_annotations(new_slots: &mut [Slot], existing_slots: &[Slot]) {
 mod tests {
     use super::*;
     use crate::domain::manifest::PlatformKind;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     fn write_file(root: &Path, rel_path: &str, content: &str) {
@@ -566,7 +539,7 @@ mod tests {
             r"{ pkgs, ... }: { home.packages = with pkgs; [ ripgrep ]; }",
         );
 
-        let files = collect_all_nix_files(tmp.path());
+        let files = collect_repo_nix_files(tmp.path(), NixFileScanPolicy::for_repo_manifest_scan());
         assert!(
             files
                 .iter()

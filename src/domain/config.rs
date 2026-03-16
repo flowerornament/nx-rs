@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use super::manifest::{Manifest, SlotKind};
-use super::repo_scan::{ManagedNixScanPolicy, collect_managed_nix_files};
+use super::repo_scan::{NixFileScanPolicy, collect_managed_nix_files};
 
 /// Purpose-based routing to `.nix` config files.
 ///
@@ -28,7 +28,7 @@ impl ConfigFiles {
     pub fn discover(repo_root: &Path) -> Self {
         let mut by_purpose = BTreeMap::new();
         let all_files =
-            collect_managed_nix_files(repo_root, ManagedNixScanPolicy::for_config_routing());
+            collect_managed_nix_files(repo_root, NixFileScanPolicy::for_config_routing());
 
         for path in &all_files {
             if let Some(purpose) = read_nx_comment(path) {

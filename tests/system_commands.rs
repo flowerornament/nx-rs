@@ -41,10 +41,7 @@ const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
     "hosts",
 ];
 const REBUILD_FLAKE_ARGS: &[&str] = &["flake", "check", REPO_ROOT_TOKEN];
-const TEST_RUFF_ARGS: &[&str] = &["check", "."];
-const TEST_MYPY_ARGS: &[&str] = &["."];
-const TEST_UNITTEST_ARGS: &[&str] = &["-m", "unittest", "discover", "-s", "scripts/nx/tests"];
-const EXPECTED_CWD_SCRIPTS_NX: &str = "<REPO_ROOT>/scripts/nx";
+const TEST_CI_ARGS: &[&str] = &["ci"];
 
 const UPDATE_PASSTHROUGH_ARGS: &[&str] = &["update", "--", "--commit-lock-file", "foo"];
 const UPDATE_BASE_ARGS: &[&str] = &["update"];
@@ -65,28 +62,17 @@ const UPDATE_FAILURE_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
     &["flake", "update"],
 )];
 
-const TEST_SUCCESS_CALLS: &[ExpectedCall] = &[
-    ExpectedCall::new("ruff", EXPECTED_CWD_SCRIPTS_NX, TEST_RUFF_ARGS),
-    ExpectedCall::new("mypy", EXPECTED_CWD_SCRIPTS_NX, TEST_MYPY_ARGS),
-    ExpectedCall::new("python3", EXPECTED_CWD_REPO_ROOT, TEST_UNITTEST_ARGS),
-];
-
-const TEST_RUFF_FAIL_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
-    "ruff",
-    EXPECTED_CWD_SCRIPTS_NX,
-    TEST_RUFF_ARGS,
+const TEST_SUCCESS_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
+    "just",
+    EXPECTED_CWD_REPO_ROOT,
+    TEST_CI_ARGS,
 )];
 
-const TEST_MYPY_FAIL_CALLS: &[ExpectedCall] = &[
-    ExpectedCall::new("ruff", EXPECTED_CWD_SCRIPTS_NX, TEST_RUFF_ARGS),
-    ExpectedCall::new("mypy", EXPECTED_CWD_SCRIPTS_NX, TEST_MYPY_ARGS),
-];
-
-const TEST_UNITTEST_FAIL_CALLS: &[ExpectedCall] = &[
-    ExpectedCall::new("ruff", EXPECTED_CWD_SCRIPTS_NX, TEST_RUFF_ARGS),
-    ExpectedCall::new("mypy", EXPECTED_CWD_SCRIPTS_NX, TEST_MYPY_ARGS),
-    ExpectedCall::new("python3", EXPECTED_CWD_REPO_ROOT, TEST_UNITTEST_ARGS),
-];
+const TEST_FAILURE_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
+    "just",
+    EXPECTED_CWD_REPO_ROOT,
+    TEST_CI_ARGS,
+)];
 
 const REBUILD_SUCCESS_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
@@ -237,27 +223,11 @@ const COMMAND_CASES: &[CommandCase] = &[
         stdout_contains: &[],
     },
     CommandCase {
-        id: "test_ruff_failure_short_circuit",
+        id: "test_ci_failure_exit",
         cli_args: TEST_BASE_ARGS,
-        mode: "ruff_fail",
+        mode: "just_fail",
         expected_exit: 1,
-        expected_calls: TEST_RUFF_FAIL_CALLS,
-        stdout_contains: &[],
-    },
-    CommandCase {
-        id: "test_mypy_failure_short_circuit",
-        cli_args: TEST_BASE_ARGS,
-        mode: "mypy_fail",
-        expected_exit: 1,
-        expected_calls: TEST_MYPY_FAIL_CALLS,
-        stdout_contains: &[],
-    },
-    CommandCase {
-        id: "test_unittest_failure_exit",
-        cli_args: TEST_BASE_ARGS,
-        mode: "unittest_fail",
-        expected_exit: 1,
-        expected_calls: TEST_UNITTEST_FAIL_CALLS,
+        expected_calls: TEST_FAILURE_CALLS,
         stdout_contains: &[],
     },
     CommandCase {

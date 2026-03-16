@@ -19,17 +19,7 @@ pub fn prepend_path(stub_dir: &Path) -> String {
 }
 
 pub fn install_stubs(stub_dir: &Path) -> Result<(), Box<dyn Error>> {
-    for program in [
-        "git",
-        "nix",
-        "gh",
-        "brew",
-        "sudo",
-        "ruff",
-        "mypy",
-        "python3",
-        "darwin-rebuild",
-    ] {
+    for program in ["git", "nix", "gh", "brew", "just", "sudo", "darwin-rebuild"] {
         write_executable(&stub_dir.join(program), STUB_SCRIPT)?;
     }
     Ok(())
@@ -200,21 +190,17 @@ case "$program" in
     echo "stub sudo $*"
     exit 0
     ;;
-  ruff)
-    if [ "$mode" = "ruff_fail" ]; then
-      echo "stub ruff failed" >&2
-      exit 1
+  just)
+    if [ "${1:-}" = "ci" ]; then
+      if [ "$mode" = "just_fail" ]; then
+        echo "stub just ci failed" >&2
+        exit 1
+      fi
+      echo "stub just ci ok"
+      exit 0
     fi
-    echo "stub ruff ok"
-    exit 0
-    ;;
-  mypy)
-    if [ "$mode" = "mypy_fail" ]; then
-      echo "stub mypy failed" >&2
-      exit 1
-    fi
-    echo "stub mypy ok"
-    exit 0
+    echo "stub just unsupported: $*" >&2
+    exit 1
     ;;
   python3)
     if [ "$mode" = "unittest_fail" ]; then

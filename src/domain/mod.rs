@@ -4,5 +4,6 @@ pub mod location;
 pub mod manifest;
 pub mod manifest_scan;
 pub mod plan;
+pub(crate) mod repo_scan;
 pub mod source;
 pub mod upgrade;

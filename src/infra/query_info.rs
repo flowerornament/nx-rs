@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
-use walkdir::WalkDir;
 
+use crate::domain::repo_scan::{ManagedNixScanPolicy, collect_managed_nix_files};
 use crate::domain::source::normalize_name;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -266,33 +266,13 @@ fn option_enabled(path: &str, repo_root: &Path) -> bool {
         return false;
     };
 
-    collect_nix_files(repo_root).into_iter().any(|nix_file| {
-        fs::read_to_string(&nix_file)
-            .ok()
-            .is_some_and(|content| enabled_re.is_match(&content))
-    })
-}
-
-fn collect_nix_files(repo_root: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    for dir_name in ["home", "system", "hosts", "packages"] {
-        let dir = repo_root.join(dir_name);
-        if !dir.exists() {
-            continue;
-        }
-        for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("nix") {
-                continue;
-            }
-            out.push(path.to_path_buf());
-        }
-    }
-    out.sort();
-    out
+    collect_managed_nix_files(repo_root, ManagedNixScanPolicy::all_files())
+        .into_iter()
+        .any(|nix_file| {
+            fs::read_to_string(&nix_file)
+                .ok()
+                .is_some_and(|content| enabled_re.is_match(&content))
+        })
 }
 
 fn search_flakehub_with<F>(name: &str, mut fetch: F) -> Vec<FlakeHubInfo>

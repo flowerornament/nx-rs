@@ -6,7 +6,8 @@ use std::sync::OnceLock;
 use anyhow::Context;
 use regex::Regex;
 use serde::Serialize;
-use walkdir::WalkDir;
+
+use crate::domain::repo_scan::{ManagedNixScanPolicy, collect_managed_nix_files};
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct PackageBuckets {
@@ -75,33 +76,7 @@ fn scan_packages_from_files(files: &[PathBuf]) -> anyhow::Result<PackageBuckets>
 /// Skips only `common.nix`. Unlike `ConfigFiles::discover`, this intentionally
 /// includes `default.nix` because it may contain launchd service definitions.
 pub fn collect_nix_files(repo_root: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    for dir_name in ["home", "system", "hosts", "packages"] {
-        let dir_path = repo_root.join(dir_name);
-        if !dir_path.exists() {
-            continue;
-        }
-
-        for entry in WalkDir::new(&dir_path).into_iter().filter_map(Result::ok) {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("nix") {
-                continue;
-            }
-            let file_name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or_default();
-            if file_name == "common.nix" {
-                continue;
-            }
-            out.push(path.to_path_buf());
-        }
-    }
-    out.sort();
-    out
+    collect_managed_nix_files(repo_root, ManagedNixScanPolicy::for_package_scan())
 }
 
 #[derive(Default)]

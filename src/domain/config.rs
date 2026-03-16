@@ -3,9 +3,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use walkdir::WalkDir;
-
 use super::manifest::{Manifest, SlotKind};
+use super::repo_scan::{ManagedNixScanPolicy, collect_managed_nix_files};
 
 /// Purpose-based routing to `.nix` config files.
 ///
@@ -28,43 +27,14 @@ impl ConfigFiles {
     /// Silently skips files that can't be read.
     pub fn discover(repo_root: &Path) -> Self {
         let mut by_purpose = BTreeMap::new();
-        let mut all_files = Vec::new();
+        let all_files =
+            collect_managed_nix_files(repo_root, ManagedNixScanPolicy::for_config_routing());
 
-        for dir_name in ["home", "system", "hosts", "packages"] {
-            let dir_path = repo_root.join(dir_name);
-            if !dir_path.exists() {
-                continue;
-            }
-
-            for entry in WalkDir::new(&dir_path)
-                .sort_by_file_name()
-                .into_iter()
-                .filter_map(Result::ok)
-            {
-                if !entry.file_type().is_file() {
-                    continue;
-                }
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("nix") {
-                    continue;
-                }
-                let file_name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or_default();
-                if file_name == "default.nix" || file_name == "common.nix" {
-                    continue;
-                }
-
-                all_files.push(path.to_path_buf());
-
-                if let Some(purpose) = read_nx_comment(path) {
-                    by_purpose.insert(purpose, path.to_path_buf());
-                }
+        for path in &all_files {
+            if let Some(purpose) = read_nx_comment(path) {
+                by_purpose.insert(purpose, path.clone());
             }
         }
-
-        all_files.sort();
 
         Self {
             repo_root: repo_root.to_path_buf(),

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::cli::PassthroughArgs;
-use crate::commands::context::AppContext;
+use crate::commands::context::SystemContext;
 use crate::infra::shell::{CapturedCommand, run_captured_command, run_indented_command_collecting};
 use crate::output::printer::Printer;
 
@@ -9,7 +9,7 @@ use crate::domain::manifest::Manifest;
 
 use super::DARWIN_REBUILD;
 
-pub fn cmd_rebuild(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
+pub fn cmd_rebuild(args: &PassthroughArgs, ctx: &SystemContext<'_>) -> i32 {
     if let Err(code) = ctx.require_manifest_system_safe("rebuild") {
         return code;
     }
@@ -38,7 +38,7 @@ pub(super) fn has_nix_extension(path: &str) -> bool {
         .is_some_and(|ext| ext == "nix")
 }
 
-fn check_git_preflight(ctx: &AppContext) -> Result<(), i32> {
+fn check_git_preflight(ctx: &SystemContext<'_>) -> Result<(), i32> {
     ctx.printer.action("Checking tracked nix files");
     let repo = ctx.repo_root.display().to_string();
 
@@ -131,7 +131,7 @@ fn check_git_preflight(ctx: &AppContext) -> Result<(), i32> {
     Err(1)
 }
 
-fn check_flake(ctx: &AppContext) -> Result<(), i32> {
+fn check_flake(ctx: &SystemContext<'_>) -> Result<(), i32> {
     ctx.printer.action("Checking flake");
     let repo = ctx.repo_root.display().to_string();
     let args = ["flake", "check", &repo];
@@ -156,7 +156,7 @@ fn check_flake(ctx: &AppContext) -> Result<(), i32> {
     Ok(())
 }
 
-fn do_rebuild(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
+fn do_rebuild(args: &PassthroughArgs, ctx: &SystemContext<'_>) -> i32 {
     let repo = ctx.repo_root.display().to_string();
     let manifest = ctx.config_files.manifest();
     let use_sudo = manifest.is_none_or(|m| m.platform.sudo);
@@ -182,7 +182,7 @@ fn do_rebuild(args: &PassthroughArgs, ctx: &AppContext) -> i32 {
         };
 
         let (code, output) =
-            match run_indented_command_collecting(runner, &runner_args, None, &ctx.printer, "  ") {
+            match run_indented_command_collecting(runner, &runner_args, None, ctx.printer, "  ") {
                 Ok(result) => result,
                 Err(err) => {
                     ctx.printer.error("Rebuild failed");

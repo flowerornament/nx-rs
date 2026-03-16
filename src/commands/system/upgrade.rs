@@ -44,7 +44,8 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
         let passthrough = PassthroughArgs {
             passthrough: Vec::new(),
         };
-        if cmd_rebuild(&passthrough, ctx) != 0 {
+        let system_ctx = ctx.system_context();
+        if cmd_rebuild(&passthrough, &system_ctx) != 0 {
             return 1;
         }
     }

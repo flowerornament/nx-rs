@@ -1,14 +1,14 @@
 use std::path::Path;
 
 use crate::cli::UndoArgs;
-use crate::commands::context::AppContext;
+use crate::commands::context::RepoContext;
 use crate::infra::shell::run_captured_command;
 use crate::output::printer::Printer;
 
 // ─── undo ────────────────────────────────────────────────────────────────────
 
-pub fn cmd_undo(args: &UndoArgs, ctx: &AppContext) -> i32 {
-    let modified = match git_modified_files(&ctx.repo_root) {
+pub fn cmd_undo(args: &UndoArgs, ctx: &RepoContext<'_>) -> i32 {
+    let modified = match git_modified_files(ctx.repo_root) {
         Ok(files) => files,
         Err(err) => {
             ctx.printer.error(&format!("git status failed: {err:#}"));
@@ -25,7 +25,7 @@ pub fn cmd_undo(args: &UndoArgs, ctx: &AppContext) -> i32 {
 
     for file in &modified {
         Printer::body(file);
-        if let Some(summary) = git_diff_stat(file, &ctx.repo_root) {
+        if let Some(summary) = git_diff_stat(file, ctx.repo_root) {
             Printer::sub_detail(&summary);
         }
     }
@@ -39,7 +39,7 @@ pub fn cmd_undo(args: &UndoArgs, ctx: &AppContext) -> i32 {
     }
 
     for file in &modified {
-        let _ = run_captured_command("git", &["checkout", "--", file], Some(&ctx.repo_root));
+        let _ = run_captured_command("git", &["checkout", "--", file], Some(ctx.repo_root));
     }
 
     ctx.printer

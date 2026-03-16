@@ -1,10 +1,10 @@
 use crate::cli::SearchArgs;
-use crate::commands::context::AppContext;
+use crate::commands::context::JsonCommandContext;
 use crate::domain::source::{SourcePreferences, SourceResult};
 use crate::infra::sources::search_all_sources;
 use crate::output::printer::Printer;
 
-pub fn cmd_search(args: &SearchArgs, ctx: &AppContext) -> i32 {
+pub fn cmd_search(args: &SearchArgs, ctx: &JsonCommandContext<'_>) -> i32 {
     let prefs = SourcePreferences {
         bleeding_edge: args.bleeding_edge,
         nur: args.nur,
@@ -28,7 +28,7 @@ pub fn cmd_search(args: &SearchArgs, ctx: &AppContext) -> i32 {
         return render_json(&results);
     }
 
-    render_table(&results, ctx);
+    render_table(&results);
     0
 }
 
@@ -59,7 +59,7 @@ fn render_json(results: &[SourceResult]) -> i32 {
     }
 }
 
-fn render_table(results: &[SourceResult], _ctx: &AppContext) {
+fn render_table(results: &[SourceResult]) {
     Printer::heading(&format!(
         "Results for '{}' ({} sources)",
         results[0].name,

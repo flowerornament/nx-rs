@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::cli::{InfoArgs, InstalledArgs, ListArgs, WhereArgs};
-use crate::commands::context::AppContext;
+use crate::commands::context::QueryContext;
 use crate::commands::shared::{
     SnippetMode, missing_argument_error, relative_location, show_snippet,
 };
@@ -28,16 +28,16 @@ use crate::output::printer::Printer;
 const VALID_SOURCES_TEXT: &str =
     "Valid sources: brew, brews, cask, casks, homebrew, mas, nix, nxs, service, services";
 
-pub fn cmd_where(args: &WhereArgs, ctx: &AppContext) -> i32 {
+pub fn cmd_where(args: &WhereArgs, ctx: &QueryContext<'_>) -> i32 {
     let Some(package) = &args.package else {
         return missing_argument_error("where", "PACKAGE");
     };
 
-    match find_package(package, &ctx.repo_root) {
+    match find_package(package, ctx.repo_root) {
         Ok(Some(location)) => {
             ctx.printer.success(&format!(
                 "{package} at {}",
-                relative_location(&location, &ctx.repo_root)
+                relative_location(&location, ctx.repo_root)
             ));
             if let Some(line_num) = location.line() {
                 show_snippet(location.path(), line_num, 2, SnippetMode::Add, false);
@@ -57,8 +57,8 @@ pub fn cmd_where(args: &WhereArgs, ctx: &AppContext) -> i32 {
     0
 }
 
-pub fn cmd_list(args: &ListArgs, ctx: &AppContext) -> i32 {
-    let buckets = match scan_packages(&ctx.repo_root) {
+pub fn cmd_list(args: &ListArgs, ctx: &QueryContext<'_>) -> i32 {
+    let buckets = match scan_packages(ctx.repo_root) {
         Ok(buckets) => buckets,
         Err(err) => {
             ctx.printer.error(&format!("package scan failed: {err}"));
@@ -78,7 +78,7 @@ pub fn cmd_list(args: &ListArgs, ctx: &AppContext) -> i32 {
     };
 
     if ctx.wants_json(args.json) {
-        return render_list_json(source, &buckets, &ctx.printer);
+        return render_list_json(source, &buckets, ctx.printer);
     }
 
     if let Some(source_key) = source {
@@ -90,10 +90,10 @@ pub fn cmd_list(args: &ListArgs, ctx: &AppContext) -> i32 {
         ));
         for package in &only {
             if args.verbose {
-                let rel = find_package(package, &ctx.repo_root)
+                let rel = find_package(package, ctx.repo_root)
                     .ok()
                     .flatten()
-                    .map(|loc| relative_location(&loc, &ctx.repo_root))
+                    .map(|loc| relative_location(&loc, ctx.repo_root))
                     .unwrap_or_default();
                 Printer::body(&format!("{package:<28} {rel}"));
             } else {
@@ -105,16 +105,16 @@ pub fn cmd_list(args: &ListArgs, ctx: &AppContext) -> i32 {
 
     let count = count_all_packages(&buckets);
     Printer::heading(&format!("Installed ({count} packages)"));
-    print_plain_list(&buckets, args.verbose, &ctx.repo_root);
+    print_plain_list(&buckets, args.verbose, ctx.repo_root);
     0
 }
 
-pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
+pub fn cmd_info(args: &InfoArgs, ctx: &QueryContext<'_>) -> i32 {
     let Some(package) = &args.package else {
         return missing_argument_error("info", "PACKAGE");
     };
 
-    let location = match find_package(package, &ctx.repo_root) {
+    let location = match find_package(package, ctx.repo_root) {
         Ok(location) => location,
         Err(err) => {
             ctx.printer.error(&format!("info lookup failed: {err}"));
@@ -122,8 +122,8 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
         }
     };
 
-    let mut cache = MultiSourceCache::load(&ctx.repo_root).ok();
-    let info_sources = collect_info_sources(package, args, &ctx.repo_root, &mut cache);
+    let mut cache = MultiSourceCache::load(ctx.repo_root).ok();
+    let info_sources = collect_info_sources(package, args, ctx.repo_root, &mut cache);
 
     if ctx.wants_json(args.json) {
         let sources = info_sources
@@ -136,8 +136,8 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
             installed: location.is_some(),
             location: location.map(|value| value.to_string()),
             sources,
-            hm_module: hm_module_info(package, &ctx.repo_root),
-            darwin_service: darwin_service_info(package, &ctx.repo_root),
+            hm_module: hm_module_info(package, ctx.repo_root),
+            darwin_service: darwin_service_info(package, ctx.repo_root),
             flakehub: collect_info_flakehub(package, args.bleeding_edge, search_flakehub),
         };
         match serde_json::to_string_pretty(&output) {
@@ -154,7 +154,7 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
     }
 
     let (installed_source, active_overlay) = location.as_ref().map_or((None, None), |found| {
-        detect_installed_source(found, package, &ctx.repo_root)
+        detect_installed_source(found, package, ctx.repo_root)
     });
     let status = info_status_text(
         location.is_some(),
@@ -167,7 +167,7 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
     if let Some(location) = location.as_ref() {
         Printer::detail(&format!(
             "Location: {}",
-            relative_location(location, &ctx.repo_root)
+            relative_location(location, ctx.repo_root)
         ));
         if let Some(line_num) = location.line() {
             show_snippet(location.path(), line_num, 1, SnippetMode::Add, false);
@@ -185,12 +185,12 @@ pub fn cmd_info(args: &InfoArgs, ctx: &AppContext) -> i32 {
     render_config_option_plain(
         "Home-manager module",
         "Module",
-        hm_module_info(package, &ctx.repo_root),
+        hm_module_info(package, ctx.repo_root),
     );
     render_config_option_plain(
         "nix-darwin service",
         "Service",
-        darwin_service_info(package, &ctx.repo_root),
+        darwin_service_info(package, ctx.repo_root),
     );
     render_flakehub_plain(&flakehub);
     render_install_hints_plain(package, &info_sources, location.is_some());
@@ -530,8 +530,8 @@ fn install_hint_for_source(name: &str, source: PackageSource) -> String {
     }
 }
 
-pub fn cmd_status(ctx: &AppContext) -> i32 {
-    let buckets = match scan_packages(&ctx.repo_root) {
+pub fn cmd_status(ctx: &QueryContext<'_>) -> i32 {
+    let buckets = match scan_packages(ctx.repo_root) {
         Ok(buckets) => buckets,
         Err(err) => {
             ctx.printer.error(&format!("package scan failed: {err}"));
@@ -570,7 +570,7 @@ pub fn cmd_status(ctx: &AppContext) -> i32 {
     0
 }
 
-fn render_manifest_health(ctx: &AppContext) {
+fn render_manifest_health(ctx: &QueryContext<'_>) {
     println!();
     Printer::heading("Manifest Health");
 
@@ -611,14 +611,14 @@ fn render_manifest_health(ctx: &AppContext) {
     }
 }
 
-pub fn cmd_installed(args: &InstalledArgs, ctx: &AppContext) -> i32 {
+pub fn cmd_installed(args: &InstalledArgs, ctx: &QueryContext<'_>) -> i32 {
     if args.packages.is_empty() {
         return missing_argument_error("installed", "PACKAGES...");
     }
 
     let mut results = Vec::new();
     for query in &args.packages {
-        match find_package_fuzzy(query, &ctx.repo_root) {
+        match find_package_fuzzy(query, ctx.repo_root) {
             Ok(matched) => results.push(InstalledResult {
                 query: query.clone(),
                 matched,
@@ -632,7 +632,7 @@ pub fn cmd_installed(args: &InstalledArgs, ctx: &AppContext) -> i32 {
     }
 
     if ctx.wants_json(args.json) {
-        return render_installed_json(&results, &ctx.printer);
+        return render_installed_json(&results, ctx.printer);
     }
 
     if results.len() == 1 {
@@ -711,7 +711,11 @@ fn render_installed_json(results: &[InstalledResult], printer: &Printer) -> i32 
     i32::from(!all_installed)
 }
 
-fn render_single_installed(result: &InstalledResult, ctx: &AppContext, show_location: bool) -> i32 {
+fn render_single_installed(
+    result: &InstalledResult,
+    ctx: &QueryContext<'_>,
+    show_location: bool,
+) -> i32 {
     let Some(found) = &result.matched else {
         ctx.printer
             .warn(&format!("{} is not installed", result.query));
@@ -724,7 +728,7 @@ fn render_single_installed(result: &InstalledResult, ctx: &AppContext, show_loca
         format!("{} → {}", result.query, found.name)
     };
     if show_location {
-        let rel = relative_location(&found.location, &ctx.repo_root);
+        let rel = relative_location(&found.location, ctx.repo_root);
         ctx.printer.success(&format!("{name_part} ({rel})"));
     } else {
         ctx.printer.success(&name_part);
@@ -732,7 +736,7 @@ fn render_single_installed(result: &InstalledResult, ctx: &AppContext, show_loca
     0
 }
 
-fn render_multi_installed(results: &[InstalledResult], ctx: &AppContext) -> i32 {
+fn render_multi_installed(results: &[InstalledResult], ctx: &QueryContext<'_>) -> i32 {
     let all_installed = results.iter().all(|r| r.matched.is_some());
     let installed_count = results.iter().filter(|r| r.matched.is_some()).count();
     Printer::heading(&format!(
@@ -742,7 +746,7 @@ fn render_multi_installed(results: &[InstalledResult], ctx: &AppContext) -> i32 
 
     for result in results {
         if let Some(found) = &result.matched {
-            let rel = relative_location(&found.location, &ctx.repo_root);
+            let rel = relative_location(&found.location, ctx.repo_root);
             if found.name == result.query {
                 ctx.printer.success(&result.query);
             } else {

@@ -1,9 +1,9 @@
-use crate::commands::context::AppContext;
+use crate::commands::context::InitContext;
 use crate::domain::manifest::{Manifest, SlotKind};
 use crate::domain::manifest_scan::manifest_from_scan;
 use crate::output::printer::Printer;
 
-pub fn cmd_init(refresh: bool, ctx: &AppContext) -> i32 {
+pub fn cmd_init(refresh: bool, ctx: &InitContext<'_>) -> i32 {
     ctx.printer.action(if refresh {
         "Rescanning repository"
     } else {
@@ -11,7 +11,7 @@ pub fn cmd_init(refresh: bool, ctx: &AppContext) -> i32 {
     });
 
     let existing = if refresh {
-        match Manifest::load(&ctx.repo_root) {
+        match Manifest::load(ctx.repo_root) {
             Ok(manifest) => manifest,
             Err(err) => {
                 ctx.printer
@@ -23,16 +23,16 @@ pub fn cmd_init(refresh: bool, ctx: &AppContext) -> i32 {
         None
     };
 
-    let manifest = manifest_from_scan(ctx.scanned_repo.clone(), &ctx.repo_root, existing.as_ref());
+    let manifest = manifest_from_scan(ctx.scanned_repo.clone(), ctx.repo_root, existing.as_ref());
 
-    print_summary(&manifest, &ctx.printer);
+    print_summary(&manifest, ctx.printer);
 
     if !Printer::confirm("Write .nx/manifest.toml?", true) {
         Printer::detail("Cancelled.");
         return 0;
     }
 
-    if let Err(err) = manifest.save(&ctx.repo_root) {
+    if let Err(err) = manifest.save(ctx.repo_root) {
         ctx.printer
             .error(&format!("failed to write manifest: {err:#}"));
         return 1;

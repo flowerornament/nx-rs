@@ -71,7 +71,8 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
         let passthrough = PassthroughArgs {
             passthrough: Vec::new(),
         };
-        cmd_rebuild(&passthrough, ctx)
+        let system_ctx = ctx.system_context();
+        cmd_rebuild(&passthrough, &system_ctx)
     });
 
     i32::from(success_count != args.packages.len())

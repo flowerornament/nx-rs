@@ -1,12 +1,12 @@
-use crate::commands::context::AppContext;
+use crate::commands::context::RepoContext;
 use crate::infra::shell::run_indented_command;
 
-pub fn cmd_test(ctx: &AppContext) -> i32 {
+pub fn cmd_test(ctx: &RepoContext<'_>) -> i32 {
     ctx.printer.action("Running just ci");
     println!();
 
     let return_code =
-        match run_indented_command("just", &["ci"], Some(&ctx.repo_root), &ctx.printer, "  ") {
+        match run_indented_command("just", &["ci"], Some(ctx.repo_root), ctx.printer, "  ") {
             Ok(code) => code,
             Err(err) => {
                 ctx.printer.error("just ci failed");

@@ -17,6 +17,11 @@ pub struct CapturedCommand {
     pub stderr: String,
 }
 
+struct StreamedCommand {
+    code: i32,
+    collected: Option<String>,
+}
+
 /// Run a command and parse stdout as JSON while suppressing stderr noise.
 pub fn run_json_command_quiet(program: &str, args: &[&str]) -> Option<Value> {
     let output = Command::new(program)
@@ -86,41 +91,7 @@ pub fn run_indented_command_with_env(
     _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<i32> {
-    let mut command = Command::new(program);
-    configure_command(&mut command, args, cwd, env);
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("failed to spawn {program}"))?;
-
-    let (tx, rx) = mpsc::channel::<String>();
-
-    let stdout = child
-        .stdout
-        .take()
-        .context("failed to capture child stdout")?;
-    let stderr = child
-        .stderr
-        .take()
-        .context("failed to capture child stderr")?;
-    let stdout_handle = spawn_line_reader("stdout", stdout, tx.clone());
-    let stderr_handle = spawn_line_reader("stderr", stderr, tx);
-
-    for line in rx {
-        let trimmed = line.trim_end();
-        if trimmed.is_empty() {
-            println!();
-        } else {
-            Printer::stream_line(trimmed, indent, 80);
-        }
-    }
-
-    join_reader("stdout", stdout_handle)?;
-    join_reader("stderr", stderr_handle)?;
-
-    let status = child.wait().context("waiting for child process")?;
-    Ok(status.code().unwrap_or(1))
+    Ok(run_streaming_command_with_env(program, args, cwd, env, indent, false)?.code)
 }
 
 /// Like `run_indented_command` but also returns collected output for error detection.
@@ -142,6 +113,18 @@ pub fn run_indented_command_collecting_with_env(
     _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<(i32, String)> {
+    let streamed = run_streaming_command_with_env(program, args, cwd, env, indent, true)?;
+    Ok((streamed.code, streamed.collected.unwrap_or_default()))
+}
+
+fn run_streaming_command_with_env(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: Option<CommandEnv<'_>>,
+    indent: &str,
+    collect_output: bool,
+) -> anyhow::Result<StreamedCommand> {
     let mut command = Command::new(program);
     configure_command(&mut command, args, cwd, env);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -163,13 +146,15 @@ pub fn run_indented_command_collecting_with_env(
     let stdout_handle = spawn_line_reader("stdout", stdout, tx.clone());
     let stderr_handle = spawn_line_reader("stderr", stderr, tx);
 
-    let mut collected = String::new();
+    let mut collected = collect_output.then(String::new);
     for line in rx {
         let trimmed = line.trim_end();
-        if !collected.is_empty() {
-            collected.push('\n');
+        if let Some(collected) = collected.as_mut() {
+            if !collected.is_empty() {
+                collected.push('\n');
+            }
+            collected.push_str(trimmed);
         }
-        collected.push_str(trimmed);
         if trimmed.is_empty() {
             println!();
         } else {
@@ -181,7 +166,10 @@ pub fn run_indented_command_collecting_with_env(
     join_reader("stderr", stderr_handle)?;
 
     let status = child.wait().context("waiting for child process")?;
-    Ok((status.code().unwrap_or(1), collected))
+    Ok(StreamedCommand {
+        code: status.code().unwrap_or(1),
+        collected,
+    })
 }
 
 fn configure_command(
@@ -299,5 +287,17 @@ mod tests {
     #[test]
     fn run_json_command_quiet_returns_none_on_spawn_failure() {
         assert!(run_json_command_quiet("__nx_missing_command__", &[]).is_none());
+    }
+
+    #[test]
+    fn run_indented_command_collecting_returns_streamed_output() {
+        let printer = Printer::new(OutputStyle::from_flags(true, false, false));
+        let args = ["-c", "printf 'one\\n\\nthree\\n'"];
+
+        let (code, output) = run_indented_command_collecting("sh", &args, None, &printer, "  ")
+            .expect("shell command should run");
+
+        assert_eq!(code, 0);
+        assert_eq!(output, "one\n\nthree");
     }
 }

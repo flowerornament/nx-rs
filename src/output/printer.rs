@@ -72,7 +72,8 @@ impl Printer {
 
     pub fn activity(&self, kind: ActivityKind, text: &str) {
         let glyph = match kind {
-            ActivityKind::Reading | ActivityKind::Searching => ".",
+            ActivityKind::Reading => "%",
+            ActivityKind::Searching => "@",
             ActivityKind::Editing => "~",
             ActivityKind::Running => ">",
         };

@@ -4,13 +4,11 @@ use crate::output::style::{IconSet, OutputStyle};
 
 /// Kind of AI agent activity to display during streaming operations.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub enum ActivityKind {
     Reading,
     Editing,
     Searching,
     Running,
-    Thinking,
 }
 
 struct GlyphSet {
@@ -73,16 +71,10 @@ impl Printer {
     }
 
     pub fn activity(&self, kind: ActivityKind, text: &str) {
-        let glyph = match (kind, self.style.icon_set) {
-            (ActivityKind::Reading, IconSet::Unicode) => "◇",
-            (ActivityKind::Editing, IconSet::Unicode) => "✎",
-            (ActivityKind::Searching, IconSet::Unicode) => "◉",
-            (ActivityKind::Running, IconSet::Unicode) => "▸",
-            (ActivityKind::Thinking, IconSet::Unicode) => "◆",
-            (ActivityKind::Editing, IconSet::Minimal) => "~",
-            (ActivityKind::Thinking, IconSet::Minimal) => "*",
-            (ActivityKind::Reading | ActivityKind::Searching, IconSet::Minimal) => ".",
-            (ActivityKind::Running, IconSet::Minimal) => ">",
+        let glyph = match kind {
+            ActivityKind::Reading | ActivityKind::Searching => ".",
+            ActivityKind::Editing => "~",
+            ActivityKind::Running => ">",
         };
         println!("{}", self.paint(format!("  {glyph} {text}"), "35"));
     }

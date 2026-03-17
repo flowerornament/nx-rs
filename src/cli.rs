@@ -245,7 +245,10 @@ pub struct InstallSourceArgs {
 pub struct InstallAiArgs {
     #[arg(long, help = "Show routing rationale for AI-assisted decisions")]
     pub explain: bool,
-    #[arg(long, help = "AI engine for routing/edit fallbacks (codex|claude)")]
+    #[arg(
+        long,
+        help = "AI engine for routing/edit fallbacks (claude-code|codex|claude)"
+    )]
     pub engine: Option<String>,
     #[arg(long, help = "Model identifier passed to the selected AI engine")]
     pub model: Option<String>,

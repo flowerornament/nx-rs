@@ -230,7 +230,7 @@ fn summarize_brew_change_ai(
 fn summarize_with_ai(
     target: &str,
     commits: &[String],
-    detailed: bool,
+    _detailed: bool,
     max_lines: usize,
     max_chars: usize,
 ) -> Option<String> {
@@ -238,13 +238,9 @@ fn summarize_with_ai(
         return None;
     }
 
-    if detailed {
-        summarize_with_claude(target, commits, max_lines, max_chars)
-            .or_else(|| summarize_with_codex(target, commits, max_lines, max_chars))
-    } else {
-        summarize_with_codex(target, commits, max_lines, max_chars)
-            .or_else(|| summarize_with_claude(target, commits, max_lines, max_chars))
-    }
+    // Prefer Claude (Max auth) for all summaries, fall back to Codex.
+    summarize_with_claude(target, commits, max_lines, max_chars)
+        .or_else(|| summarize_with_codex(target, commits, max_lines, max_chars))
 }
 
 fn summarize_with_codex(

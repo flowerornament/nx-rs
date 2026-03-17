@@ -2,6 +2,17 @@ use std::io::{self, BufRead, IsTerminal, Write};
 
 use crate::output::style::{IconSet, OutputStyle};
 
+/// Kind of AI agent activity to display during streaming operations.
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+pub enum ActivityKind {
+    Reading,
+    Editing,
+    Searching,
+    Running,
+    Thinking,
+}
+
 struct GlyphSet {
     action: &'static str,
     success: &'static str,
@@ -18,6 +29,11 @@ pub struct Printer {
 impl Printer {
     pub const fn new(style: OutputStyle) -> Self {
         Self { style }
+    }
+
+    #[must_use]
+    pub const fn style(&self) -> OutputStyle {
+        self.style
     }
 
     pub fn action(&self, text: &str) {
@@ -54,6 +70,21 @@ impl Printer {
 
     pub fn dry_run_banner(&self) {
         println!("{}", self.dry_run_line());
+    }
+
+    pub fn activity(&self, kind: ActivityKind, text: &str) {
+        let glyph = match (kind, self.style.icon_set) {
+            (ActivityKind::Reading, IconSet::Unicode) => "◇",
+            (ActivityKind::Editing, IconSet::Unicode) => "✎",
+            (ActivityKind::Searching, IconSet::Unicode) => "◉",
+            (ActivityKind::Running, IconSet::Unicode) => "▸",
+            (ActivityKind::Thinking, IconSet::Unicode) => "◆",
+            (ActivityKind::Editing, IconSet::Minimal) => "~",
+            (ActivityKind::Thinking, IconSet::Minimal) => "*",
+            (ActivityKind::Reading | ActivityKind::Searching, IconSet::Minimal) => ".",
+            (ActivityKind::Running, IconSet::Minimal) => ">",
+        };
+        println!("{}", self.paint(format!("  {glyph} {text}"), "35"));
     }
 
     pub fn searching(name: &str) {

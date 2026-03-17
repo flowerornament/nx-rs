@@ -1,11 +1,16 @@
+use std::io::BufRead;
 use std::path::Path;
+use std::process::{Command, Stdio};
 
 use regex::Regex;
+use serde_json::Value;
 
 use crate::domain::config::ConfigFiles;
 use crate::domain::plan::InstallPlan;
 use crate::domain::source::PackageSource;
 use crate::infra::shell::{CapturedCommand, run_captured_command};
+use crate::output::printer::{ActivityKind, Printer};
+use crate::output::style::OutputStyle;
 
 pub const DEFAULT_CODEX_MODEL: &str = "gpt-5-codex-mini";
 
@@ -201,13 +206,219 @@ impl AiEngine for ClaudeEngine {
     }
 }
 
+/// Streaming engine via `claude-codes` with activity display.
+pub struct ClaudeCodeEngine {
+    model: Option<String>,
+    style: OutputStyle,
+    max_auth: bool,
+}
+
+impl ClaudeCodeEngine {
+    pub fn new(model: Option<&str>, style: OutputStyle) -> Self {
+        let max_auth =
+            std::env::var("NX_AI_BILLING").map_or(true, |v| !v.eq_ignore_ascii_case("api"));
+        Self {
+            model: model.map(String::from),
+            style,
+            max_auth,
+        }
+    }
+
+    fn run_streaming(
+        &self,
+        prompt: &str,
+        cwd: &Path,
+        allowed_tools: Option<&[&str]>,
+    ) -> anyhow::Result<String> {
+        let printer = Printer::new(self.style);
+        let session_id = uuid::Uuid::new_v4();
+
+        let mut cmd = Command::new("claude");
+        cmd.args([
+            "--print",
+            "--verbose",
+            "--output-format",
+            "stream-json",
+            "--input-format",
+            "stream-json",
+            "--session-id",
+            &session_id.to_string(),
+        ]);
+
+        if let Some(ref m) = self.model {
+            cmd.args(["-m", m.as_str()]);
+        }
+
+        if let Some(tools) = allowed_tools {
+            let tool_list = tools.join(",");
+            cmd.args(["--allowed-tools", &tool_list]);
+        }
+
+        cmd.args(["--permission-mode", "bypassPermissions"]);
+        cmd.current_dir(cwd);
+
+        if self.max_auth {
+            cmd.env("ANTHROPIC_API_KEY", "");
+        }
+
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|_| anyhow::anyhow!("claude CLI not found — is it installed?"))?;
+
+        // Send prompt via stdin as stream-json
+        let input = claude_codes::ClaudeInput::user_message(prompt, session_id);
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            let json = serde_json::to_string(&input)?;
+            let _ = writeln!(stdin, "{json}");
+        }
+
+        // Read streaming JSONL from stdout
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("failed to capture claude stdout"))?;
+        let reader = std::io::BufReader::new(stdout);
+        let mut final_text = String::new();
+
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Ok(output) = claude_codes::ClaudeOutput::parse_json_tolerant(&line) else {
+                continue;
+            };
+            match &output {
+                claude_codes::ClaudeOutput::Assistant(msg) => {
+                    for block in &msg.message.content {
+                        match block {
+                            claude_codes::ContentBlock::ToolUse(tool) => {
+                                report_tool_activity(&printer, &tool.name, &tool.input);
+                            }
+                            claude_codes::ContentBlock::Text(t) => {
+                                final_text.push_str(&t.text);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                claude_codes::ClaudeOutput::Result(res) => {
+                    if let Some(ref text) = res.result {
+                        final_text.clone_from(text);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let _ = child.wait();
+        Ok(final_text)
+    }
+}
+
+impl AiEngine for ClaudeCodeEngine {
+    fn route_package(
+        &self,
+        package: &str,
+        description: &str,
+        context: &str,
+        candidates: &[String],
+        fallback: &str,
+        cwd: &Path,
+    ) -> RouteDecision {
+        let prompt =
+            build_routing_prompt(package, description, context, Some(candidates), fallback);
+        match self.run_streaming(&prompt, cwd, None) {
+            Ok(output) if !output.trim().is_empty() => {
+                resolve_candidate_routing(package, &output, candidates, fallback)
+            }
+            _ => RouteDecision {
+                target_file: fallback.to_string(),
+                warning: Some(format!(
+                    "Routing model unavailable for {package}; using fallback {fallback}"
+                )),
+            },
+        }
+    }
+
+    fn run_edit(&self, prompt: &str, cwd: &Path) -> CommandOutcome {
+        let tools = &["Read", "Edit", "Write", "Bash", "Glob", "Grep"];
+        match self.run_streaming(prompt, cwd, Some(tools)) {
+            Ok(output) => CommandOutcome {
+                success: true,
+                output,
+            },
+            Err(e) => CommandOutcome {
+                success: false,
+                output: e.to_string(),
+            },
+        }
+    }
+
+    fn supports_flake_input(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &'static str {
+        "claude-code"
+    }
+}
+
+/// Map tool use events to user-visible activity indicators.
+fn report_tool_activity(printer: &Printer, tool_name: &str, input: &Value) {
+    match tool_name {
+        "Read" => {
+            let path = input
+                .get("file_path")
+                .and_then(Value::as_str)
+                .and_then(|p| p.rsplit('/').next())
+                .unwrap_or("file");
+            printer.activity(ActivityKind::Reading, &format!("reading {path}"));
+        }
+        "Edit" | "Write" => {
+            let path = input
+                .get("file_path")
+                .and_then(Value::as_str)
+                .and_then(|p| p.rsplit('/').next())
+                .unwrap_or("file");
+            printer.activity(ActivityKind::Editing, &format!("editing {path}"));
+        }
+        "Bash" => {
+            let cmd = input
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or("command");
+            let short = cmd.split_whitespace().take(4).collect::<Vec<_>>().join(" ");
+            printer.activity(ActivityKind::Running, &format!("running {short}"));
+        }
+        "Glob" | "Grep" => {
+            let pattern = input
+                .get("pattern")
+                .and_then(Value::as_str)
+                .unwrap_or("files");
+            printer.activity(ActivityKind::Searching, &format!("searching {pattern}"));
+        }
+        _ => {}
+    }
+}
+
 // --- Factory
 
 /// Select the appropriate AI engine based on CLI flags.
-pub fn select_engine(engine: Option<&str>, model: Option<&str>) -> Box<dyn AiEngine> {
-    match engine.unwrap_or("codex") {
+pub fn select_engine(
+    engine: Option<&str>,
+    model: Option<&str>,
+    style: OutputStyle,
+) -> Box<dyn AiEngine> {
+    match engine.unwrap_or("claude-code") {
+        "codex" => Box::new(CodexEngine::new(model)),
         "claude" => Box::new(ClaudeEngine::new(model)),
-        _ => Box::new(CodexEngine::new(model)),
+        _ => Box::new(ClaudeCodeEngine::new(model, style)),
     }
 }
 
@@ -835,30 +1046,38 @@ mod tests {
 
     // --- select_engine ---
 
+    fn test_style() -> OutputStyle {
+        OutputStyle {
+            plain: true,
+            icon_set: crate::output::style::IconSet::Minimal,
+            color: false,
+        }
+    }
+
     #[test]
-    fn select_engine_default_is_codex() {
-        let engine = select_engine(None, None);
-        assert_eq!(engine.name(), "codex");
-        assert!(!engine.supports_flake_input());
+    fn select_engine_default_is_claude_code() {
+        let engine = select_engine(None, None, test_style());
+        assert_eq!(engine.name(), "claude-code");
+        assert!(engine.supports_flake_input());
     }
 
     #[test]
     fn select_engine_codex_explicit() {
-        let engine = select_engine(Some("codex"), None);
+        let engine = select_engine(Some("codex"), None, test_style());
         assert_eq!(engine.name(), "codex");
     }
 
     #[test]
-    fn select_engine_claude() {
-        let engine = select_engine(Some("claude"), None);
+    fn select_engine_claude_raw() {
+        let engine = select_engine(Some("claude"), None, test_style());
         assert_eq!(engine.name(), "claude");
         assert!(engine.supports_flake_input());
     }
 
     #[test]
-    fn select_engine_unknown_defaults_to_codex() {
-        let engine = select_engine(Some("unknown"), None);
-        assert_eq!(engine.name(), "codex");
+    fn select_engine_unknown_defaults_to_claude_code() {
+        let engine = select_engine(Some("unknown"), None, test_style());
+        assert_eq!(engine.name(), "claude-code");
     }
 
     // --- Engine trait properties ---
@@ -893,6 +1112,26 @@ mod tests {
     fn claude_engine_custom_model() {
         let engine = ClaudeEngine::new(Some("sonnet"));
         assert_eq!(engine.model, Some("sonnet".to_string()));
+    }
+
+    #[test]
+    fn claude_code_supports_flake_input() {
+        let engine = ClaudeCodeEngine::new(None, test_style());
+        assert!(engine.supports_flake_input());
+        assert_eq!(engine.name(), "claude-code");
+    }
+
+    #[test]
+    fn claude_code_max_auth_default() {
+        // Without NX_AI_BILLING set, max auth should be enabled
+        let engine = ClaudeCodeEngine::new(None, test_style());
+        assert!(engine.max_auth);
+    }
+
+    #[test]
+    fn claude_code_custom_model() {
+        let engine = ClaudeCodeEngine::new(Some("haiku"), test_style());
+        assert_eq!(engine.model, Some("haiku".to_string()));
     }
 
     // --- build_routing_prompt ---

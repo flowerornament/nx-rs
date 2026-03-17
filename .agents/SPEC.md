@@ -324,7 +324,7 @@ Routing behavior:
 
 If source requires flake mod:
 
-- Turbo/Codex mode (no prompt) refuses and warns: use Claude engine.
+- Turbo/Codex mode (no prompt) refuses and warns: use claude-code or claude engine.
 - Claude path may prompt to add flake input unless `--yes`.
 - `--dry-run` reports intended flake input action without mutation.
 
@@ -338,9 +338,10 @@ For nix-based sources:
 
 ## 7.7 Engine Execution Semantics
 
-- `--engine=codex` uses turbo path.
-- `--engine=claude` uses Claude edit path.
-- Both engines must consume same `InstallPlan` contract (`package_token`, `target_file`, `insertion_mode`).
+- Default (`--engine=claude-code`): streaming engine via `claude-codes` crate with activity display. Uses Max subscription auth by default (unsets `ANTHROPIC_API_KEY`); set `NX_AI_BILLING=api` for API key billing.
+- `--engine=codex`: turbo path via `codex exec`.
+- `--engine=claude`: raw Claude CLI path via `claude --print`.
+- All engines must consume same `InstallPlan` contract (`package_token`, `target_file`, `insertion_mode`).
 
 ## 7.8 Post-Install
 

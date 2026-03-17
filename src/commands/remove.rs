@@ -12,7 +12,7 @@ use crate::domain::manifest::{Manifest, SlotKind};
 use crate::domain::plan::{InsertionMode, InstallPlan, LanguageInfo};
 use crate::domain::source::{PackageSource, SourceResult, detect_language_package};
 use crate::infra::ai_engine::{
-    ClaudeEngine, CommandOutcome, build_remove_prompt, run_edit_with_callback,
+    ClaudeCodeEngine, CommandOutcome, build_remove_prompt, run_edit_with_callback,
 };
 use crate::infra::file_edit::{EditOutcome, apply_removal};
 use crate::infra::finder::find_package;
@@ -129,7 +129,7 @@ fn remove_via_ai(
 
     Printer::detail(&format!("Analyzing removal of {package}"));
 
-    let engine = ClaudeEngine::new(args.model.as_deref());
+    let engine = ClaudeCodeEngine::new(args.model.as_deref(), ctx.printer.style());
     let manifest = ctx.config_files.manifest();
     let mut deterministic_edit: Option<EditOutcome> = None;
     let execution = run_edit_with_callback(&engine, &prompt, &ctx.repo_root, || {

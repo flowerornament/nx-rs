@@ -17,7 +17,7 @@ use crate::domain::source::{
     ExplicitSourceTarget, PackageSource, SourcePreferences, SourceResult, detect_language_package,
 };
 use crate::infra::ai_engine::{
-    AiEngine, ClaudeEngine, CommandOutcome, build_edit_prompt, build_routing_context,
+    AiEngine, ClaudeCodeEngine, CommandOutcome, build_edit_prompt, build_routing_context,
     run_edit_with_callback, select_engine,
 };
 use crate::infra::cache::MultiSourceCache;
@@ -48,7 +48,7 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
     };
     ctx.printer.action(&format!("Installing {pkg_list}"));
 
-    let engine = select_engine(args.engine(), args.model());
+    let engine = select_engine(args.engine(), args.model(), ctx.printer.style());
     let routing_context = build_routing_context(&ctx.config_files);
     let mut cache = load_cache(ctx);
 
@@ -510,7 +510,7 @@ fn report_deterministic_edit(
 
 fn maybe_setup_service(package_name: &str, args: &InstallArgs, ctx: &AppContext) {
     maybe_setup_service_with(package_name, args, ctx, |prompt| {
-        let service_engine = ClaudeEngine::new(args.model());
+        let service_engine = ClaudeCodeEngine::new(args.model(), ctx.printer.style());
         service_engine.run_edit(prompt, &ctx.repo_root)
     });
 }

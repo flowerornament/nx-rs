@@ -1,7 +1,7 @@
 use crate::cli::SearchArgs;
 use crate::commands::context::JsonCommandContext;
 use crate::domain::source::{SourcePreferences, SourceResult};
-use crate::infra::sources::search_all_sources;
+use crate::infra::sources::{UnavailableSource, search_all_sources};
 use crate::output::printer::Printer;
 
 pub fn cmd_search(args: &SearchArgs, ctx: &JsonCommandContext<'_>) -> i32 {
@@ -15,20 +15,28 @@ pub fn cmd_search(args: &SearchArgs, ctx: &JsonCommandContext<'_>) -> i32 {
     let flake_lock_path = flake_lock.exists().then_some(flake_lock.as_path());
 
     Printer::searching(&args.package);
-    let results = search_all_sources(&args.package, &prefs, flake_lock_path);
+    let outcome = search_all_sources(&args.package, &prefs, flake_lock_path);
     Printer::searching_done();
 
-    if results.is_empty() {
-        ctx.printer
-            .error(&format!("{}: not found in any source", args.package));
+    if outcome.results.is_empty() {
+        if outcome.unavailable_sources.is_empty() {
+            ctx.printer
+                .error(&format!("{}: not found in any source", args.package));
+        } else {
+            ctx.printer.error(&format!(
+                "{}: not found in any available source",
+                args.package
+            ));
+            render_unavailable_sources(ctx.printer, &outcome.unavailable_sources);
+        }
         return 1;
     }
 
     if ctx.wants_json(args.json) {
-        return render_json(&results);
+        return render_json(&outcome.results);
     }
 
-    render_table(&results);
+    render_table(&outcome.results);
     0
 }
 
@@ -80,5 +88,11 @@ fn render_table(results: &[SourceResult]) {
         };
 
         Printer::body(&format!("{:<12} {attr_display}{version}{desc}", r.source));
+    }
+}
+
+fn render_unavailable_sources(_printer: &Printer, unavailable_sources: &[UnavailableSource]) {
+    for source in unavailable_sources {
+        Printer::detail(&format!("- {}: {}", source.source, source.reason));
     }
 }

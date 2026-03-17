@@ -6,6 +6,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::domain::source::{
@@ -14,7 +15,71 @@ use crate::domain::source::{
     get_current_system, mapped_name, parse_nix_search_results, score_match, search_name_variants,
     sort_results,
 };
-use crate::infra::shell::run_json_command_quiet;
+use crate::infra::shell::run_captured_command;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UnavailableSource {
+    pub source: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SourceSearchOutcome {
+    pub results: Vec<SourceResult>,
+    pub unavailable_sources: Vec<UnavailableSource>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SourceBackendOutcome {
+    results: Vec<SourceResult>,
+    unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum JsonCommandOutcome {
+    Parsed(Value),
+    Failed,
+    Unavailable(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NixAvailability {
+    available: bool,
+    reason: Option<String>,
+    backend_unavailable: Option<String>,
+}
+
+impl SourceSearchOutcome {
+    fn push_unavailable(&mut self, source: impl Into<String>, reason: impl Into<String>) {
+        let candidate = UnavailableSource {
+            source: source.into(),
+            reason: reason.into(),
+        };
+        if !self.unavailable_sources.contains(&candidate) {
+            self.unavailable_sources.push(candidate);
+        }
+    }
+
+    fn extend_results(&mut self, results: Vec<SourceResult>) {
+        self.results.extend(results);
+    }
+}
+
+impl SourceBackendOutcome {
+    fn from_results(results: Vec<SourceResult>) -> Self {
+        Self {
+            results,
+            unavailable_reason: None,
+        }
+    }
+
+    fn unavailable(reason: impl Into<String>) -> Self {
+        Self {
+            results: Vec::new(),
+            unavailable_reason: Some(reason.into()),
+        }
+    }
+}
 
 // --- Shell Helpers
 
@@ -28,21 +93,49 @@ fn command_available(name: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Evaluate a nix attribute, trying each target in order.
-fn eval_nix_attr(targets: &[&str], attr_path: &str) -> Option<Value> {
-    for target in targets {
-        let full_attr = format!("{target}#{attr_path}");
-        if let Some(val) = run_json_command_quiet("nix", &["eval", "--json", &full_attr]) {
-            return Some(val);
+fn run_json_command(program: &str, args: &[&str]) -> JsonCommandOutcome {
+    let output = match run_captured_command(program, args, None) {
+        Ok(output) => output,
+        Err(err) => {
+            return JsonCommandOutcome::Unavailable(format!(
+                "{program} command execution failed: {err:#}"
+            ));
+        }
+    };
+
+    if output.code != 0 {
+        return JsonCommandOutcome::Failed;
+    }
+
+    match serde_json::from_str::<Value>(&output.stdout) {
+        Ok(value) => JsonCommandOutcome::Parsed(value),
+        Err(err) => {
+            JsonCommandOutcome::Unavailable(format!("{program} returned invalid JSON: {err}"))
         }
     }
-    None
+}
+
+/// Evaluate a nix attribute, trying each target in order.
+fn eval_nix_attr(targets: &[&str], attr_path: &str) -> JsonCommandOutcome {
+    let mut unavailable_reason = None;
+    for target in targets {
+        let full_attr = format!("{target}#{attr_path}");
+        match run_json_command("nix", &["eval", "--json", &full_attr]) {
+            JsonCommandOutcome::Parsed(value) => return JsonCommandOutcome::Parsed(value),
+            JsonCommandOutcome::Failed => {}
+            JsonCommandOutcome::Unavailable(reason) => {
+                unavailable_reason.get_or_insert(reason);
+            }
+        }
+    }
+
+    unavailable_reason.map_or(JsonCommandOutcome::Failed, JsonCommandOutcome::Unavailable)
 }
 
 /// Get a single entry from `brew info --json=v2`.
-fn get_homebrew_info_entry(name: &str, is_cask: bool) -> Option<Value> {
+fn get_homebrew_info_entry(name: &str, is_cask: bool) -> JsonCommandOutcome {
     if !command_available("brew") {
-        return None;
+        return JsonCommandOutcome::Unavailable("brew command unavailable".to_string());
     }
 
     let mut args = vec!["info", "--json=v2"];
@@ -51,15 +144,25 @@ fn get_homebrew_info_entry(name: &str, is_cask: bool) -> Option<Value> {
     }
     args.push(name);
 
-    let data = run_json_command_quiet("brew", &args)?;
+    let data = match run_json_command("brew", &args) {
+        JsonCommandOutcome::Parsed(data) => data,
+        JsonCommandOutcome::Failed => return JsonCommandOutcome::Failed,
+        JsonCommandOutcome::Unavailable(reason) => return JsonCommandOutcome::Unavailable(reason),
+    };
     let key = if is_cask { "casks" } else { "formulae" };
-    let entries = data.get(key)?.as_array()?;
-    let entry = entries.first()?;
+    let Some(entries) = data.get(key).and_then(Value::as_array) else {
+        return JsonCommandOutcome::Unavailable(format!(
+            "brew returned unexpected JSON structure for '{key}'"
+        ));
+    };
+    let Some(entry) = entries.first() else {
+        return JsonCommandOutcome::Failed;
+    };
 
     if entry.is_object() {
-        Some(entry.clone())
+        JsonCommandOutcome::Parsed(entry.clone())
     } else {
-        None
+        JsonCommandOutcome::Unavailable("brew returned a non-object package entry".to_string())
     }
 }
 
@@ -72,32 +175,47 @@ fn search_nix_source(
     source: PackageSource,
     requires_flake_mod: bool,
     flake_url: Option<&str>,
-) -> Vec<SourceResult> {
+) -> SourceBackendOutcome {
     if !command_available("nix") {
-        return Vec::new();
+        return SourceBackendOutcome::unavailable("nix command unavailable");
     }
 
     let mut all_entries: Vec<NixSearchEntry> = Vec::new();
     let mut seen_attrs: HashSet<String> = HashSet::new();
     let resolved = mapped_name(name);
+    let mut unavailable_reason = None;
+    let mut saw_parsed_response = false;
 
     for search_name in search_name_variants(name) {
         for target in targets {
-            if let Some(data) =
-                run_json_command_quiet("nix", &["search", "--json", target, &search_name])
-            {
-                for entry in parse_nix_search_results(&data) {
-                    if !entry.attr_path.is_empty() && seen_attrs.insert(entry.attr_path.clone()) {
-                        all_entries.push(entry);
+            match run_json_command("nix", &["search", "--json", target, &search_name]) {
+                JsonCommandOutcome::Parsed(data) => {
+                    saw_parsed_response = true;
+                    for entry in parse_nix_search_results(&data) {
+                        if !entry.attr_path.is_empty() && seen_attrs.insert(entry.attr_path.clone())
+                        {
+                            all_entries.push(entry);
+                        }
                     }
+                    break; // found results for this variant, try next
                 }
-                break; // found results for this variant, try next
+                JsonCommandOutcome::Failed => {}
+                JsonCommandOutcome::Unavailable(reason) => {
+                    unavailable_reason.get_or_insert(reason);
+                }
             }
         }
     }
 
     if all_entries.is_empty() {
-        return Vec::new();
+        return if saw_parsed_response {
+            SourceBackendOutcome::default()
+        } else {
+            unavailable_reason.map_or_else(
+                SourceBackendOutcome::default,
+                SourceBackendOutcome::unavailable,
+            )
+        };
     }
 
     let mut results: Vec<SourceResult> = all_entries
@@ -138,11 +256,11 @@ fn search_nix_source(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     results.truncate(5);
-    results
+    SourceBackendOutcome::from_results(results)
 }
 
 /// Search nixpkgs for a package.
-pub fn search_nxs(name: &str, prefer_unstable: bool) -> Vec<SourceResult> {
+fn search_nxs(name: &str, prefer_unstable: bool) -> SourceBackendOutcome {
     let targets: Vec<&str> = if prefer_unstable {
         vec!["github:nixos/nixpkgs/nixos-unstable", "nixpkgs"]
     } else {
@@ -152,7 +270,7 @@ pub fn search_nxs(name: &str, prefer_unstable: bool) -> Vec<SourceResult> {
 }
 
 /// Search NUR (Nix User Repository) for a package.
-pub fn search_nur(name: &str) -> Vec<SourceResult> {
+fn search_nur(name: &str) -> SourceBackendOutcome {
     search_nix_source(
         name,
         &["github:nix-community/NUR"],
@@ -163,17 +281,20 @@ pub fn search_nur(name: &str) -> Vec<SourceResult> {
 }
 
 /// Check existing flake inputs for package overlays.
-pub fn search_flake_inputs(name: &str, flake_lock_path: &Path) -> Vec<SourceResult> {
+fn search_flake_inputs(name: &str, flake_lock_path: &Path) -> SourceBackendOutcome {
     let Ok(content) = fs::read_to_string(flake_lock_path) else {
-        return Vec::new();
+        return SourceBackendOutcome::unavailable(format!(
+            "failed to read flake.lock: {}",
+            flake_lock_path.display()
+        ));
     };
 
     let Ok(lock) = serde_json::from_str::<Value>(&content) else {
-        return Vec::new();
+        return SourceBackendOutcome::unavailable("flake.lock is not valid JSON");
     };
 
     let Some(nodes) = lock.get("nodes").and_then(Value::as_object) else {
-        return Vec::new();
+        return SourceBackendOutcome::unavailable("flake.lock missing 'nodes' object");
     };
 
     // Build overlay->packages index from domain OVERLAY_PACKAGES (package->overlay).
@@ -212,24 +333,22 @@ pub fn search_flake_inputs(name: &str, flake_lock_path: &Path) -> Vec<SourceResu
         }
     }
 
-    results
+    SourceBackendOutcome::from_results(results)
 }
 
 /// Search Homebrew for a package (formula or cask).
-pub fn search_homebrew(name: &str, is_cask: bool, allow_fallback: bool) -> Vec<SourceResult> {
-    let entry = get_homebrew_info_entry(name, is_cask);
-
-    entry.map_or_else(
-        || {
-            // Try the opposite (cask vs formula) as fallback
+fn search_homebrew(name: &str, is_cask: bool, allow_fallback: bool) -> SourceBackendOutcome {
+    match get_homebrew_info_entry(name, is_cask) {
+        JsonCommandOutcome::Failed => {
             if allow_fallback && !is_cask {
                 search_homebrew(name, true, false)
             } else {
-                Vec::new()
+                SourceBackendOutcome::default()
             }
-        },
-        |entry| {
-            if is_cask {
+        }
+        JsonCommandOutcome::Unavailable(reason) => SourceBackendOutcome::unavailable(reason),
+        JsonCommandOutcome::Parsed(entry) => {
+            let results = if is_cask {
                 vec![SourceResult {
                     name: name.to_string(),
                     source: PackageSource::Cask,
@@ -278,9 +397,10 @@ pub fn search_homebrew(name: &str, is_cask: bool, allow_fallback: bool) -> Vec<S
                     requires_flake_mod: false,
                     flake_url: None,
                 }]
-            }
-        },
-    )
+            };
+            SourceBackendOutcome::from_results(results)
+        }
+    }
 }
 
 // --- Platform / Language Validation
@@ -289,17 +409,38 @@ pub fn search_homebrew(name: &str, is_cask: bool, allow_fallback: bool) -> Vec<S
 ///
 /// Shells out to `nix eval` then delegates to pure `check_platforms`.
 /// Permissive when `nix` is missing or evaluation fails.
-pub fn check_nix_available(attr: &str) -> (bool, Option<String>) {
+fn check_nix_available_status(attr: &str) -> NixAvailability {
     if !command_available("nix") {
-        return (true, None);
+        return NixAvailability {
+            available: false,
+            reason: None,
+            backend_unavailable: Some("nix command unavailable".to_string()),
+        };
     }
 
     let targets = &["nixpkgs"][..];
     let meta_attr = format!("{attr}.meta.platforms");
 
-    eval_nix_attr(targets, &meta_attr).map_or((true, None), |platforms| {
-        check_platforms(&platforms, get_current_system())
-    })
+    match eval_nix_attr(targets, &meta_attr) {
+        JsonCommandOutcome::Parsed(platforms) => {
+            let (available, reason) = check_platforms(&platforms, get_current_system());
+            NixAvailability {
+                available,
+                reason,
+                backend_unavailable: None,
+            }
+        }
+        JsonCommandOutcome::Failed => NixAvailability {
+            available: true,
+            reason: None,
+            backend_unavailable: None,
+        },
+        JsonCommandOutcome::Unavailable(reason) => NixAvailability {
+            available: false,
+            reason: None,
+            backend_unavailable: Some(reason),
+        },
+    }
 }
 
 /// Validate that a language package attr exists and is available on this platform.
@@ -311,16 +452,31 @@ fn validate_language_override(name: &str) -> (bool, Option<String>) {
     let targets = &["nixpkgs", "github:nixos/nixpkgs/nixos-unstable"];
     let name_attr = format!("{name}.name");
 
-    if eval_nix_attr(targets, &name_attr).is_none() {
+    if !matches!(
+        eval_nix_attr(targets, &name_attr),
+        JsonCommandOutcome::Parsed(_)
+    ) {
         return (false, Some("attribute not found in nixpkgs".to_string()));
     }
 
-    let (available, reason) = check_nix_available(name);
-    if !available {
-        return (false, reason);
+    let availability = check_nix_available_status(name);
+    if let Some(reason) = availability.backend_unavailable {
+        return (false, Some(reason));
+    }
+    if !availability.available {
+        return (false, availability.reason);
     }
 
     (true, None)
+}
+
+pub fn check_nix_available(attr: &str) -> (bool, Option<String>) {
+    let availability = check_nix_available_status(attr);
+    if let Some(reason) = availability.backend_unavailable {
+        return (false, Some(reason));
+    }
+
+    (availability.available, availability.reason)
 }
 
 // --- Search Shortcuts (forced / explicit / language override)
@@ -328,16 +484,19 @@ fn validate_language_override(name: &str) -> (bool, Option<String>) {
 fn search_forced_source(name: &str, prefs: &SourcePreferences) -> Option<Vec<SourceResult>> {
     let source = prefs.force_source.as_deref()?;
     if source.eq_ignore_ascii_case("unstable") {
-        return Some(search_nxs(name, true));
+        return Some(search_nxs(name, true).results);
     }
     match PackageSource::parse(source) {
-        Some(PackageSource::Nxs) => Some(search_nxs(name, false)),
-        Some(PackageSource::Nur) => Some(search_nur(name)),
-        Some(PackageSource::Homebrew) => Some(search_homebrew(
-            name,
-            matches!(prefs.explicit_target, ExplicitSourceTarget::Cask),
-            true,
-        )),
+        Some(PackageSource::Nxs) => Some(search_nxs(name, false).results),
+        Some(PackageSource::Nur) => Some(search_nur(name).results),
+        Some(PackageSource::Homebrew) => Some(
+            search_homebrew(
+                name,
+                matches!(prefs.explicit_target, ExplicitSourceTarget::Cask),
+                true,
+            )
+            .results,
+        ),
         _ => None,
     }
 }
@@ -400,10 +559,10 @@ fn search_language_override(name: &str, warn: bool) -> Option<Vec<SourceResult>>
 struct SearchBatch {
     source: &'static str,
     results: Vec<SourceResult>,
-    failed: bool,
+    unavailable_reason: Option<String>,
 }
 
-type SearchCallResult = Vec<SourceResult>;
+type SearchCallResult = SourceBackendOutcome;
 
 type SearchByNameFn = fn(&str) -> SearchCallResult;
 type SearchByNameAndPathFn = fn(&str, &Path) -> SearchCallResult;
@@ -441,15 +600,15 @@ fn spawn_search_worker(
     let _join_handle = thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(search));
         let batch = match result {
-            Ok(results) => SearchBatch {
+            Ok(outcome) => SearchBatch {
                 source,
-                results,
-                failed: false,
+                results: outcome.results,
+                unavailable_reason: outcome.unavailable_reason,
             },
             Err(_) => SearchBatch {
                 source,
                 results: Vec::new(),
-                failed: true,
+                unavailable_reason: Some("search worker panicked".to_string()),
             },
         };
         let _ = tx.send(batch);
@@ -465,7 +624,7 @@ fn parallel_search(
     prefs: &SourcePreferences,
     flake_lock_path: Option<&Path>,
     warn_on_timeout: bool,
-) -> Vec<SourceResult> {
+) -> SourceSearchOutcome {
     let options = ParallelSearchOptions {
         warn_on_timeout,
         timeout: Duration::from_secs(45),
@@ -493,10 +652,11 @@ fn parallel_search_with(
     options: ParallelSearchOptions,
     mut warn: impl FnMut(&str),
     search_fns: SearchFns,
-) -> Vec<SourceResult> {
+) -> SourceSearchOutcome {
     let (tx, rx) = mpsc::channel::<SearchBatch>();
     let mut expected = 0_usize;
     let source_name = name.to_string();
+    let mut pending_sources = Vec::new();
 
     // Always search nxs
     {
@@ -504,6 +664,7 @@ fn parallel_search_with(
         let name = source_name.clone();
         spawn_search_worker(tx_nxs, "nxs", move || (search_fns.nxs)(&name));
         expected += 1;
+        pending_sources.push("nxs");
     }
 
     // Optional flake-input search
@@ -515,6 +676,7 @@ fn parallel_search_with(
             (search_fns.flake_inputs)(&name, &lock_path)
         });
         expected += 1;
+        pending_sources.push("flake-input");
     }
 
     // Optional NUR search
@@ -523,30 +685,36 @@ fn parallel_search_with(
         let name = source_name;
         spawn_search_worker(tx_nur, "nur", move || (search_fns.nur)(&name));
         expected += 1;
+        pending_sources.push("nur");
     }
 
     drop(tx);
 
-    let mut all_results = Vec::new();
+    let mut outcome = SourceSearchOutcome::default();
     for _ in 0..expected {
         match rx.recv_timeout(options.timeout) {
             Ok(batch) => {
-                if batch.failed {
+                pending_sources.retain(|source| *source != batch.source);
+                if let Some(reason) = batch.unavailable_reason {
                     if options.warn_on_timeout {
                         warn(&format!(
-                            "warning: {src} search failed for '{name}'; using partial results",
+                            "warning: {src} search unavailable for '{name}': {reason}; using partial results",
                             src = batch.source
                         ));
                     }
+                    outcome.push_unavailable(batch.source, reason);
                     continue;
                 }
-                all_results.extend(batch.results);
+                outcome.extend_results(batch.results);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                if options.warn_on_timeout {
-                    warn(&format!(
-                        "warning: timed out waiting for one or more search sources for '{name}'; using partial results"
-                    ));
+                for source in pending_sources.drain(..) {
+                    if options.warn_on_timeout {
+                        warn(&format!(
+                            "warning: timed out waiting for {source} search for '{name}'; using partial results"
+                        ));
+                    }
+                    outcome.push_unavailable(source, "timed out waiting for search response");
                 }
                 break;
             }
@@ -554,7 +722,7 @@ fn parallel_search_with(
         }
     }
 
-    all_results
+    outcome
 }
 
 /// Search all enabled sources for a package.
@@ -564,7 +732,7 @@ pub fn search_all_sources(
     name: &str,
     prefs: &SourcePreferences,
     flake_lock_path: Option<&Path>,
-) -> Vec<SourceResult> {
+) -> SourceSearchOutcome {
     search_all_sources_with_timeout_reporting(name, prefs, flake_lock_path, true)
 }
 
@@ -575,7 +743,7 @@ pub fn search_all_sources_quiet(
     name: &str,
     prefs: &SourcePreferences,
     flake_lock_path: Option<&Path>,
-) -> Vec<SourceResult> {
+) -> SourceSearchOutcome {
     search_all_sources_with_timeout_reporting(name, prefs, flake_lock_path, false)
 }
 
@@ -584,34 +752,52 @@ fn search_all_sources_with_timeout_reporting(
     prefs: &SourcePreferences,
     flake_lock_path: Option<&Path>,
     warn_on_timeout: bool,
-) -> Vec<SourceResult> {
+) -> SourceSearchOutcome {
     // 1. Forced source shortcut
     if let Some(results) = search_forced_source(name, prefs) {
-        return results;
+        return SourceSearchOutcome {
+            results,
+            unavailable_sources: Vec::new(),
+        };
     }
 
     // 2. Explicit --cask / --mas
     if let Some(results) = search_explicit_source(name, prefs) {
-        return results;
+        return SourceSearchOutcome {
+            results,
+            unavailable_sources: Vec::new(),
+        };
     }
 
     // 3. Language override
     if let Some(results) = search_language_override(name, warn_on_timeout) {
-        return results;
+        return SourceSearchOutcome {
+            results,
+            unavailable_sources: Vec::new(),
+        };
     }
 
     // 4. Parallel primary search
-    let mut results = parallel_search(name, prefs, flake_lock_path, warn_on_timeout);
+    let mut outcome = parallel_search(name, prefs, flake_lock_path, warn_on_timeout);
 
     // 5. Always append homebrew formula + cask alternatives
-    results.extend(search_homebrew(name, false, false));
-    results.extend(search_homebrew(name, true, false));
+    let formula = search_homebrew(name, false, false);
+    outcome.extend_results(formula.results);
+    if let Some(reason) = formula.unavailable_reason {
+        outcome.push_unavailable("homebrew", reason);
+    }
+    let cask = search_homebrew(name, true, false);
+    outcome.extend_results(cask.results);
+    if let Some(reason) = cask.unavailable_reason {
+        outcome.push_unavailable("homebrew", reason);
+    }
 
     // 6. Sort by source priority + confidence
-    sort_results(&mut results, prefs);
+    sort_results(&mut outcome.results, prefs);
 
     // 7. Deduplicate by (source, attr)
-    deduplicate_results(results)
+    outcome.results = deduplicate_results(std::mem::take(&mut outcome.results));
+    outcome
 }
 
 // --- Tests
@@ -649,32 +835,41 @@ mod tests {
     fn flake_inputs_finds_overlay_package() {
         let dir = tempfile::tempdir().unwrap();
         let lock = make_flake_lock(&dir, &["fenix"]);
-        let results = search_flake_inputs("rust", &lock);
-        assert!(!results.is_empty(), "should find rust in fenix overlay");
-        assert_eq!(results[0].source, PackageSource::FlakeInput);
+        let outcome = search_flake_inputs("rust", &lock);
+        assert!(
+            !outcome.results.is_empty(),
+            "should find rust in fenix overlay"
+        );
+        assert_eq!(outcome.results[0].source, PackageSource::FlakeInput);
     }
 
     #[test]
     fn flake_inputs_empty_for_unknown_package() {
         let dir = tempfile::tempdir().unwrap();
         let lock = make_flake_lock(&dir, &["fenix"]);
-        let results = search_flake_inputs("obscure-pkg-xyz", &lock);
-        assert!(results.is_empty());
+        let outcome = search_flake_inputs("obscure-pkg-xyz", &lock);
+        assert!(outcome.results.is_empty());
+        assert!(outcome.unavailable_reason.is_none());
     }
 
     #[test]
     fn flake_inputs_missing_lock_returns_empty() {
-        let results = search_flake_inputs("rust", Path::new("/nonexistent/flake.lock"));
-        assert!(results.is_empty());
+        let outcome = search_flake_inputs("rust", Path::new("/nonexistent/flake.lock"));
+        assert!(outcome.results.is_empty());
+        assert!(
+            outcome
+                .unavailable_reason
+                .is_some_and(|reason| reason.contains("failed to read flake.lock"))
+        );
     }
 
     #[test]
     fn flake_inputs_neovim_overlay() {
         let dir = tempfile::tempdir().unwrap();
         let lock = make_flake_lock(&dir, &["neovim-nightly-overlay"]);
-        let results = search_flake_inputs("neovim", &lock);
-        assert!(!results.is_empty());
-        assert!(results[0].confidence >= 0.7);
+        let outcome = search_flake_inputs("neovim", &lock);
+        assert!(!outcome.results.is_empty());
+        assert!(outcome.results[0].confidence >= 0.7);
     }
 
     // --- search_forced_source ---
@@ -772,11 +967,11 @@ mod tests {
 
     fn stub_nxs_slow(_name: &str) -> SearchCallResult {
         sleep(Duration::from_millis(250));
-        vec![stub_result(PackageSource::Nxs, "slow-nxs")]
+        SourceBackendOutcome::from_results(vec![stub_result(PackageSource::Nxs, "slow-nxs")])
     }
 
     fn stub_nur_fast(_name: &str) -> SearchCallResult {
-        vec![stub_result(PackageSource::Nur, "fast-nur")]
+        SourceBackendOutcome::from_results(vec![stub_result(PackageSource::Nur, "fast-nur")])
     }
 
     fn stub_nxs_failed(_name: &str) -> SearchCallResult {
@@ -784,7 +979,7 @@ mod tests {
     }
 
     fn stub_flake_empty(_name: &str, _path: &Path) -> SearchCallResult {
-        Vec::new()
+        SourceBackendOutcome::default()
     }
 
     #[test]
@@ -813,12 +1008,14 @@ mod tests {
         );
 
         assert!(started.elapsed() < Duration::from_millis(200));
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].source, PackageSource::Nur);
+        assert_eq!(results.results.len(), 1);
+        assert_eq!(results.results[0].source, PackageSource::Nur);
+        assert_eq!(results.unavailable_sources.len(), 1);
+        assert_eq!(results.unavailable_sources[0].source, "nxs");
         assert!(
             warnings
                 .iter()
-                .any(|warning| warning.contains("timed out waiting")),
+                .any(|warning| warning.contains("timed out waiting for nxs search")),
             "expected timeout warning, got: {warnings:?}"
         );
     }
@@ -847,7 +1044,7 @@ mod tests {
             },
         );
 
-        assert_eq!(results.len(), 1);
+        assert_eq!(results.results.len(), 1);
         assert!(warnings.is_empty(), "warnings should be suppressed");
     }
 
@@ -875,12 +1072,14 @@ mod tests {
             },
         );
 
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].source, PackageSource::Nur);
+        assert_eq!(results.results.len(), 1);
+        assert_eq!(results.results[0].source, PackageSource::Nur);
+        assert_eq!(results.unavailable_sources.len(), 1);
+        assert_eq!(results.unavailable_sources[0].source, "nxs");
         assert!(
             warnings
                 .iter()
-                .any(|warning| warning.contains("nxs search failed")),
+                .any(|warning| warning.contains("nxs search unavailable")),
             "expected source-failure warning, got: {warnings:?}"
         );
     }
@@ -909,7 +1108,7 @@ mod tests {
             },
         );
 
-        assert_eq!(results.len(), 1);
+        assert_eq!(results.results.len(), 1);
         assert!(warnings.is_empty(), "warnings should be suppressed");
     }
 }

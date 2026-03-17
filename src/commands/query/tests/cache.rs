@@ -25,13 +25,13 @@ fn collect_info_sources_uses_cache_before_search() {
         &mut cache,
         |_, _, _| {
             searches.set(searches.get() + 1);
-            Vec::new()
+            SourceSearchOutcome::default()
         },
     );
 
     assert_eq!(searches.get(), 0);
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].source, PackageSource::Nxs);
+    assert_eq!(results.results.len(), 1);
+    assert_eq!(results.results[0].source, PackageSource::Nxs);
 }
 
 #[test]
@@ -50,13 +50,16 @@ fn collect_info_sources_falls_back_to_search_and_updates_cache() {
         &mut cache,
         |_, _, _| {
             search_calls.set(search_calls.get() + 1);
-            vec![searched_result.clone()]
+            SourceSearchOutcome {
+                results: vec![searched_result.clone()],
+                unavailable_sources: Vec::new(),
+            }
         },
     );
 
     assert_eq!(search_calls.get(), 1);
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].attr.as_deref(), Some("ripgrep"));
+    assert_eq!(results.results.len(), 1);
+    assert_eq!(results.results[0].attr.as_deref(), Some("ripgrep"));
 
     let cached = cache
         .as_ref()
@@ -80,15 +83,18 @@ fn collect_info_sources_searches_on_cache_miss() {
         &mut cache,
         |_, _, _| {
             searches.set(searches.get() + 1);
-            vec![source_result(
-                "ripgrep",
-                PackageSource::Nxs,
-                Some("ripgrep"),
-                1.0,
-            )]
+            SourceSearchOutcome {
+                results: vec![source_result(
+                    "ripgrep",
+                    PackageSource::Nxs,
+                    Some("ripgrep"),
+                    1.0,
+                )],
+                unavailable_sources: Vec::new(),
+            }
         },
     );
 
-    assert_eq!(results.len(), 1);
+    assert_eq!(results.results.len(), 1);
     assert_eq!(searches.get(), 1);
 }

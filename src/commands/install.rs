@@ -649,8 +649,8 @@ fn search_for_package(
     // Explicit --cask / --mas skip search (instant, no ambiguity)
     if args.cask() || args.mas() {
         let prefs = source_prefs_from_args(args);
-        let results = search_all_sources(package, &prefs, None);
-        return resolve_search_candidates(package, &results, args, &ctx.repo_root, ctx);
+        let outcome = search_all_sources(package, &prefs, None);
+        return resolve_search_candidates(package, &outcome.results, args, &ctx.repo_root, ctx);
     }
 
     if let Some(cache) = cache.as_mut() {
@@ -670,24 +670,32 @@ fn search_for_package(
     let flake_lock = ctx.repo_root.join("flake.lock");
     let flake_lock_path = flake_lock.exists().then_some(flake_lock.as_path());
 
-    let results = search_all_sources(package, &prefs, flake_lock_path);
+    let outcome = search_all_sources(package, &prefs, flake_lock_path);
 
-    if results.is_empty() {
+    if outcome.results.is_empty() {
         show_unknown_group(package, ctx);
-        ctx.printer
-            .error(&format!("{package}: not found in any source"));
+        if outcome.unavailable_sources.is_empty() {
+            ctx.printer
+                .error(&format!("{package}: not found in any source"));
+        } else {
+            ctx.printer
+                .error(&format!("{package}: not found in any available source"));
+            for source in &outcome.unavailable_sources {
+                Printer::detail(&format!("- {}: {}", source.source, source.reason));
+            }
+        }
         return None;
     }
 
     if let Some(cache) = cache.as_mut()
-        && let Err(err) = cache.set_many(&results)
+        && let Err(err) = cache.set_many(&outcome.results)
     {
         ctx.printer.warn(&format!(
             "failed to update search cache for {package}: {err}"
         ));
     }
 
-    resolve_search_candidates(package, &results, args, &ctx.repo_root, ctx)
+    resolve_search_candidates(package, &outcome.results, args, &ctx.repo_root, ctx)
 }
 
 fn resolve_search_candidates(

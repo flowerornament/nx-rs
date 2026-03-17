@@ -21,7 +21,7 @@ use crate::infra::query_info::{
     ConfigOptionInfo, FlakeHubInfo, darwin_service_info, hm_module_info, search_flakehub,
 };
 use crate::infra::shell::run_json_command_quiet;
-use crate::infra::sources::search_all_sources_quiet;
+use crate::infra::sources::{SourceSearchOutcome, UnavailableSource, search_all_sources_quiet};
 use crate::output::json::to_string_compact;
 use crate::output::printer::Printer;
 
@@ -123,7 +123,21 @@ pub fn cmd_info(args: &InfoArgs, ctx: &QueryContext<'_>) -> i32 {
     };
 
     let mut cache = MultiSourceCache::load(ctx.repo_root).ok();
-    let info_sources = collect_info_sources(package, args, ctx.repo_root, &mut cache);
+    let info_search = collect_info_sources(package, args, ctx.repo_root, &mut cache);
+    let info_sources = info_search.results.clone();
+    let hm_module = hm_module_info(package, ctx.repo_root);
+    let darwin_service = darwin_service_info(package, ctx.repo_root);
+    let flakehub = collect_info_flakehub(package, args.bleeding_edge, search_flakehub);
+    let unavailable_sources = if location.is_none()
+        && info_sources.is_empty()
+        && hm_module.is_none()
+        && darwin_service.is_none()
+        && flakehub.is_empty()
+    {
+        info_search.unavailable_sources.clone()
+    } else {
+        Vec::new()
+    };
 
     if ctx.wants_json(args.json) {
         let sources = info_sources
@@ -136,9 +150,10 @@ pub fn cmd_info(args: &InfoArgs, ctx: &QueryContext<'_>) -> i32 {
             installed: location.is_some(),
             location: location.map(|value| value.to_string()),
             sources,
-            hm_module: hm_module_info(package, ctx.repo_root),
-            darwin_service: darwin_service_info(package, ctx.repo_root),
-            flakehub: collect_info_flakehub(package, args.bleeding_edge, search_flakehub),
+            unavailable_sources,
+            hm_module,
+            darwin_service,
+            flakehub,
         };
         match serde_json::to_string_pretty(&output) {
             Ok(text) => {
@@ -161,7 +176,6 @@ pub fn cmd_info(args: &InfoArgs, ctx: &QueryContext<'_>) -> i32 {
         installed_source.as_deref(),
         active_overlay.as_deref(),
     );
-    let flakehub = collect_info_flakehub(package, args.bleeding_edge, search_flakehub);
 
     Printer::heading(&format!("{package}  {status}"));
     if let Some(location) = location.as_ref() {
@@ -175,23 +189,21 @@ pub fn cmd_info(args: &InfoArgs, ctx: &QueryContext<'_>) -> i32 {
     }
 
     if location.is_none() && info_sources.is_empty() && flakehub.is_empty() {
-        ctx.printer.error(&format!("{package} not found"));
+        if info_search.unavailable_sources.is_empty() {
+            ctx.printer.error(&format!("{package} not found"));
+        } else {
+            ctx.printer
+                .error(&format!("{package} not found in available sources"));
+            render_unavailable_sources(&info_search.unavailable_sources);
+        }
         println!();
         Printer::detail(&format!("Try: nx {package}"));
         return 0;
     }
 
     render_info_sources_plain(&info_sources, installed_source.as_deref());
-    render_config_option_plain(
-        "Home-manager module",
-        "Module",
-        hm_module_info(package, ctx.repo_root),
-    );
-    render_config_option_plain(
-        "nix-darwin service",
-        "Service",
-        darwin_service_info(package, ctx.repo_root),
-    );
+    render_config_option_plain("Home-manager module", "Module", hm_module);
+    render_config_option_plain("nix-darwin service", "Service", darwin_service);
     render_flakehub_plain(&flakehub);
     render_install_hints_plain(package, &info_sources, location.is_some());
 
@@ -202,44 +214,53 @@ fn source_prefs_from_info_args(_args: &InfoArgs) -> SourcePreferences {
     SourcePreferences::default()
 }
 
-fn collect_info_sources(
-    package: &str,
-    args: &InfoArgs,
-    repo_root: &Path,
-    cache: &mut Option<MultiSourceCache>,
-) -> Vec<SourceResult> {
-    collect_info_sources_with(package, args, repo_root, cache, search_all_sources_quiet)
-}
-
 fn collect_info_sources_with<F>(
     package: &str,
     args: &InfoArgs,
     repo_root: &Path,
     cache: &mut Option<MultiSourceCache>,
     mut search: F,
-) -> Vec<SourceResult>
+) -> SourceSearchOutcome
 where
-    F: FnMut(&str, &SourcePreferences, Option<&Path>) -> Vec<SourceResult>,
+    F: FnMut(&str, &SourcePreferences, Option<&Path>) -> SourceSearchOutcome,
 {
     if let Some(cache_ref) = cache.as_ref() {
         let cached = cache_ref.get_all(package);
         if !cached.is_empty() {
-            return cached;
+            return SourceSearchOutcome {
+                results: cached,
+                unavailable_sources: Vec::new(),
+            };
         }
     }
 
     let prefs = source_prefs_from_info_args(args);
     let flake_lock = repo_root.join("flake.lock");
     let flake_lock_path = flake_lock.exists().then_some(flake_lock.as_path());
-    let results = search(package, &prefs, flake_lock_path);
+    let outcome = search(package, &prefs, flake_lock_path);
 
-    if !results.is_empty()
+    if !outcome.results.is_empty()
         && let Some(cache_ref) = cache.as_mut()
     {
-        let _ = cache_ref.set_many(&results);
+        let _ = cache_ref.set_many(&outcome.results);
     }
 
-    results
+    outcome
+}
+
+fn render_unavailable_sources(unavailable_sources: &[UnavailableSource]) {
+    for source in unavailable_sources {
+        Printer::detail(&format!("- {}: {}", source.source, source.reason));
+    }
+}
+
+fn collect_info_sources(
+    package: &str,
+    args: &InfoArgs,
+    repo_root: &Path,
+    cache: &mut Option<MultiSourceCache>,
+) -> SourceSearchOutcome {
+    collect_info_sources_with(package, args, repo_root, cache, search_all_sources_quiet)
 }
 
 fn collect_info_flakehub<F>(package: &str, include: bool, mut search: F) -> Vec<FlakeHubInfo>
@@ -853,6 +874,8 @@ struct InfoJsonOutput {
     installed: bool,
     location: Option<String>,
     sources: Vec<InfoSourceJson>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    unavailable_sources: Vec<UnavailableSource>,
     hm_module: Option<ConfigOptionInfo>,
     darwin_service: Option<ConfigOptionInfo>,
     flakehub: Vec<FlakeHubInfo>,

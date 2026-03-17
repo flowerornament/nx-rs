@@ -1,6 +1,10 @@
 # CLI Design Principles
 
 High-level philosophy for CLI interfaces. These principles guide design decisions but don't specify implementation details.
+Current `nx-rs` implementation is Rust-first: use [`src/output/printer.rs`](../src/output/printer.rs),
+[`src/output/style.rs`](../src/output/style.rs), [`src/commands/help.rs`](../src/commands/help.rs),
+and [`.agents/SPEC.md`](./SPEC.md) as the implementation authority.
+Python/Rich/Typer snippets below are historical reference material, not required implementation guidance.
 
 **For specific patterns:** See `.agents/ux-design-system.md`
 
@@ -220,60 +224,12 @@ class Output:
             self.console.print(f"[heading]{title}[/heading]")
 ```
 
-### Consider Typer for New CLIs
+### Current nx-rs Touchpoints
 
-For new projects or major refactors, [Typer](https://github.com/fastapi/typer) provides:
-- Type-hint based argument parsing
-- Automatic help generation
-- Rich integration out of the box
-- Cleaner command structure
-
-```python
-import typer
-from rich.console import Console
-
-app = typer.Typer()
-console = Console()
-
-@app.command()
-def install(package: str, dry_run: bool = False):
-    """Install a package."""
-    if dry_run:
-        console.print("[yellow]DRY RUN[/yellow]")
-    console.print(f"[success]✓[/success] Installed {package}")
-
-if __name__ == "__main__":
-    app()
-```
-
-### Test Your Output
-
-Rich supports capturing output for testing:
-
-```python
-from rich.console import Console
-
-def test_success_message():
-    console = Console(force_terminal=True, record=True)
-    output = Output(console=console)
-
-    output.success("Package installed")
-
-    result = console.export_text()
-    assert "✓" in result
-    assert "Package installed" in result
-```
-
-### Comparison: Library Approaches
-
-| Library | Style Syntax | Semantic Colors | Notes |
-|---------|--------------|-----------------|-------|
-| **Rich** | `[bold red]text[/]` | Via Theme | Most flexible, pure output |
-| **Typer** | Uses Rich | Via Rich Theme | Full CLI framework |
-| **Cleo** (Poetry) | `<info>text</>` | Built-in tags | Own ecosystem |
-| **Click** | `click.style()` | Limited | Older, less pretty |
-
-Rich is the right choice for Python CLIs. The Theme system gives you semantic colors without sacrificing flexibility.
+- `src/output/printer.rs` owns semantic output methods such as `success()`, `error()`, `heading()`, and confirmation prompts.
+- `src/output/style.rs` owns output-mode selection (`--plain`, `--unicode`, `--minimal`) and color policy.
+- `src/commands/help.rs` owns hierarchical help rendering and flag/topic discovery.
+- `.agents/SPEC.md` is the behavioral contract; if a principle here conflicts with the spec or current tests, the spec/tests win.
 
 ---
 
@@ -283,6 +239,3 @@ Rich is the right choice for Python CLIs. The Theme system gives you semantic co
 - **Cargo** - Clean, informative build output
 - **GitHub CLI** - Modern, consistent design
 - **pnpm** - Fast, minimal output
-- [Rich documentation](https://rich.readthedocs.io/)
-- [Typer](https://github.com/fastapi/typer) - Modern CLI framework
-- [Cleo](https://github.com/python-poetry/cleo) - Poetry's CLI library

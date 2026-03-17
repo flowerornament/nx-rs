@@ -514,7 +514,9 @@ mod tests {
     use super::*;
     use clap::CommandFactory;
     use clap::error::ErrorKind;
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    const SPEC_DOC: &str = include_str!("../.agents/SPEC.md");
 
     // --- preprocess_args ---
 
@@ -594,36 +596,95 @@ mod tests {
         assert_eq!(result.len(), 2);
     }
 
-    #[test]
-    fn known_commands_match_spec_plus_intentional_extensions() {
-        let spec_commands: BTreeSet<_> = [
-            "help",
-            "init",
-            "install",
-            "remove",
-            "rm",
-            "where",
-            "list",
-            "info",
-            "status",
-            "installed",
-            "undo",
-            "update",
-            "test",
-            "rebuild",
-            "upgrade",
-        ]
-        .into_iter()
-        .collect();
-        let known_commands: BTreeSet<_> = KNOWN_COMMANDS.iter().copied().collect();
+    fn markdown_code_spans(line: &str) -> Vec<&str> {
+        let mut spans = Vec::new();
+        let mut parts = line.split('`');
+        let _ = parts.next();
+        while let Some(span) = parts.next() {
+            spans.push(span);
+            let _ = parts.next();
+        }
+        spans
+    }
 
-        assert!(spec_commands.is_subset(&known_commands));
+    fn spec_section(start: &str, end: &str) -> &'static str {
+        let (_, rest) = SPEC_DOC
+            .split_once(start)
+            .expect("spec section start should exist");
+        let (section, _) = rest.split_once(end).expect("spec section end should exist");
+        section
+    }
 
-        let extensions: BTreeSet<_> = known_commands.difference(&spec_commands).copied().collect();
-        let expected_extensions: BTreeSet<_> = ["search", "secret", "secrets", "uninstall"]
-            .into_iter()
-            .collect();
-        assert_eq!(extensions, expected_extensions);
+    fn add_spec_flag_token(
+        token: &str,
+        long_flags: &mut BTreeSet<String>,
+        short_flags: &mut BTreeSet<char>,
+    ) {
+        for part in token.split('/') {
+            if let Some(long) = part.strip_prefix("--") {
+                long_flags.insert(long.to_string());
+            } else if let Some(short) = part.strip_prefix('-')
+                && short.len() == 1
+            {
+                short_flags.insert(short.chars().next().expect("single short flag"));
+            }
+        }
+    }
+
+    fn spec_known_commands() -> BTreeSet<String> {
+        spec_section("Known commands:\n", "## 2.2 Global Options")
+            .lines()
+            .filter_map(|line| line.trim_start().strip_prefix("- `"))
+            .filter_map(|line| line.split('`').next())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn spec_root_flags() -> (BTreeSet<String>, BTreeSet<char>) {
+        let mut long_flags = BTreeSet::new();
+        let mut short_flags = BTreeSet::new();
+
+        for line in spec_section("## 2.2 Global Options", "## 2.3 Command Options").lines() {
+            for token in markdown_code_spans(line) {
+                add_spec_flag_token(token, &mut long_flags, &mut short_flags);
+            }
+        }
+
+        (long_flags, short_flags)
+    }
+
+    fn spec_subcommand_flags() -> BTreeMap<String, (BTreeSet<String>, BTreeSet<char>)> {
+        let mut by_command = BTreeMap::new();
+        let mut current_command = None::<String>;
+
+        for line in spec_section("## 2.3 Command Options", "## 2.4 Exit Code Contract").lines() {
+            if let Some(command_line) = line.strip_prefix("- `") {
+                let command = command_line
+                    .split('`')
+                    .next()
+                    .expect("command bullet should include code span")
+                    .to_string();
+                by_command
+                    .entry(command.clone())
+                    .or_insert_with(|| (BTreeSet::new(), BTreeSet::new()));
+                current_command = Some(command);
+                continue;
+            }
+
+            if let Some(options_line) = line.trim_start().strip_prefix("- options: ") {
+                let Some(command) = current_command.as_ref() else {
+                    panic!("options line should follow a command bullet");
+                };
+                let (long_flags, short_flags) = by_command
+                    .get_mut(command)
+                    .expect("current command should be initialized");
+                for token in markdown_code_spans(options_line) {
+                    add_spec_flag_token(token, long_flags, short_flags);
+                }
+            }
+        }
+
+        by_command
     }
 
     fn clap_command_names_and_aliases() -> BTreeSet<String> {
@@ -637,11 +698,19 @@ mod tests {
             .collect()
     }
 
-    fn local_long_flags_for_subcommand(command: &str) -> BTreeSet<String> {
-        let mut root = Cli::command();
-        let subcommand = root
-            .find_subcommand_mut(command)
-            .expect("subcommand should exist");
+    fn command_for_path<'a>(path: impl IntoIterator<Item = &'a str>) -> clap::Command {
+        let mut command = Cli::command();
+        for segment in path {
+            command = command
+                .find_subcommand_mut(segment)
+                .unwrap_or_else(|| panic!("subcommand path segment `{segment}` should exist"))
+                .clone();
+        }
+        command
+    }
+
+    fn local_long_flags_for_subcommand_path(path: &[&str]) -> BTreeSet<String> {
+        let subcommand = command_for_path(path.iter().copied());
         let mut flags: BTreeSet<_> = subcommand
             .get_arguments()
             .filter_map(|arg| arg.get_long().map(str::to_owned))
@@ -654,32 +723,42 @@ mod tests {
         flags
     }
 
-    fn declared_long_flags_for_subcommand(command: &str) -> BTreeSet<String> {
-        let mut root = Cli::command();
-        let subcommand = root
-            .find_subcommand_mut(command)
-            .expect("subcommand should exist");
-        let mut flags: BTreeSet<_> = subcommand
-            .get_arguments()
-            .filter_map(|arg| arg.get_long().map(str::to_owned))
-            .collect();
+    fn declared_long_flags_for_subcommand_path(path: &[&str]) -> BTreeSet<String> {
+        let subcommand = command_for_path(path.iter().copied());
+        let mut flags = BTreeSet::new();
+        for arg in subcommand.get_arguments() {
+            if let Some(longs) = arg.get_long_and_visible_aliases() {
+                flags.extend(longs.into_iter().map(str::to_owned));
+            }
+        }
         flags.remove("help");
         flags.remove("version");
         flags
     }
 
-    fn declared_short_flags_for_subcommand(command: &str) -> BTreeSet<char> {
-        let mut root = Cli::command();
-        let subcommand = root
-            .find_subcommand_mut(command)
-            .expect("subcommand should exist");
-        let mut flags: BTreeSet<_> = subcommand
-            .get_arguments()
-            .filter_map(clap::Arg::get_short)
-            .collect();
+    fn declared_short_flags_for_subcommand_path(path: &[&str]) -> BTreeSet<char> {
+        let subcommand = command_for_path(path.iter().copied());
+        let mut flags = BTreeSet::new();
+        for arg in subcommand.get_arguments() {
+            if let Some(shorts) = arg.get_short_and_visible_aliases() {
+                flags.extend(shorts);
+            }
+        }
         flags.remove(&'h');
         flags.remove(&'V');
         flags
+    }
+
+    fn local_long_flags_for_subcommand(command: &str) -> BTreeSet<String> {
+        local_long_flags_for_subcommand_path(&[command])
+    }
+
+    fn declared_long_flags_for_subcommand(command: &str) -> BTreeSet<String> {
+        declared_long_flags_for_subcommand_path(&[command])
+    }
+
+    fn declared_short_flags_for_subcommand(command: &str) -> BTreeSet<char> {
+        declared_short_flags_for_subcommand_path(&[command])
     }
 
     fn root_long_flags() -> BTreeSet<String> {
@@ -719,6 +798,11 @@ mod tests {
             .collect();
         let clap_commands = clap_command_names_and_aliases();
         assert_eq!(known_commands, clap_commands);
+    }
+
+    #[test]
+    fn spec_known_commands_match_clap_subcommand_surface() {
+        assert_eq!(spec_known_commands(), clap_command_names_and_aliases());
     }
 
     #[test]
@@ -768,6 +852,13 @@ mod tests {
         assert_eq!(root_long_flags(), expected_longs);
 
         let expected_shorts: BTreeSet<_> = ['v'].into_iter().collect();
+        assert_eq!(root_short_flags(), expected_shorts);
+    }
+
+    #[test]
+    fn spec_global_flags_match_root_flag_metadata() {
+        let (expected_longs, expected_shorts) = spec_root_flags();
+        assert_eq!(root_long_flags(), expected_longs);
         assert_eq!(root_short_flags(), expected_shorts);
     }
 
@@ -1021,5 +1112,22 @@ mod tests {
         assert_subcommand_local_long_flags("update", &[]);
         assert_subcommand_local_long_flags("test", &[]);
         assert_subcommand_local_long_flags("rebuild", &[]);
+    }
+
+    #[test]
+    fn spec_command_option_blocks_match_clap_metadata() {
+        for (command, (expected_longs, expected_shorts)) in spec_subcommand_flags() {
+            let path: Vec<_> = command.split(' ').collect();
+            assert_eq!(
+                declared_long_flags_for_subcommand_path(&path),
+                expected_longs,
+                "unexpected long-flag set for spec block `{command}`"
+            );
+            assert_eq!(
+                declared_short_flags_for_subcommand_path(&path),
+                expected_shorts,
+                "unexpected short-flag set for spec block `{command}`"
+            );
+        }
     }
 }

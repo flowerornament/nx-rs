@@ -1,6 +1,9 @@
 # nx Design System
 
 Specific patterns and specs for nx CLI output.
+Current implementation is Rust-first: use [`src/output/printer.rs`](../src/output/printer.rs),
+[`src/output/style.rs`](../src/output/style.rs), and [`src/commands/help.rs`](../src/commands/help.rs)
+for live behavior. Historical Python/Rich examples below are reference material only.
 
 **Created:** 2026-01-11
 **Updated:** 2026-01-14
@@ -454,34 +457,12 @@ The title text can differ, but the **structure** (bold + parenthetical count) mu
 
 See `.agents/cli-design-principles.md` for general code recommendations.
 
-### Rich Theme (Python)
+### Current Rust Implementation
 
-Use Rich's Theme system for semantic colors:
-
-```python
-from rich.console import Console
-from rich.theme import Theme
-
-THEME = Theme({
-    "success": "green",
-    "error": "bold red",
-    "warning": "yellow",
-    "heading": "bold",
-    "path": "cyan",
-    "number": "cyan",
-    "callout": "cyan",
-    "dim": "dim",
-})
-
-console = Console(theme=THEME)
-```
-
-Then use semantic names in output:
-```python
-console.print("[success]✓[/success] {name} installed")
-console.print("[heading]Package Status[/heading] ({count})")
-console.print("Location: [path]{file}:{line}[/path]")
-```
+- `Printer` centralizes semantic output helpers such as `action()`, `success()`, `warn()`, `error()`, and `heading()`.
+- `OutputStyle` computes glyph/color policy from `--plain`, `--unicode`, `--minimal`, `NO_COLOR`, `TERM`, and terminal detection.
+- Hierarchical help is rendered by `src/commands/help.rs`, not by clap's default topic matching alone.
+- When these implementation details and a historical example disagree, the Rust implementation wins.
 
 ### Layout Constants
 
@@ -495,13 +476,9 @@ INDENT2 = "    "      # 4 spaces
 
 ### Glyph + Text Helper
 
-```python
-def glyph_line(self, glyph: str, text: str, color: str = None):
-    """Print glyph at column 0, text at column 2."""
-    # Glyph takes 1 char, then 1 space to reach column 2
-    styled_glyph = self.colorize(glyph, color) if color else glyph
-    print(f"{styled_glyph} {text}")
-```
+In the current Rust implementation, `Printer` owns glyph selection and rendering. Keep
+command handlers at the semantic level (`success`, `error`, `body`, `detail`) instead of
+manually formatting glyphs inline.
 
 ---
 

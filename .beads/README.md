@@ -14,26 +14,26 @@ Beads is issue tracking that lives in your repo, making it perfect for AI coding
 
 ```bash
 # Create new issues
-bd create "Add user authentication"
+bd create --title="Add user authentication" --type=task --priority=2
 
-# View all issues
-bd list
+# Find ready work
+bd ready
 
 # View issue details
 bd show <issue-id>
 
-# Update issue status
-bd update <issue-id> --status in_progress
-bd update <issue-id> --status done
+# Claim or close work
+bd update <issue-id> --claim
+bd close <issue-id>
 
-# Sync with git remote
-bd sync
+# Sync tracker state
+bd dolt push
 ```
 
 ### Working with Issues
 
 Issues in Beads are:
-- **Git-native**: Stored in `.beads/issues.jsonl` and synced like code
+- **Repo-local**: Stored under `.beads/` with a Dolt-backed history
 - **AI-friendly**: CLI-first design works perfectly with AI coding agents
 - **Branch-aware**: Issues can follow your branch workflow
 - **Always in sync**: Auto-syncs with your commits

@@ -2,7 +2,7 @@
 
 High-level philosophy for CLI interfaces. These principles guide design decisions but don't specify implementation details.
 
-**For specific patterns:** See `NX_DESIGN_SYSTEM.md`
+**For specific patterns:** See `.agents/ux-design-system.md`
 
 ---
 

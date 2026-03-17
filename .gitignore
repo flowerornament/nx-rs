@@ -4,7 +4,6 @@ result
 # bd sync-branch artifacts are tracked in beads-sync, not main.
 .beads/issues.jsonl
 .beads/interactions.jsonl
-.beads/metadata.json
 
 # Dolt ephemeral (belt-and-suspenders with .beads/.gitignore)
 .dolt/

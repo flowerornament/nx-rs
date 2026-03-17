@@ -1,6 +1,6 @@
 # nx Behavior Specification
 
-Status: Final v1.1
+Status: Final v1.2
 Date: 2026-03-16
 Scope: Defines the observable behavior contract for `nx-rs`.
 Historical parity notes from earlier `nx` implementations are informative only when this
@@ -24,16 +24,23 @@ When implementation and this document disagree, this repository's tests are cons
 ## 2.1 Invocation
 
 - Binary name: `nx`
-- Framework behavior in Python: Typer app with `no_args_is_help=True`
+- Framework behavior: clap-based Rust CLI with root help when no command is provided and a
+  hierarchical `help` subcommand for topic lookup
 - Command preprocessing:
   - If first CLI arg is not a known command and does not start with `-`, prepend `install`.
   - Example: `nx ripgrep` behaves as `nx install ripgrep`.
 
 Known commands:
 
+- `help`
+- `init`
 - `install`
 - `remove`
 - `rm` (alias of `remove`)
+- `uninstall` (alias of `remove`)
+- `secret`
+- `secrets` (alias of `secret`)
+- `search`
 - `where`
 - `list`
 - `info`
@@ -57,12 +64,24 @@ Defined at root callback and persisted in app state:
 
 ## 2.3 Command Options
 
+- `help`
+  - args: `[topics...]`
+- `init`
+  - options: `--refresh`
 - `install`
   - args: `<packages...>`
   - options: `--yes/-y`, `--dry-run/-n`, `--cask`, `--mas`, `--service`, `--rebuild`, `--bleeding-edge`, `--nur`, `--source`, `--explain`, `--engine`, `--model`
-- `remove` / `rm`
+- `remove` / `rm` / `uninstall`
   - args: `<packages...>`
   - options: `--yes/-y`, `--dry-run/-n`, `--model`
+- `secret` / `secrets`
+  - subcommands: `add`
+- `secret add`
+  - args: `[key]`
+  - options: `--name/--key`, `--value`, `--value-stdin`
+- `search`
+  - args: `<package>`
+  - options: `--bleeding-edge`, `--nur`, `--json`
 - `where`
   - args: `<package>`
 - `list`
@@ -77,7 +96,7 @@ Defined at root callback and persisted in app state:
   - args: `<packages...>`
   - options: `--json`, `--show-location`
 - `undo`
-  - no args
+  - options: `--yes/-y`
 - `update`
   - passthrough args accepted
 - `test`
@@ -90,8 +109,12 @@ Defined at root callback and persisted in app state:
 
 ## 2.4 Exit Code Contract
 
+- `help`: `0` when help renders successfully; `2` when the requested topic path cannot be resolved.
+- `init`: `0` on success or user cancellation; `1` on manifest load/save failure.
 - `install`: `2` when no package args; otherwise `0` if all requested install actions succeeded or nothing selected; `1` on partial failure.
-- `remove`/`rm`: `2` when no package args; otherwise `0`.
+- `remove`/`rm`/`uninstall`: `2` when no package args; otherwise `0`.
+- `secret add`: `0` on successful update; `1` on input validation, file, or `sops` failure.
+- `search`: `0` when at least one result is rendered; `1` on not found or rendering failure.
 - `where`: `2` when no package arg; otherwise `0` (including not-found).
 - `list`: `1` for invalid source filter; otherwise `0`.
 - `info`: `2` when no package arg; otherwise `0` (including not-found).
@@ -387,7 +410,7 @@ Network behavior:
 
 - Lists modified files from `git status --porcelain`.
 - If none: prints `Nothing to undo.` and exits `0`.
-- Prompts `Revert all changes?` (default no), then reverts each modified file using `git checkout -- <file>`.
+- Prompts `Revert all changes?` (default no) unless `--yes` is set, then reverts each modified file using `git checkout -- <file>`.
 
 ## 10.2 `update`
 
@@ -397,13 +420,10 @@ Network behavior:
 
 ## 10.3 `test`
 
-Runs in order:
+Runs `just ci` from the repository root through the shared streaming command path.
 
-1. `ruff check .` (cwd: `scripts/nx`)
-2. `mypy .` (cwd: `scripts/nx`)
-3. `python3 -m unittest discover -s scripts/nx/tests` (cwd: repo root)
-
-Any failure stops pipeline and returns `1`.
+- Returns `0` when `just ci` succeeds.
+- Returns `1` when `just ci` fails or cannot be started.
 
 ## 10.4 `rebuild`
 
@@ -472,7 +492,7 @@ Dry-run behavior:
 - `info --json` includes package name and source metadata.
 - `installed --json` includes queried package key.
 
-## 14. Known Compatibility Notes For Rust Port
+## 14. Legacy Compatibility Notes
 
 - Preserve permissive behavior where current CLI does not fail hard:
   - `where` not-found returns `0`
@@ -482,10 +502,5 @@ Dry-run behavior:
   - rebuild preflight failures
   - missing install attr for nix-based sources
   - invalid `list` source filter
-- Intentional Rust-only additive command surface (non-breaking extensions beyond Python/SPEC §2.1 list):
-  - `search <package>` (+ `--json`, `--bleeding-edge`, `--nur`) for read-only source lookup.
-  - `secret add` (`secret` and alias `secrets`) for sops-backed secret mutation.
-  - `uninstall` alias for `remove`.
-- These extensions must remain additive only:
-  - no changed semantics for SPEC-defined commands/options/exit codes
-  - explicit parser tests must lock extension passthrough and command-set boundaries
+- Historical parity notes from earlier implementations are informative only when preserved by
+  the current sections above.

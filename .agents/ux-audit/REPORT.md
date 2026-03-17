@@ -4,6 +4,12 @@ Date: 2026-03-01
 Binary: local release build (includes `installed` single-package fix + cwd auto-detect)
 Test repo: `~/.nix-config` (108 packages across nxs/brew/cask/services)
 
+Historical snapshot only. Some findings below were fixed after this capture; treat
+`.agents/SPEC.md`, the current CLI help, and the test suite as authoritative.
+Known resolved since capture:
+- `list invalid-source` now exits `1`
+- `undo` now supports `-y, --yes`
+
 ## Test Matrix
 
 43 raw output captures in this directory. Every command tested with normal, edge, and error cases.

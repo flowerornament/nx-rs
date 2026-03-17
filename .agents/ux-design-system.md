@@ -5,7 +5,7 @@ Specific patterns and specs for nx CLI output.
 **Created:** 2026-01-11
 **Updated:** 2026-01-14
 **Status:** Implemented
-**See also:** `CLI_DESIGN_PRINCIPLES.md` for philosophy
+**See also:** `.agents/cli-design-principles.md` for philosophy
 
 ---
 
@@ -452,7 +452,7 @@ The title text can differ, but the **structure** (bold + parenthetical count) mu
 
 ## Implementation Notes
 
-See `CLI_DESIGN_PRINCIPLES.md` for general code recommendations.
+See `.agents/cli-design-principles.md` for general code recommendations.
 
 ### Rich Theme (Python)
 
@@ -559,7 +559,8 @@ When reviewing a command's output, check:
 
 | File | Purpose |
 |------|---------|
-| `scripts/nx/nx` | Entry point |
-| `scripts/nx/printer.py` | Output formatting, glyph system |
-| `scripts/nx/commands.py` | Command implementations |
-| `.agents/NX_DESIGN_SYSTEM.md` | Patterns & specs (this doc) |
+| `src/app.rs` | CLI entrypoint and command dispatch |
+| `src/output/printer.rs` | Output formatting and semantic printer helpers |
+| `src/output/style.rs` | Output mode and glyph selection |
+| `src/commands/` | Command implementations |
+| `.agents/ux-design-system.md` | Patterns & specs (this doc) |

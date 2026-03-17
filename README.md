@@ -9,7 +9,8 @@ It helps you find package definitions, inspect what is installed, and make deter
 manifest edits for package add/remove flows.
 
 The tool is intended for repositories that manage system and home configuration in Nix,
-and it uses `NX_REPO_ROOT` to target the repository it should operate on.
+and it uses `NX_REPO_ROOT` as an override when you want to target a repo other than the
+current `flake.nix` tree.
 
 ## Usage
 
@@ -37,7 +38,8 @@ sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .
 
 ### Configure Repository Root
 
-`nx` requires `NX_REPO_ROOT`:
+`nx` auto-detects the managed repo by walking up from the current working directory until
+it finds `flake.nix`. Set `NX_REPO_ROOT` only when you want to override that detection:
 
 ```bash
 export NX_REPO_ROOT=/path/to/your/config-repo
@@ -68,7 +70,7 @@ Requirements:
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `NX_REPO_ROOT` | Yes | none | Absolute/relative path to the target Nix configuration repository. |
+| `NX_REPO_ROOT` | No | auto-detect from `cwd` / `flake.nix` | Absolute/relative path override for the target Nix configuration repository. |
 | `NX_RS_SOPS_BIN` | No | `sops` | Override the `sops` executable used by `nx secret add`. |
 | `NX_RS_AUTO_REFRESH` | No | enabled | Controls auto-refresh of a local cargo-installed `nx` binary before `rebuild`/`upgrade`. Set to `0`, `false`, or `no` to disable. |
 | `NO_COLOR` | No | unset | Disables colored output when set. |
@@ -77,10 +79,14 @@ Requirements:
 ### Examples
 
 ```bash
+# Scan the current repo and write .nx/manifest.toml
+nx init
+
 # Bare package names are treated as "install"
 nx ripgrep
 
 nx install --cask firefox
+nx search ripgrep
 nx remove ripgrep
 nx where ripgrep
 nx list --plain
@@ -90,9 +96,10 @@ nx upgrade
 
 ### Commands
 
+- `help` (hierarchical command/flag help topics)
+- `init`
 - `install`
 - `remove` (aliases: `rm`, `uninstall`)
-- `help` (hierarchical command/flag help topics)
 - `search`
 - `where`
 - `list`
@@ -116,7 +123,8 @@ nx <command> --help
 
 ### Command Behavior
 
-- `where`, `list`, `info`, `status`, `installed`, and `search` are read-only.
+- `help`, `where`, `list`, `info`, `status`, `installed`, and `search` are read-only.
+- `init` scans the repo and writes `.nx/manifest.toml` after confirmation.
 - `install` and `remove` support `--dry-run` to preview changes.
 
 ## Development
@@ -164,7 +172,7 @@ Work is tracked in `bd` (`./.beads`):
 bd ready
 bd create --title="<task>" --type=task --priority=2
 bd close <id>
-bd sync
+bd dolt push
 ```
 
 ## License

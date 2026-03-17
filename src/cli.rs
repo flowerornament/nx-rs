@@ -137,10 +137,7 @@ pub enum CommandKind {
 
 #[derive(Debug, Clone, Parser, Default)]
 pub struct InstallArgs {
-    #[arg(
-        value_name = "PACKAGES",
-        help = "Package names/attributes to install (defaults to interactive lookup when omitted)"
-    )]
+    #[arg(value_name = "PACKAGES", help = "Package names/attributes to install")]
     pub packages: Vec<String>,
     #[command(flatten)]
     pub flow: InstallFlowArgs,
@@ -381,10 +378,7 @@ pub struct InfoArgs {
 
 #[derive(Debug, Clone, Parser)]
 pub struct InstalledArgs {
-    #[arg(
-        value_name = "PACKAGES",
-        help = "Package names to verify (empty = summary mode)"
-    )]
+    #[arg(value_name = "PACKAGES", help = "Package names to verify")]
     pub packages: Vec<String>,
     #[arg(long, help = "Emit machine-readable JSON output")]
     pub json: bool,

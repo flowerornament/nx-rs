@@ -229,6 +229,7 @@ impl ClaudeCodeEngine {
         prompt: &str,
         cwd: &Path,
         allowed_tools: Option<&[&str]>,
+        max_turns: Option<u32>,
     ) -> anyhow::Result<String> {
         let printer = Printer::new(self.style);
         let session_id = uuid::Uuid::new_v4();
@@ -254,6 +255,11 @@ impl ClaudeCodeEngine {
             cmd.args(["--allowed-tools", &tool_list]);
         }
 
+        if let Some(turns) = max_turns {
+            let turns_str = turns.to_string();
+            cmd.args(["--max-turns", &turns_str]);
+        }
+
         cmd.args(["--permission-mode", "bypassPermissions"]);
         cmd.current_dir(cwd);
 
@@ -274,7 +280,8 @@ impl ClaudeCodeEngine {
         if let Some(mut stdin) = child.stdin.take() {
             use std::io::Write;
             let json = serde_json::to_string(&input)?;
-            let _ = writeln!(stdin, "{json}");
+            writeln!(stdin, "{json}")?;
+            drop(stdin);
         }
 
         // Read streaming JSONL from stdout
@@ -333,7 +340,7 @@ impl AiEngine for ClaudeCodeEngine {
     ) -> RouteDecision {
         let prompt =
             build_routing_prompt(package, description, context, Some(candidates), fallback);
-        match self.run_streaming(&prompt, cwd, None) {
+        match self.run_streaming(&prompt, cwd, None, Some(1)) {
             Ok(output) if !output.trim().is_empty() => {
                 resolve_candidate_routing(package, &output, candidates, fallback)
             }
@@ -348,7 +355,7 @@ impl AiEngine for ClaudeCodeEngine {
 
     fn run_edit(&self, prompt: &str, cwd: &Path) -> CommandOutcome {
         let tools = &["Read", "Edit", "Write", "Bash", "Glob", "Grep"];
-        match self.run_streaming(prompt, cwd, Some(tools)) {
+        match self.run_streaming(prompt, cwd, Some(tools), None) {
             Ok(output) => CommandOutcome {
                 success: true,
                 output,
@@ -1132,6 +1139,78 @@ mod tests {
     fn claude_code_custom_model() {
         let engine = ClaudeCodeEngine::new(Some("haiku"), test_style());
         assert_eq!(engine.model, Some("haiku".to_string()));
+    }
+
+    // --- report_tool_activity ---
+
+    #[test]
+    fn report_activity_read_extracts_basename() {
+        let input: Value = serde_json::json!({"file_path": "/Users/me/repo/packages/nix/cli.nix"});
+        // Smoke test: should not panic and should extract "cli.nix"
+        let printer = Printer::new(test_style());
+        report_tool_activity(&printer, "Read", &input);
+    }
+
+    #[test]
+    fn report_activity_edit_extracts_basename() {
+        let input: Value = serde_json::json!({"file_path": "packages/nix/languages.nix"});
+        let printer = Printer::new(test_style());
+        report_tool_activity(&printer, "Edit", &input);
+    }
+
+    #[test]
+    fn report_activity_bash_truncates_command() {
+        let input: Value =
+            serde_json::json!({"command": "nix eval --raw nixpkgs#ripgrep.meta.description"});
+        let printer = Printer::new(test_style());
+        report_tool_activity(&printer, "Bash", &input);
+    }
+
+    #[test]
+    fn report_activity_unknown_tool_is_silent() {
+        let input: Value = serde_json::json!({"some": "data"});
+        let printer = Printer::new(test_style());
+        report_tool_activity(&printer, "UnknownTool", &input);
+    }
+
+    // --- claude streaming JSONL parsing ---
+
+    #[test]
+    fn parse_assistant_tool_use_from_jsonl() {
+        let line = r#"{"type":"assistant","message":{"id":"msg_1","role":"assistant","model":"claude-sonnet-4-20250514","content":[{"type":"tool_use","id":"tu_1","name":"Read","input":{"file_path":"packages/nix/cli.nix"}}],"stop_reason":"tool_use"},"session_id":"test-session"}"#;
+        let output = claude_codes::ClaudeOutput::parse_json_tolerant(line)
+            .expect("should parse assistant message");
+        let msg = output.as_assistant().expect("should be assistant");
+        assert_eq!(msg.message.content.len(), 1);
+        match &msg.message.content[0] {
+            claude_codes::ContentBlock::ToolUse(tool) => {
+                assert_eq!(tool.name, "Read");
+                assert_eq!(
+                    tool.input.get("file_path").and_then(Value::as_str),
+                    Some("packages/nix/cli.nix")
+                );
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_result_message_from_jsonl() {
+        let line = r#"{"type":"result","subtype":"success","is_error":false,"duration_ms":1200,"duration_api_ms":800,"num_turns":1,"result":"packages/nix/cli.nix","session_id":"test-session","total_cost_usd":0.002,"usage":null}"#;
+        let output = claude_codes::ClaudeOutput::parse_json_tolerant(line)
+            .expect("should parse result message");
+        let res = output.as_result().expect("should be result");
+        assert_eq!(res.result.as_deref(), Some("packages/nix/cli.nix"));
+        assert!(!res.is_error);
+    }
+
+    #[test]
+    fn parse_text_content_from_assistant() {
+        let line = r#"{"type":"assistant","message":{"id":"msg_2","role":"assistant","model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"packages/nix/cli.nix"}],"stop_reason":"end_turn"},"session_id":"test-session"}"#;
+        let output = claude_codes::ClaudeOutput::parse_json_tolerant(line)
+            .expect("should parse text content");
+        let text = output.text_content().expect("should have text");
+        assert_eq!(text, "packages/nix/cli.nix");
     }
 
     // --- build_routing_prompt ---

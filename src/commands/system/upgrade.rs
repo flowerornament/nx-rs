@@ -100,11 +100,11 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<Vec<InputChan
             ));
 
             if let Some(summary) = fetch_flake_compare_summary(change) {
-                Printer::sub_detail(&format!("summary: {}", format_compare_summary(&summary)));
+                Printer::sub_detail(&format_compare_summary(&summary));
                 if let Some(ai_summary) =
                     maybe_ai_summary(args.no_ai(), || summarize_flake_change_ai(change, &summary))
                 {
-                    Printer::sub_detail(&format!("ai summary: {ai_summary}"));
+                    Printer::sub_detail(&ai_summary);
                 }
             } else {
                 ctx.printer.warn("Failed to fetch comparison from GitHub");
@@ -428,7 +428,7 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
             fetch_brew_compare_summary(package)
                 .and_then(|summary| summarize_brew_change_ai(package, &summary))
         }) {
-            Printer::sub_detail(&format!("ai summary: {ai_summary}"));
+            Printer::sub_detail(&ai_summary);
         }
     }
 

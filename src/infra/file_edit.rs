@@ -107,7 +107,11 @@ fn dispatch_insert(content: &str, plan: &InstallPlan) -> Result<(String, Option<
                 scaffold_language_block(content, &lang.bare_name, &lang.runtime)
             }
         }
-        InsertionMode::HomebrewManifest => insert_homebrew_manifest(content, &plan.package_token),
+        InsertionMode::HomebrewManifest => insert_homebrew_manifest(
+            content,
+            &plan.package_token,
+            &plan.source_result.description,
+        ),
         InsertionMode::MasApps => Ok(insert_mas_app(content, &plan.package_token)),
     }
 }
@@ -124,6 +128,27 @@ fn dispatch_remove(content: &str, plan: &InstallPlan) -> Result<(String, Option<
         InsertionMode::HomebrewManifest => remove_homebrew_manifest(content, &plan.package_token),
         InsertionMode::MasApps => remove_mas_app(content, &plan.package_token),
     }
+}
+
+// --- Shared Helpers
+
+/// Splice `new_line` into `lines` at `insert_at`, preserving trailing-newline behavior.
+fn splice_line(content: &str, lines: &[&str], insert_at: usize, new_line: &str) -> String {
+    let mut out = String::with_capacity(content.len() + new_line.len() + 1);
+    for line in &lines[..insert_at] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str(new_line);
+    out.push('\n');
+    for line in &lines[insert_at..] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !content.ends_with('\n') {
+        out.pop();
+    }
+    out
 }
 
 // --- Per-mode Inserters
@@ -181,24 +206,7 @@ fn insert_nix_manifest(
         format_entry_with_comment(indent, token, description, comment_col)
     };
 
-    // Build the final string with the inserted line
-    let mut out = String::with_capacity(content.len() + new_line.len() + 1);
-    for line in &lines[..insert_at] {
-        out.push_str(line);
-        out.push('\n');
-    }
-    out.push_str(&new_line);
-    out.push('\n');
-    for line in &lines[insert_at..] {
-        out.push_str(line);
-        out.push('\n');
-    }
-
-    // Preserve original trailing-newline behavior
-    if !content.ends_with('\n') {
-        out.pop();
-    }
-
+    let out = splice_line(content, &lines, insert_at, &new_line);
     Ok((out, Some(insert_at + 1))) // 1-indexed
 }
 
@@ -228,23 +236,7 @@ fn insert_language_package(
     let indent = detect_indent_in_region(&lines, block_start, block_end).unwrap_or("      ");
     let insert_at = find_alpha_position(&lines, block_start + 1, block_end, bare_name);
     let new_line = format!("{indent}{bare_name}");
-
-    let mut out = String::with_capacity(content.len() + new_line.len() + 1);
-    for line in &lines[..insert_at] {
-        out.push_str(line);
-        out.push('\n');
-    }
-    out.push_str(&new_line);
-    out.push('\n');
-    for line in &lines[insert_at..] {
-        out.push_str(line);
-        out.push('\n');
-    }
-
-    if !content.ends_with('\n') {
-        out.pop();
-    }
-
+    let out = splice_line(content, &lines, insert_at, &new_line);
     Ok((out, Some(insert_at + 1)))
 }
 
@@ -353,30 +345,18 @@ fn scaffold_language_block(
 
     // Insert before closing bracket
     let insert_at = bracket_end;
-
-    let mut out = String::with_capacity(content.len() + block.len() + 1);
-    for line in &lines[..insert_at] {
-        out.push_str(line);
-        out.push('\n');
-    }
-    out.push_str(&block);
-    out.push('\n');
-    for line in &lines[insert_at..] {
-        out.push_str(line);
-        out.push('\n');
-    }
-
-    if !content.ends_with('\n') {
-        out.pop();
-    }
-
+    let out = splice_line(content, &lines, insert_at, &block);
     Ok((out, Some(insert_at + 1)))
 }
 
 /// Insert a double-quoted name alphabetically into a homebrew `[ "pkg" ... ]` list.
 ///
 /// Real format: 2-space indent, double-quoted, optional `# comment` suffix.
-fn insert_homebrew_manifest(content: &str, token: &str) -> Result<(String, Option<usize>)> {
+fn insert_homebrew_manifest(
+    content: &str,
+    token: &str,
+    description: &str,
+) -> Result<(String, Option<usize>)> {
     let quoted = format!("\"{token}\"");
 
     // Check idempotency
@@ -393,24 +373,14 @@ fn insert_homebrew_manifest(content: &str, token: &str) -> Result<(String, Optio
 
     // Find alphabetical position among quoted entries
     let insert_at = find_alpha_position_quoted(&lines, bracket_start + 1, bracket_end, token);
-    let new_line = format!("{indent}{quoted}");
+    let new_line = if description.is_empty() {
+        format!("{indent}{quoted}")
+    } else {
+        let comment_col = detect_comment_column_in_region(&lines, bracket_start, bracket_end);
+        format_entry_with_comment(indent, &quoted, description, comment_col)
+    };
 
-    let mut out = String::with_capacity(content.len() + new_line.len() + 1);
-    for line in &lines[..insert_at] {
-        out.push_str(line);
-        out.push('\n');
-    }
-    out.push_str(&new_line);
-    out.push('\n');
-    for line in &lines[insert_at..] {
-        out.push_str(line);
-        out.push('\n');
-    }
-
-    if !content.ends_with('\n') {
-        out.pop();
-    }
-
+    let out = splice_line(content, &lines, insert_at, &new_line);
     Ok((out, Some(insert_at + 1)))
 }
 
@@ -429,23 +399,7 @@ fn insert_mas_app(content: &str, token: &str) -> (String, Option<usize>) {
         let indent = detect_indent_in_region(&lines, block_start, block_end).unwrap_or("    ");
         let insert_at = find_alpha_position_quoted(&lines, block_start + 1, block_end, token);
         let new_line = format!("{indent}\"{token}\" = 0;");
-
-        let mut out = String::with_capacity(content.len() + new_line.len() + 1);
-        for line in &lines[..insert_at] {
-            out.push_str(line);
-            out.push('\n');
-        }
-        out.push_str(&new_line);
-        out.push('\n');
-        for line in &lines[insert_at..] {
-            out.push_str(line);
-            out.push('\n');
-        }
-
-        if !content.ends_with('\n') {
-            out.pop();
-        }
-
+        let out = splice_line(content, &lines, insert_at, &new_line);
         return (out, Some(insert_at + 1));
     }
 
@@ -1001,7 +955,7 @@ fn detect_comment_column_in_region(lines: &[&str], start: usize, end: usize) -> 
         }
         // Must start with an identifier character (a package entry)
         let first_char = trimmed.chars().next().unwrap_or(' ');
-        if !first_char.is_ascii_alphanumeric() && first_char != '_' {
+        if !first_char.is_ascii_alphanumeric() && first_char != '_' && first_char != '"' {
             continue;
         }
         // Attribute assignments (key = value) are not package entries
@@ -1678,7 +1632,7 @@ mod tests {
   \"yt-dlp\"
 ]
 ";
-        let (result, line) = insert_homebrew_manifest(content, "htop").unwrap();
+        let (result, line) = insert_homebrew_manifest(content, "htop", "").unwrap();
         assert!(line.is_some());
         let lines: Vec<&str> = result.lines().collect();
         let htop_idx = lines
@@ -1704,7 +1658,7 @@ mod tests {
   \"htop\"
 ]
 ";
-        let (_, line) = insert_homebrew_manifest(content, "htop").unwrap();
+        let (_, line) = insert_homebrew_manifest(content, "htop", "").unwrap();
         assert!(line.is_none());
     }
 
@@ -1716,10 +1670,33 @@ mod tests {
   \"yt-dlp\"                        # Video downloader
 ]
 ";
-        let (result, line) = insert_homebrew_manifest(content, "htop").unwrap();
+        let (result, line) = insert_homebrew_manifest(content, "htop", "").unwrap();
         assert!(line.is_some());
         assert!(result.contains("# JS runtime"));
         assert!(result.contains("# Video downloader"));
+    }
+
+    #[test]
+    fn homebrew_adds_aligned_comment_from_description() {
+        let content = "\
+[
+  \"deno\"                          # JS runtime
+  \"yt-dlp\"                        # Video downloader
+]
+";
+        let (result, _) =
+            insert_homebrew_manifest(content, "htop", "Interactive process viewer").unwrap();
+        let htop_line = result.lines().find(|l| l.contains("\"htop\"")).unwrap();
+        // Comment must align with existing entries, not just be present
+        let existing_col = content
+            .lines()
+            .find(|l| l.contains("\"deno\""))
+            .unwrap()
+            .find("# ")
+            .unwrap();
+        let new_col = htop_line.find("# ").unwrap();
+        assert_eq!(new_col, existing_col);
+        assert!(htop_line.contains("# Interactive process viewer"));
     }
 
     #[test]
@@ -1729,7 +1706,7 @@ mod tests {
   \"deno\"
 ]
 ";
-        let (result, line) = insert_homebrew_manifest(content, "bat").unwrap();
+        let (result, line) = insert_homebrew_manifest(content, "bat", "").unwrap();
         assert!(line.is_some());
         let lines: Vec<&str> = result.lines().collect();
         let bat_idx = lines
@@ -2430,7 +2407,7 @@ mod tests {
   \"yt-dlp\"
 ]
 ";
-        let (with_htop, _) = insert_homebrew_manifest(original, "htop").unwrap();
+        let (with_htop, _) = insert_homebrew_manifest(original, "htop", "").unwrap();
         assert!(with_htop.contains("\"htop\""));
 
         let (restored, _) = remove_homebrew_manifest(&with_htop, "htop").unwrap();

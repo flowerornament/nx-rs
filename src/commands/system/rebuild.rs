@@ -160,6 +160,7 @@ fn do_rebuild(args: &PassthroughArgs, ctx: &SystemContext<'_>) -> i32 {
     let repo = ctx.repo_root.display().to_string();
     let manifest = ctx.config_files.manifest();
     let use_sudo = manifest.is_none_or(|m| m.platform.sudo);
+    let mut retried_cache_corruption = false;
 
     for attempt in 0..3 {
         if attempt == 0 {
@@ -197,13 +198,26 @@ fn do_rebuild(args: &PassthroughArgs, ctx: &SystemContext<'_>) -> i32 {
             return 0;
         }
 
-        if attempt >= 2 || !super::upgrade::is_fd_exhaustion(&output) {
+        if attempt >= 2 {
             break;
         }
 
-        ctx.printer
-            .warn("Nix hit file descriptor limits, clearing cache and retrying");
-        clear_root_tarball_pack_cache();
+        if super::upgrade::is_fd_exhaustion(&output) {
+            ctx.printer
+                .warn("Nix hit file descriptor limits, clearing cache and retrying");
+            clear_root_tarball_pack_cache();
+            continue;
+        }
+
+        if !retried_cache_corruption && super::upgrade::is_cache_corruption(&output) {
+            retried_cache_corruption = true;
+            ctx.printer
+                .warn("Nix git cache corruption detected, clearing cache and retrying");
+            clear_root_git_cache();
+            continue;
+        }
+
+        break;
     }
 
     ctx.printer.error("Rebuild failed");
@@ -238,4 +252,15 @@ fn clear_root_tarball_pack_cache() {
     let pack_dir = "/var/root/.cache/nix/tarball-cache-v2/objects/pack";
     let _ = run_captured_command("sudo", &["rm", "-rf", pack_dir], None);
     let _ = run_captured_command("sudo", &["mkdir", "-p", pack_dir], None);
+}
+
+/// Clear nix git caches under root to fix tree-builder corruption.
+///
+/// Removes both the gitv3 object store (where corrupt git trees live)
+/// and the fetcher-cache sqlite (which indexes them).
+fn clear_root_git_cache() {
+    let gitv3_dir = "/var/root/.cache/nix/gitv3";
+    let fetcher_db = "/var/root/.cache/nix/fetcher-cache-v4.sqlite";
+    let _ = run_captured_command("sudo", &["rm", "-rf", gitv3_dir], None);
+    let _ = run_captured_command("sudo", &["rm", "-f", fetcher_db], None);
 }

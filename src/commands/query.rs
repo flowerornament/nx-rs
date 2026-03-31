@@ -18,10 +18,12 @@ use crate::infra::cache::MultiSourceCache;
 use crate::infra::config_scan::{PackageBuckets, collect_nix_files, scan_packages};
 use crate::infra::finder::{PackageMatch, find_package, find_package_fuzzy};
 use crate::infra::query_info::{
-    ConfigOptionInfo, FlakeHubInfo, darwin_service_info, hm_module_info, search_flakehub,
+    ConfigOptionInfo, FlakeHubInfo, config_option_hints, search_flakehub,
 };
 use crate::infra::shell::run_json_command_quiet;
-use crate::infra::sources::{SourceSearchOutcome, UnavailableSource, search_all_sources_quiet};
+use crate::infra::sources::{
+    SourceSearchOutcome, UnavailableSource, cached_search_all_sources_quiet,
+};
 use crate::output::json::to_string_compact;
 use crate::output::printer::Printer;
 
@@ -125,8 +127,7 @@ pub fn cmd_info(args: &InfoArgs, ctx: &QueryContext<'_>) -> i32 {
     let mut cache = MultiSourceCache::load(ctx.repo_root).ok();
     let info_search = collect_info_sources(package, args, ctx.repo_root, &mut cache);
     let info_sources = info_search.results.clone();
-    let hm_module = hm_module_info(package, ctx.repo_root);
-    let darwin_service = darwin_service_info(package, ctx.repo_root);
+    let (hm_module, darwin_service) = config_option_hints(package, ctx.repo_root);
     let flakehub = collect_info_flakehub(package, args.bleeding_edge, search_flakehub);
     let unavailable_sources = if location.is_none()
         && info_sources.is_empty()
@@ -214,38 +215,19 @@ fn source_prefs_from_info_args(_args: &InfoArgs) -> SourcePreferences {
     SourcePreferences::default()
 }
 
+#[cfg(test)]
 fn collect_info_sources_with<F>(
     package: &str,
     args: &InfoArgs,
     repo_root: &Path,
     cache: &mut Option<MultiSourceCache>,
-    mut search: F,
+    search: F,
 ) -> SourceSearchOutcome
 where
     F: FnMut(&str, &SourcePreferences, Option<&Path>) -> SourceSearchOutcome,
 {
-    if let Some(cache_ref) = cache.as_ref() {
-        let cached = cache_ref.get_all(package);
-        if !cached.is_empty() {
-            return SourceSearchOutcome {
-                results: cached,
-                unavailable_sources: Vec::new(),
-            };
-        }
-    }
-
     let prefs = source_prefs_from_info_args(args);
-    let flake_lock = repo_root.join("flake.lock");
-    let flake_lock_path = flake_lock.exists().then_some(flake_lock.as_path());
-    let outcome = search(package, &prefs, flake_lock_path);
-
-    if !outcome.results.is_empty()
-        && let Some(cache_ref) = cache.as_mut()
-    {
-        let _ = cache_ref.set_many(&outcome.results);
-    }
-
-    outcome
+    crate::infra::sources::cached_search_with(package, &prefs, repo_root, cache, search)
 }
 
 fn render_unavailable_sources(unavailable_sources: &[UnavailableSource]) {
@@ -260,7 +242,8 @@ fn collect_info_sources(
     repo_root: &Path,
     cache: &mut Option<MultiSourceCache>,
 ) -> SourceSearchOutcome {
-    collect_info_sources_with(package, args, repo_root, cache, search_all_sources_quiet)
+    let prefs = source_prefs_from_info_args(args);
+    cached_search_all_sources_quiet(package, &prefs, repo_root, cache)
 }
 
 fn collect_info_flakehub<F>(package: &str, include: bool, mut search: F) -> Vec<FlakeHubInfo>

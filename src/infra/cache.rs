@@ -5,16 +5,20 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde_json::Value;
 
-use crate::domain::source::{PackageSource, SourceResult, normalize_name};
+use crate::domain::source::{
+    PackageSource, SourcePreferences, SourceResult, normalize_name, sort_results,
+};
 
 // Shared cache primitives used by query/install flows and cache unit coverage.
 const CACHE_SCHEMA_VERSION: u64 = 1;
 const CACHE_FILENAME: &str = "packages_v4.json";
-const SOURCE_PRIORITY: &[PackageSource] = &[
+const CACHED_SOURCES: &[PackageSource] = &[
+    PackageSource::FlakeInput,
     PackageSource::Nxs,
     PackageSource::Nur,
     PackageSource::Homebrew,
     PackageSource::Cask,
+    PackageSource::Mas,
 ];
 
 /// Maps source to flake.lock input name for revision lookup.
@@ -99,20 +103,21 @@ impl MultiSourceCache {
         })
     }
 
-    /// Get all cached results for a package name, in source priority order.
-    ///
-    /// SPEC §5 guardrail: if only homebrew/cask results exist (no nxs/nur),
-    /// returns empty to force a fresh search.
-    pub fn get_all(&self, name: &str) -> Vec<SourceResult> {
+    /// Get all cached results for a package name, using the same source ordering
+    /// rules as live search for the given preferences.
+    pub fn get_all_with_prefs(&self, name: &str, prefs: &SourcePreferences) -> Vec<SourceResult> {
         let mut results = Vec::new();
         let mut has_nix_source = false;
 
-        for &source in SOURCE_PRIORITY {
+        for &source in CACHED_SOURCES {
             if let Some(result) = self.get(name, source) {
-                results.push(result);
-                if matches!(source, PackageSource::Nxs | PackageSource::Nur) {
+                if matches!(
+                    source,
+                    PackageSource::FlakeInput | PackageSource::Nxs | PackageSource::Nur
+                ) {
                     has_nix_source = true;
                 }
+                results.push(result);
             }
         }
 
@@ -121,6 +126,7 @@ impl MultiSourceCache {
             return Vec::new();
         }
 
+        sort_results(&mut results, prefs);
         results
     }
 
@@ -328,7 +334,11 @@ mod tests {
             .unwrap();
 
         // Homebrew-only should return empty (guardrail)
-        assert!(cache.get_all("ripgrep").is_empty());
+        assert!(
+            cache
+                .get_all_with_prefs("ripgrep", &SourcePreferences::default())
+                .is_empty()
+        );
     }
 
     #[test]
@@ -346,7 +356,7 @@ mod tests {
             .set_many(&[result("ripgrep", PackageSource::Nxs, "ripgrep", 0.9)])
             .unwrap();
 
-        let results = cache.get_all("ripgrep");
+        let results = cache.get_all_with_prefs("ripgrep", &SourcePreferences::default());
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].source, PackageSource::Nxs);
     }
@@ -384,7 +394,11 @@ mod tests {
         .unwrap();
 
         let cache = make_cache(&repo, &home);
-        assert!(cache.get_all("ripgrep").is_empty());
+        assert!(
+            cache
+                .get_all_with_prefs("ripgrep", &SourcePreferences::default())
+                .is_empty()
+        );
     }
 
     #[test]
@@ -418,7 +432,7 @@ mod tests {
                 .unwrap();
 
             // Look up with the canonical name — should find the aliased entry.
-            let results = cache.get_all(canonical);
+            let results = cache.get_all_with_prefs(canonical, &SourcePreferences::default());
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].attr.as_deref(), Some(attr));
         }

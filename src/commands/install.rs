@@ -25,7 +25,7 @@ use crate::infra::file_edit::{EditOutcome, analyse_manifest_for_preview, apply_e
 use crate::infra::finder::{find_first_package, find_package};
 use crate::infra::flake_input::{FlakeInputEdit, add_flake_input};
 use crate::infra::shell::git_diff;
-use crate::infra::sources::{check_nix_available, search_all_sources};
+use crate::infra::sources::{cached_search_all_sources, check_nix_available};
 use crate::output::printer::Printer;
 
 pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
@@ -662,28 +662,22 @@ fn search_for_package(
     // Explicit --cask / --mas skip search (instant, no ambiguity)
     if args.cask() || args.mas() {
         let prefs = source_prefs_from_args(args);
-        let outcome = search_all_sources(package, &prefs, None);
+        let outcome = cached_search_all_sources(package, &prefs, &ctx.repo_root, cache);
         return resolve_search_candidates(package, &outcome.results, args, &ctx.repo_root, ctx);
     }
 
-    if let Some(cache) = cache.as_mut() {
-        let cached = cache.get_all(package);
-        if !cached.is_empty() {
-            if args.explain() {
-                Printer::detail(&format!(
-                    "Cache hit for '{package}' ({} sources)",
-                    cached.len()
-                ));
-            }
-            return resolve_search_candidates(package, &cached, args, &ctx.repo_root, ctx);
-        }
-    }
-
     let prefs = source_prefs_from_args(args);
-    let flake_lock = ctx.repo_root.join("flake.lock");
-    let flake_lock_path = flake_lock.exists().then_some(flake_lock.as_path());
+    let cache_hit = cache
+        .as_ref()
+        .is_some_and(|cache_ref| !cache_ref.get_all_with_prefs(package, &prefs).is_empty());
+    let outcome = cached_search_all_sources(package, &prefs, &ctx.repo_root, cache);
 
-    let outcome = search_all_sources(package, &prefs, flake_lock_path);
+    if args.explain() && cache_hit {
+        Printer::detail(&format!(
+            "Cache hit for '{package}' ({} sources)",
+            outcome.results.len()
+        ));
+    }
 
     if outcome.results.is_empty() {
         show_unknown_group(package, ctx);
@@ -698,14 +692,6 @@ fn search_for_package(
             }
         }
         return None;
-    }
-
-    if let Some(cache) = cache.as_mut()
-        && let Err(err) = cache.set_many(&outcome.results)
-    {
-        ctx.printer.warn(&format!(
-            "failed to update search cache for {package}: {err}"
-        ));
     }
 
     resolve_search_candidates(package, &outcome.results, args, &ctx.repo_root, ctx)

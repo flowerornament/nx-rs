@@ -1,7 +1,8 @@
 use crate::cli::SearchArgs;
 use crate::commands::context::JsonCommandContext;
 use crate::domain::source::{SourcePreferences, SourceResult};
-use crate::infra::sources::{UnavailableSource, search_all_sources};
+use crate::infra::cache::MultiSourceCache;
+use crate::infra::sources::{UnavailableSource, cached_search_all_sources};
 use crate::output::printer::Printer;
 
 pub fn cmd_search(args: &SearchArgs, ctx: &JsonCommandContext<'_>) -> i32 {
@@ -11,11 +12,10 @@ pub fn cmd_search(args: &SearchArgs, ctx: &JsonCommandContext<'_>) -> i32 {
         ..Default::default()
     };
 
-    let flake_lock = ctx.repo_root.join("flake.lock");
-    let flake_lock_path = flake_lock.exists().then_some(flake_lock.as_path());
+    let mut cache = MultiSourceCache::load(ctx.repo_root).ok();
 
     Printer::searching(&args.package);
-    let outcome = search_all_sources(&args.package, &prefs, flake_lock_path);
+    let outcome = cached_search_all_sources(&args.package, &prefs, ctx.repo_root, &mut cache);
     Printer::searching_done();
 
     if outcome.results.is_empty() {

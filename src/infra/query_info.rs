@@ -233,46 +233,71 @@ static DARWIN_SERVICES: LazyLock<HashMap<&'static str, HintSeed>> = LazyLock::ne
 
 const FLAKEHUB_API_BASE: &str = "https://api.flakehub.com/flakes?q=";
 
-pub fn hm_module_info(name: &str, repo_root: &Path) -> Option<ConfigOptionInfo> {
-    lookup_config_option(name, repo_root, &HM_MODULES)
-}
+pub fn config_option_hints(
+    name: &str,
+    repo_root: &Path,
+) -> (Option<ConfigOptionInfo>, Option<ConfigOptionInfo>) {
+    let key = normalize_name(name);
+    let hm_seed = HM_MODULES.get(key.as_str()).copied();
+    let darwin_seed = DARWIN_SERVICES.get(key.as_str()).copied();
 
-pub fn darwin_service_info(name: &str, repo_root: &Path) -> Option<ConfigOptionInfo> {
-    lookup_config_option(name, repo_root, &DARWIN_SERVICES)
+    let seeds: Vec<HintSeed> = [hm_seed, darwin_seed].into_iter().flatten().collect();
+    let enabled_by_path = collect_option_enabled_states(&seeds, repo_root);
+
+    (
+        hint_info_from_seed(hm_seed, &enabled_by_path),
+        hint_info_from_seed(darwin_seed, &enabled_by_path),
+    )
 }
 
 pub fn search_flakehub(name: &str) -> Vec<FlakeHubInfo> {
     search_flakehub_with(name, fetch_flakehub_json)
 }
 
-fn lookup_config_option(
-    name: &str,
-    repo_root: &Path,
-    options: &HashMap<&'static str, HintSeed>,
+fn hint_info_from_seed(
+    seed: Option<HintSeed>,
+    enabled_by_path: &HashMap<&'static str, bool>,
 ) -> Option<ConfigOptionInfo> {
-    let key = normalize_name(name);
-    let seed = options.get(key.as_str())?;
+    let seed = seed?;
     Some(ConfigOptionInfo {
         path: seed.path.to_string(),
         example: seed.example.to_string(),
-        enabled: option_enabled(seed.path, repo_root),
+        enabled: enabled_by_path.get(seed.path).copied().unwrap_or(false),
     })
 }
 
-fn option_enabled(path: &str, repo_root: &Path) -> bool {
-    let escaped = regex::escape(path);
-    let pattern = format!(r"(?m)\b{escaped}\.enable\s*=\s*true\b");
-    let Ok(enabled_re) = Regex::new(&pattern) else {
-        return false;
-    };
+fn collect_option_enabled_states(
+    seeds: &[HintSeed],
+    repo_root: &Path,
+) -> HashMap<&'static str, bool> {
+    let regexes: Vec<(&'static str, Regex)> = seeds
+        .iter()
+        .filter_map(|seed| {
+            let escaped = regex::escape(seed.path);
+            let pattern = format!(r"(?m)\b{escaped}\.enable\s*=\s*true\b");
+            Regex::new(&pattern).ok().map(|regex| (seed.path, regex))
+        })
+        .collect();
+
+    if regexes.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut enabled_by_path = HashMap::new();
 
     collect_managed_nix_files(repo_root, NixFileScanPolicy::all_files())
         .into_iter()
-        .any(|nix_file| {
-            fs::read_to_string(&nix_file)
-                .ok()
-                .is_some_and(|content| enabled_re.is_match(&content))
-        })
+        .filter_map(|nix_file| fs::read_to_string(&nix_file).ok())
+        .for_each(|content| {
+            for (path, regex) in &regexes {
+                if !enabled_by_path.get(path).copied().unwrap_or(false) && regex.is_match(&content)
+                {
+                    enabled_by_path.insert(*path, true);
+                }
+            }
+        });
+
+    enabled_by_path
 }
 
 fn search_flakehub_with<F>(name: &str, mut fetch: F) -> Vec<FlakeHubInfo>
@@ -387,9 +412,11 @@ mod tests {
         fs::write(home.join("git.nix"), "programs.git.enable = true;\n")
             .expect("fixture should be written");
 
-        let info = hm_module_info("git", tmp.path()).expect("git should have hm module");
+        let (info, darwin) = config_option_hints("git", tmp.path());
+        let info = info.expect("git should have hm module");
         assert_eq!(info.path, "programs.git");
         assert!(info.enabled);
+        assert!(darwin.is_none());
     }
 
     #[test]
@@ -400,16 +427,40 @@ mod tests {
         fs::write(system.join("darwin.nix"), "services.yabai.enable = true;\n")
             .expect("fixture should be written");
 
-        let info = darwin_service_info("yabai", tmp.path()).expect("yabai should be supported");
+        let (hm, info) = config_option_hints("yabai", tmp.path());
+        let info = info.expect("yabai should be supported");
         assert_eq!(info.path, "services.yabai");
         assert!(info.enabled);
+        assert!(hm.is_none());
     }
 
     #[test]
     fn config_option_returns_none_for_unknown_package() {
         let tmp = TempDir::new().expect("temp dir should be created");
-        assert!(hm_module_info("not-a-real-package", tmp.path()).is_none());
-        assert!(darwin_service_info("not-a-real-package", tmp.path()).is_none());
+        let (hm, darwin) = config_option_hints("not-a-real-package", tmp.path());
+        assert!(hm.is_none());
+        assert!(darwin.is_none());
+    }
+
+    #[test]
+    fn config_option_hints_reports_both_supported_entries() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let home = tmp.path().join("home");
+        let system = tmp.path().join("system");
+        fs::create_dir_all(&home).expect("home directory should be created");
+        fs::create_dir_all(&system).expect("system directory should be created");
+        fs::write(home.join("git.nix"), "programs.git.enable = true;\n")
+            .expect("home fixture should be written");
+        fs::write(system.join("darwin.nix"), "services.yabai.enable = true;\n")
+            .expect("system fixture should be written");
+
+        let (git_hm, git_darwin) = config_option_hints("git", tmp.path());
+        let (yabai_hm, yabai_darwin) = config_option_hints("yabai", tmp.path());
+
+        assert!(git_hm.is_some_and(|info| info.enabled));
+        assert!(git_darwin.is_none());
+        assert!(yabai_hm.is_none());
+        assert!(yabai_darwin.is_some_and(|info| info.enabled));
     }
 
     #[test]

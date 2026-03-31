@@ -15,6 +15,7 @@ use crate::domain::source::{
     get_current_system, mapped_name, parse_nix_search_results, score_match, search_name_variants,
     sort_results,
 };
+use crate::infra::cache::MultiSourceCache;
 use crate::infra::shell::run_captured_command;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -756,6 +757,57 @@ pub fn search_all_sources_quiet(
     flake_lock_path: Option<&Path>,
 ) -> SourceSearchOutcome {
     search_all_sources_with_timeout_reporting(name, prefs, flake_lock_path, false)
+}
+
+pub fn cached_search_all_sources(
+    name: &str,
+    prefs: &SourcePreferences,
+    repo_root: &Path,
+    cache: &mut Option<MultiSourceCache>,
+) -> SourceSearchOutcome {
+    cached_search_with(name, prefs, repo_root, cache, search_all_sources)
+}
+
+pub fn cached_search_all_sources_quiet(
+    name: &str,
+    prefs: &SourcePreferences,
+    repo_root: &Path,
+    cache: &mut Option<MultiSourceCache>,
+) -> SourceSearchOutcome {
+    cached_search_with(name, prefs, repo_root, cache, search_all_sources_quiet)
+}
+
+pub fn cached_search_with<F>(
+    name: &str,
+    prefs: &SourcePreferences,
+    repo_root: &Path,
+    cache: &mut Option<MultiSourceCache>,
+    mut search: F,
+) -> SourceSearchOutcome
+where
+    F: FnMut(&str, &SourcePreferences, Option<&Path>) -> SourceSearchOutcome,
+{
+    if let Some(cache_ref) = cache.as_ref() {
+        let cached = cache_ref.get_all_with_prefs(name, prefs);
+        if !cached.is_empty() {
+            return SourceSearchOutcome {
+                results: cached,
+                unavailable_sources: Vec::new(),
+            };
+        }
+    }
+
+    let flake_lock = repo_root.join("flake.lock");
+    let flake_lock_path = flake_lock.exists().then_some(flake_lock.as_path());
+    let outcome = search(name, prefs, flake_lock_path);
+
+    if !outcome.results.is_empty()
+        && let Some(cache_ref) = cache.as_mut()
+    {
+        let _ = cache_ref.set_many(&outcome.results);
+    }
+
+    outcome
 }
 
 fn search_all_sources_with_timeout_reporting(

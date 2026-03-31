@@ -64,7 +64,7 @@ fn collect_info_sources_falls_back_to_search_and_updates_cache() {
     let cached = cache
         .as_ref()
         .expect("cache should exist")
-        .get_all("ripgrep");
+        .get_all_with_prefs("ripgrep", &SourcePreferences::default());
     assert_eq!(cached.len(), 1);
     assert_eq!(cached[0].attr.as_deref(), Some("ripgrep"));
 }
@@ -97,4 +97,47 @@ fn collect_info_sources_searches_on_cache_miss() {
 
     assert_eq!(results.results.len(), 1);
     assert_eq!(searches.get(), 1);
+}
+
+#[test]
+fn collect_info_sources_cache_hit_uses_live_search_ordering() {
+    let (tmp, mut cache) = cache_fixture();
+    let root = tmp.path();
+    cache
+        .as_mut()
+        .expect("cache should exist")
+        .set_many(&[
+            source_result("ripgrep", PackageSource::Homebrew, Some("ripgrep"), 0.8),
+            source_result(
+                "ripgrep",
+                PackageSource::FlakeInput,
+                Some("ripgrep-nightly"),
+                0.9,
+            ),
+            source_result("ripgrep", PackageSource::Nxs, Some("ripgrep"), 0.7),
+        ])
+        .expect("cache set should succeed");
+
+    let args = info_args();
+    let results = collect_info_sources_with(
+        package_from_args(&args),
+        &args,
+        root,
+        &mut cache,
+        |_, _, _| SourceSearchOutcome::default(),
+    );
+
+    let sources: Vec<PackageSource> = results
+        .results
+        .into_iter()
+        .map(|result| result.source)
+        .collect();
+    assert_eq!(
+        sources,
+        vec![
+            PackageSource::FlakeInput,
+            PackageSource::Nxs,
+            PackageSource::Homebrew,
+        ]
+    );
 }

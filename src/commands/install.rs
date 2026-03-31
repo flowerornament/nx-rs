@@ -995,8 +995,9 @@ fn find_existing_for_candidates(
     candidates: &[SourceResult],
     repo_root: &Path,
 ) -> anyhow::Result<Option<PackageLocation>> {
+    let mut seen_names = HashSet::new();
     for candidate in candidates {
-        if let Some(existing) = find_existing_for_result(candidate, repo_root)? {
+        if let Some(existing) = find_existing_for_result(candidate, repo_root, &mut seen_names)? {
             return Ok(Some(existing));
         }
     }
@@ -1006,8 +1007,12 @@ fn find_existing_for_candidates(
 fn find_existing_for_result(
     candidate: &SourceResult,
     repo_root: &Path,
+    seen_names: &mut HashSet<String>,
 ) -> anyhow::Result<Option<PackageLocation>> {
     for name in lookup_names(candidate) {
+        if !seen_names.insert(name.clone()) {
+            continue;
+        }
         if let Some(location) = find_package(&name, repo_root)? {
             return Ok(Some(location));
         }

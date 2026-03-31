@@ -403,6 +403,17 @@ fn search_homebrew(name: &str, is_cask: bool, allow_fallback: bool) -> SourceBac
     }
 }
 
+fn search_homebrew_variants(name: &str) -> [SourceBackendOutcome; 2] {
+    thread::scope(|scope| {
+        let formula = scope.spawn(|| search_homebrew(name, false, false));
+        let cask = scope.spawn(|| search_homebrew(name, true, false));
+        [
+            formula.join().expect("homebrew formula search panicked"),
+            cask.join().expect("homebrew cask search panicked"),
+        ]
+    })
+}
+
 // --- Platform / Language Validation
 
 /// Check if a nix package is available on the current platform.
@@ -780,16 +791,12 @@ fn search_all_sources_with_timeout_reporting(
     // 4. Parallel primary search
     let mut outcome = parallel_search(name, prefs, flake_lock_path, warn_on_timeout);
 
-    // 5. Always append homebrew formula + cask alternatives
-    let formula = search_homebrew(name, false, false);
-    outcome.extend_results(formula.results);
-    if let Some(reason) = formula.unavailable_reason {
-        outcome.push_unavailable("homebrew", reason);
-    }
-    let cask = search_homebrew(name, true, false);
-    outcome.extend_results(cask.results);
-    if let Some(reason) = cask.unavailable_reason {
-        outcome.push_unavailable("homebrew", reason);
+    // 5. Always append homebrew formula + cask alternatives.
+    for variant in search_homebrew_variants(name) {
+        outcome.extend_results(variant.results);
+        if let Some(reason) = variant.unavailable_reason {
+            outcome.push_unavailable("homebrew", reason);
+        }
     }
 
     // 6. Sort by source priority + confidence

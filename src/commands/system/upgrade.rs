@@ -88,7 +88,27 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<Vec<InputChan
 
     if !diff.changed.is_empty() {
         Printer::heading(&format!("Flake Inputs Changed ({})", diff.changed.len()));
-        for change in &diff.changed {
+
+        // Fetch summaries and AI descriptions in parallel across all inputs.
+        let no_ai = args.no_ai();
+        let enriched: Vec<_> = std::thread::scope(|s| {
+            let handles: Vec<_> = diff
+                .changed
+                .iter()
+                .map(|change| {
+                    s.spawn(move || {
+                        let summary = fetch_flake_compare_summary(change);
+                        let ai_summary = summary.as_ref().and_then(|sum| {
+                            maybe_ai_summary(no_ai, || summarize_flake_change_ai(change, sum))
+                        });
+                        (change, summary, ai_summary)
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+
+        for (change, summary, ai_summary) in &enriched {
             println!();
             Printer::body(&change.name);
             Printer::sub_detail(&format!(
@@ -99,12 +119,10 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<Vec<InputChan
                 short_rev(&change.new_rev),
             ));
 
-            if let Some(summary) = fetch_flake_compare_summary(change) {
-                Printer::sub_detail(&format_compare_summary(&summary));
-                if let Some(ai_summary) =
-                    maybe_ai_summary(args.no_ai(), || summarize_flake_change_ai(change, &summary))
-                {
-                    Printer::sub_detail(&ai_summary);
+            if let Some(summary) = summary {
+                Printer::sub_detail(&format_compare_summary(summary));
+                if let Some(ai_summary) = ai_summary {
+                    Printer::sub_detail(ai_summary);
                 }
             } else {
                 ctx.printer.warn("Failed to fetch comparison from GitHub");
@@ -410,7 +428,25 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
 
     Printer::heading(&format!("Homebrew Outdated ({})", outdated.len()));
 
-    for package in &outdated {
+    // Fetch summaries and AI descriptions in parallel across all packages.
+    let no_ai = args.no_ai();
+    let enriched: Vec<_> = std::thread::scope(|s| {
+        let handles: Vec<_> = outdated
+            .iter()
+            .map(|package| {
+                s.spawn(move || {
+                    let ai_summary = maybe_ai_summary(no_ai, || {
+                        fetch_brew_compare_summary(package)
+                            .and_then(|summary| summarize_brew_change_ai(package, &summary))
+                    });
+                    (package, ai_summary)
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+
+    for (package, ai_summary) in &enriched {
         println!();
         Printer::body(&package.name);
         Printer::sub_detail(&format!(
@@ -424,11 +460,8 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
             Printer::sub_detail(homepage);
         }
 
-        if let Some(ai_summary) = maybe_ai_summary(args.no_ai(), || {
-            fetch_brew_compare_summary(package)
-                .and_then(|summary| summarize_brew_change_ai(package, &summary))
-        }) {
-            Printer::sub_detail(&ai_summary);
+        if let Some(ai_summary) = ai_summary {
+            Printer::sub_detail(ai_summary);
         }
     }
 

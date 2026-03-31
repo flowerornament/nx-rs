@@ -2,13 +2,12 @@ use std::path::Path;
 
 use crate::cli::RebuildArgs;
 use crate::commands::context::SystemContext;
-use crate::domain::routing::RoutingAudit;
 use crate::infra::shell::{CapturedCommand, run_captured_command, run_indented_command_collecting};
 use crate::output::printer::Printer;
 
 use crate::domain::manifest::Manifest;
 
-use super::DARWIN_REBUILD;
+use super::{DARWIN_REBUILD, lint::run_routing_lint};
 
 pub fn cmd_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> i32 {
     if let Err(code) = ctx.require_manifest_system_safe("rebuild") {
@@ -34,20 +33,13 @@ pub fn cmd_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> i32 {
 }
 
 fn check_routing_preflight(ctx: &SystemContext<'_>) -> Result<(), i32> {
-    ctx.printer.action("Checking nx routing metadata");
-    let audit = RoutingAudit::scan(ctx.repo_root);
-    if audit.is_clean() {
-        ctx.printer.success("Routing metadata passed");
-        return Ok(());
-    }
-
-    ctx.printer.error("Routing metadata failed");
-    println!();
-    Printer::detail("Fix these issues before rebuild:");
-    for issue in audit.issues() {
-        Printer::detail(&format!("- {}", issue.summary(ctx.repo_root)));
-    }
-    Err(1)
+    run_routing_lint(
+        ctx,
+        "Checking nx routing metadata",
+        "Routing metadata passed",
+        "Routing metadata failed",
+        "Fix these issues before rebuild:",
+    )
 }
 
 /// Returns `stderr.trim()` if non-empty, otherwise `stdout.trim()`.

@@ -6,6 +6,14 @@ use std::path::{Path, PathBuf};
 use super::manifest::{Manifest, SlotKind};
 use super::repo_scan::{NixFileScanPolicy, collect_managed_nix_files};
 
+pub(crate) const PACKAGES_ROUTING_KEYWORDS: &[&str] = &["cli tools", "utilities"];
+pub(crate) const LANGUAGES_ROUTING_KEYWORDS: &[&str] = &["language", "runtimes", "toolchains"];
+pub(crate) const SERVICES_ROUTING_KEYWORDS: &[&str] = &["services", "daemons"];
+pub(crate) const DARWIN_ROUTING_KEYWORDS: &[&str] = &["macos system"];
+pub(crate) const HOMEBREW_BREWS_ROUTING_KEYWORDS: &[&str] = &["formula manifest", "brews"];
+pub(crate) const HOMEBREW_CASKS_ROUTING_KEYWORDS: &[&str] = &["cask manifest", "gui apps"];
+pub(crate) const HOMEBREW_TAPS_ROUTING_KEYWORDS: &[&str] = &["taps manifest"];
+
 /// Purpose-based routing to `.nix` config files.
 ///
 /// Discovers files by scanning `# nx:` comment tags on the first line,
@@ -92,7 +100,7 @@ impl ConfigFiles {
         if let Some(slot) = self.manifest_slot_for(SlotKind::NixPackages, Some("install")) {
             return self.repo_root.join(&slot.file);
         }
-        self.find_by_keywords(&["cli tools", "utilities"])
+        self.find_by_keywords(PACKAGES_ROUTING_KEYWORDS)
             .unwrap_or_else(|| self.repo_root.join("packages/nix/cli.nix"))
     }
 
@@ -100,7 +108,7 @@ impl ConfigFiles {
         if let Some(slot) = self.manifest_slot_for(SlotKind::WithPackages, None) {
             return self.repo_root.join(&slot.file);
         }
-        self.find_by_keywords(&["language", "runtimes", "toolchains"])
+        self.find_by_keywords(LANGUAGES_ROUTING_KEYWORDS)
             .unwrap_or_else(|| self.repo_root.join("packages/nix/languages.nix"))
     }
 
@@ -118,7 +126,7 @@ impl ConfigFiles {
         if let Some(slot) = self.manifest_slot_for(SlotKind::Services, None) {
             return self.repo_root.join(&slot.file);
         }
-        self.find_by_keywords(&["services", "daemons"])
+        self.find_by_keywords(SERVICES_ROUTING_KEYWORDS)
             .unwrap_or_else(|| self.repo_root.join("home/services.nix"))
     }
 
@@ -126,7 +134,7 @@ impl ConfigFiles {
         if let Some(slot) = self.manifest_slot_for(SlotKind::MasApps, None) {
             return self.repo_root.join(&slot.file);
         }
-        self.find_by_keywords(&["macos system"])
+        self.find_by_keywords(DARWIN_ROUTING_KEYWORDS)
             .unwrap_or_else(|| self.repo_root.join("system/darwin.nix"))
     }
 
@@ -134,7 +142,7 @@ impl ConfigFiles {
         if let Some(slot) = self.manifest_slot_for_tag(SlotKind::HomebrewList, "brews") {
             return self.repo_root.join(&slot.file);
         }
-        self.find_by_keywords(&["formula manifest", "brews"])
+        self.find_by_keywords(HOMEBREW_BREWS_ROUTING_KEYWORDS)
             .unwrap_or_else(|| self.repo_root.join("packages/homebrew/brews.nix"))
     }
 
@@ -142,14 +150,14 @@ impl ConfigFiles {
         if let Some(slot) = self.manifest_slot_for_tag(SlotKind::HomebrewList, "casks") {
             return self.repo_root.join(&slot.file);
         }
-        self.find_by_keywords(&["cask manifest", "gui apps"])
+        self.find_by_keywords(HOMEBREW_CASKS_ROUTING_KEYWORDS)
             .unwrap_or_else(|| self.repo_root.join("packages/homebrew/casks.nix"))
     }
 
     pub fn homebrew_taps(&self) -> PathBuf {
         // Taps are not a manifest slot kind — they share a file with brews or live in
         // a separate file matched by keyword only.
-        self.find_by_keywords(&["taps manifest"])
+        self.find_by_keywords(HOMEBREW_TAPS_ROUTING_KEYWORDS)
             .unwrap_or_else(|| self.repo_root.join("packages/homebrew/taps.nix"))
     }
 

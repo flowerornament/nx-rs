@@ -41,10 +41,7 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
         {
             return code;
         }
-        let rebuild = RebuildArgs {
-            preflight: false,
-            passthrough: Vec::new(),
-        };
+        let rebuild = RebuildArgs::default();
         let system_ctx = ctx.system_context();
         if cmd_rebuild(&rebuild, &system_ctx) != 0 {
             return 1;

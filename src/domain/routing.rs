@@ -4,16 +4,21 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
+use super::config::{
+    DARWIN_ROUTING_KEYWORDS, HOMEBREW_BREWS_ROUTING_KEYWORDS, HOMEBREW_CASKS_ROUTING_KEYWORDS,
+    HOMEBREW_TAPS_ROUTING_KEYWORDS, LANGUAGES_ROUTING_KEYWORDS, PACKAGES_ROUTING_KEYWORDS,
+    SERVICES_ROUTING_KEYWORDS,
+};
 use super::repo_scan::{NixFileScanPolicy, collect_managed_nix_files};
 
 const ROUTING_RULES: &[RoutingRule] = &[
-    RoutingRule::new("packages", &["cli tools", "utilities"]),
-    RoutingRule::new("languages", &["language", "runtimes", "toolchains"]),
-    RoutingRule::new("services", &["services", "daemons"]),
-    RoutingRule::new("darwin", &["macos system"]),
-    RoutingRule::new("homebrew brews", &["formula manifest", "brews"]),
-    RoutingRule::new("homebrew casks", &["cask manifest", "gui apps"]),
-    RoutingRule::new("homebrew taps", &["taps manifest"]),
+    RoutingRule::new("packages", PACKAGES_ROUTING_KEYWORDS),
+    RoutingRule::new("languages", LANGUAGES_ROUTING_KEYWORDS),
+    RoutingRule::new("services", SERVICES_ROUTING_KEYWORDS),
+    RoutingRule::new("darwin", DARWIN_ROUTING_KEYWORDS),
+    RoutingRule::new("homebrew brews", HOMEBREW_BREWS_ROUTING_KEYWORDS),
+    RoutingRule::new("homebrew casks", HOMEBREW_CASKS_ROUTING_KEYWORDS),
+    RoutingRule::new("homebrew taps", HOMEBREW_TAPS_ROUTING_KEYWORDS),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]

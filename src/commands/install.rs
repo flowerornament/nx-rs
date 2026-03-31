@@ -68,10 +68,7 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
     }
 
     run_post_install_actions(success_count, args, ctx, || {
-        let rebuild = RebuildArgs {
-            preflight: false,
-            passthrough: Vec::new(),
-        };
+        let rebuild = RebuildArgs::default();
         let system_ctx = ctx.system_context();
         cmd_rebuild(&rebuild, &system_ctx)
     });

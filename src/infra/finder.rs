@@ -67,6 +67,20 @@ pub fn find_package(name: &str, repo_root: &Path) -> anyhow::Result<Option<Packa
     find_package_exact(name, repo_root)
 }
 
+pub fn find_first_package(
+    names: &[String],
+    repo_root: &Path,
+) -> anyhow::Result<Option<PackageLocation>> {
+    let expanded_names = expand_lookup_names(names);
+    if expanded_names.is_empty() {
+        return Ok(None);
+    }
+
+    let lookup_specs = build_lookup_specs(&expanded_names)?;
+    let index = finder_index(repo_root)?;
+    Ok(find_first_package_in_index(&lookup_specs, &index))
+}
+
 pub fn find_package_fuzzy(name: &str, repo_root: &Path) -> anyhow::Result<Option<PackageMatch>> {
     if let Some(location) = find_package(name, repo_root)? {
         return Ok(Some(PackageMatch {
@@ -115,14 +129,7 @@ fn find_package_exact(name: &str, repo_root: &Path) -> anyhow::Result<Option<Pac
                 continue;
             }
             if patterns.iter().any(|pattern| pattern.is_match(line)) {
-                let output_path = fs::canonicalize(&indexed_file.path)
-                    .unwrap_or_else(|_| indexed_file.path.clone());
-                let location = PackageLocation::parse(&format!(
-                    "{}:{}",
-                    output_path.display(),
-                    line_index + 1
-                ));
-                return Ok(Some(location));
+                return Ok(Some(package_location(indexed_file, line_index + 1)));
             }
         }
     }
@@ -215,6 +222,74 @@ fn build_finder_index(snapshots: &[FileSnapshot]) -> anyhow::Result<FinderIndex>
         snapshots: snapshots.to_vec(),
         files,
     })
+}
+
+fn package_location(indexed_file: &IndexedFile, line_number: usize) -> PackageLocation {
+    let output_path =
+        fs::canonicalize(&indexed_file.path).unwrap_or_else(|_| indexed_file.path.clone());
+    PackageLocation::parse(&format!("{}:{line_number}", output_path.display()))
+}
+
+#[derive(Debug)]
+struct LookupSpec {
+    name: String,
+    patterns: Vec<Regex>,
+}
+
+fn expand_lookup_names(names: &[String]) -> Vec<String> {
+    let mut expanded = Vec::new();
+    let mut seen = HashSet::new();
+
+    for name in names {
+        let mapped = normalize_name(name);
+        for candidate in [mapped, name.clone()] {
+            if !candidate.is_empty() && seen.insert(candidate.clone()) {
+                expanded.push(candidate);
+            }
+        }
+    }
+
+    expanded
+}
+
+fn build_lookup_specs(names: &[String]) -> anyhow::Result<Vec<LookupSpec>> {
+    names
+        .iter()
+        .map(|name| {
+            let escaped = regex::escape(name);
+            build_patterns(&escaped).map(|patterns| LookupSpec {
+                name: name.clone(),
+                patterns,
+            })
+        })
+        .collect()
+}
+
+fn find_first_package_in_index(
+    lookup_specs: &[LookupSpec],
+    index: &FinderIndex,
+) -> Option<PackageLocation> {
+    let mut matches: Vec<Option<PackageLocation>> = vec![None; lookup_specs.len()];
+
+    for indexed_file in &index.files {
+        for (line_index, line) in indexed_file.lines.iter().enumerate() {
+            if line.trim_start().starts_with('#') {
+                continue;
+            }
+
+            for (spec_index, spec) in lookup_specs.iter().enumerate() {
+                if matches[spec_index].is_some() || is_alias_rhs_for(line, &spec.name) {
+                    continue;
+                }
+
+                if spec.patterns.iter().any(|pattern| pattern.is_match(line)) {
+                    matches[spec_index] = Some(package_location(indexed_file, line_index + 1));
+                }
+            }
+        }
+    }
+
+    matches.into_iter().flatten().next()
 }
 
 fn build_patterns(escaped_name: &str) -> anyhow::Result<Vec<Regex>> {
@@ -472,5 +547,42 @@ mod tests {
             .expect("fuzzy finder should resolve alias to canonical package");
         assert_eq!(found.name, "ripgrep");
         assert_eq!(found.location.line(), Some(3));
+    }
+
+    #[test]
+    fn find_first_package_preserves_name_priority_across_files() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let root = tmp.path();
+
+        write_nix(
+            root,
+            "packages/nix/cli.nix",
+            r"{ pkgs }:
+[
+  ripgrep
+]
+",
+        );
+        write_nix(
+            root,
+            "packages/homebrew/brews.nix",
+            r"{ }:
+[
+  fd
+]
+",
+        );
+
+        let location = find_first_package(&["fd".to_string(), "rg".to_string()], root)
+            .expect("batched lookup should succeed")
+            .expect("one of the names should resolve");
+        assert_eq!(location.line(), Some(3));
+        assert!(
+            location
+                .path()
+                .ends_with(Path::new("packages/homebrew/brews.nix")),
+            "expected fd match to win due to name priority, got {}",
+            location.path().display()
+        );
     }
 }

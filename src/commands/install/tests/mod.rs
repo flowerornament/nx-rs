@@ -88,6 +88,14 @@ fn test_plan(root: &Path, token: &str) -> InstallPlan {
     }
 }
 
+fn test_routing_context() -> InstallRoutingContext {
+    InstallRoutingContext {
+        base: "routing".to_string(),
+        enriched: None,
+        candidates: Vec::new(),
+    }
+}
+
 fn flake_input_plan(root: &Path, token: &str, flake_url: Option<&str>) -> InstallPlan {
     let mut plan = test_plan(root, token);
     plan.source_result.requires_flake_mod = true;

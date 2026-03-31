@@ -24,7 +24,8 @@ fn prepare_install_phase_stops_when_flake_input_engine_is_unsupported() {
 
     let (engine, _) = stub_engine("codex", false, true, "");
 
-    let prepared = prepare_install_phase("ripgrep", result, &args, &ctx, &engine, "routing");
+    let routing_context = test_routing_context();
+    let prepared = prepare_install_phase("ripgrep", result, &args, &ctx, &engine, &routing_context);
     assert!(prepared.is_none());
 }
 

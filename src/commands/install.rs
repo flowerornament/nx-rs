@@ -22,7 +22,7 @@ use crate::infra::ai_engine::{
 };
 use crate::infra::cache::MultiSourceCache;
 use crate::infra::file_edit::{EditOutcome, analyse_manifest_for_preview, apply_edit};
-use crate::infra::finder::find_package;
+use crate::infra::finder::{find_first_package, find_package};
 use crate::infra::flake_input::{FlakeInputEdit, add_flake_input};
 use crate::infra::shell::git_diff;
 use crate::infra::sources::{check_nix_available, search_all_sources};
@@ -49,7 +49,7 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
     ctx.printer.action(&format!("Installing {pkg_list}"));
 
     let engine = select_engine(args.engine(), args.model(), ctx.printer.style());
-    let routing_context = build_routing_context(&ctx.config_files);
+    let routing_context = InstallRoutingContext::build(ctx);
     let mut cache = load_cache(ctx);
 
     let mut success_count = 0;
@@ -103,7 +103,7 @@ fn install_one(
     ctx: &AppContext,
     cache: &mut Option<MultiSourceCache>,
     engine: &dyn AiEngine,
-    routing_context: &str,
+    routing_context: &InstallRoutingContext,
 ) -> bool {
     let resolved = match start_install_resolution(package, args, ctx, cache) {
         InstallStart::Proceed(resolved) => resolved,
@@ -184,7 +184,7 @@ fn prepare_install_phase(
     args: &InstallArgs,
     ctx: &AppContext,
     engine: &dyn AiEngine,
-    routing_context: &str,
+    routing_context: &InstallRoutingContext,
 ) -> Option<PreparedInstall> {
     let mut plan = match build_install_plan(&source_result, &ctx.config_files) {
         Ok(plan) => plan,
@@ -277,24 +277,12 @@ fn render_dry_run_install(prepared: &PreparedInstall, ctx: &AppContext) {
 fn refine_routing(
     plan: &mut InstallPlan,
     engine: &dyn AiEngine,
-    routing_context: &str,
+    routing_context: &InstallRoutingContext,
     ctx: &AppContext,
 ) {
-    use crate::infra::file_edit::list_bracket_entries;
-
     if plan.routing_warning.is_none() || plan.insertion_mode != InsertionMode::NixManifest {
         return;
     }
-
-    let candidates: Vec<String> = nix_manifest_candidates(&ctx.config_files)
-        .iter()
-        .filter_map(|p| {
-            p.strip_prefix(&ctx.repo_root)
-                .ok()
-                .and_then(|r| r.to_str())
-                .map(String::from)
-        })
-        .collect();
 
     let fallback = plan
         .target_file
@@ -303,41 +291,11 @@ fn refine_routing(
         .to_string_lossy()
         .to_string();
 
-    // Build file-contents summary so the LLM sees what each candidate contains.
-    let mut content_lines: Vec<String> = Vec::new();
-    for rel in &candidates {
-        let abs = ctx.repo_root.join(rel);
-        if let Ok(text) = fs::read_to_string(&abs) {
-            let display = if let Some(entries) = list_bracket_entries(&text) {
-                let total = entries.len();
-                let sample: Vec<&str> = entries.iter().take(6).map(String::as_str).collect();
-                if total > sample.len() {
-                    format!("{}, ... ({total} packages)", sample.join(", "))
-                } else if total > 0 {
-                    format!("{} ({total} packages)", sample.join(", "))
-                } else {
-                    "(empty)".to_string()
-                }
-            } else {
-                "(unparsed list format)".to_string()
-            };
-            content_lines.push(format!("- {rel}: {display}"));
-        }
-    }
-    let enriched_context = if content_lines.is_empty() {
-        routing_context.to_string()
-    } else {
-        format!(
-            "{routing_context}\n\nFile contents:\n{}",
-            content_lines.join("\n")
-        )
-    };
-
     let decision = engine.route_package(
         &plan.package_token,
         &plan.source_result.description,
-        &enriched_context,
-        &candidates,
+        routing_context.route_context(),
+        &routing_context.candidates,
         &fallback,
         &ctx.repo_root,
     );
@@ -620,6 +578,63 @@ struct PreparedInstall {
     source_description: String,
     plan: InstallPlan,
     rel_target: String,
+}
+
+struct InstallRoutingContext {
+    base: String,
+    enriched: Option<String>,
+    candidates: Vec<String>,
+}
+
+impl InstallRoutingContext {
+    fn build(ctx: &AppContext) -> Self {
+        use crate::infra::file_edit::list_bracket_entries;
+
+        let base = build_routing_context(&ctx.config_files);
+        let candidates: Vec<String> = nix_manifest_candidates(&ctx.config_files)
+            .iter()
+            .filter_map(|path| {
+                path.strip_prefix(&ctx.repo_root)
+                    .ok()
+                    .and_then(|rel| rel.to_str())
+                    .map(String::from)
+            })
+            .collect();
+
+        let content_lines: Vec<String> = candidates
+            .iter()
+            .filter_map(|rel| {
+                let text = fs::read_to_string(ctx.repo_root.join(rel)).ok()?;
+                let display = if let Some(entries) = list_bracket_entries(&text) {
+                    let total = entries.len();
+                    let sample: Vec<&str> = entries.iter().take(6).map(String::as_str).collect();
+                    if total > sample.len() {
+                        format!("{}, ... ({total} packages)", sample.join(", "))
+                    } else if total > 0 {
+                        format!("{} ({total} packages)", sample.join(", "))
+                    } else {
+                        "(empty)".to_string()
+                    }
+                } else {
+                    "(unparsed list format)".to_string()
+                };
+                Some(format!("- {rel}: {display}"))
+            })
+            .collect();
+
+        let enriched = (!content_lines.is_empty())
+            .then(|| format!("{base}\n\nFile contents:\n{}", content_lines.join("\n")));
+
+        Self {
+            base,
+            enriched,
+            candidates,
+        }
+    }
+
+    fn route_context(&self) -> &str {
+        self.enriched.as_deref().unwrap_or(&self.base)
+    }
 }
 
 #[derive(Debug)]
@@ -995,29 +1010,18 @@ fn find_existing_for_candidates(
     candidates: &[SourceResult],
     repo_root: &Path,
 ) -> anyhow::Result<Option<PackageLocation>> {
+    let mut names = Vec::new();
     let mut seen_names = HashSet::new();
-    for candidate in candidates {
-        if let Some(existing) = find_existing_for_result(candidate, repo_root, &mut seen_names)? {
-            return Ok(Some(existing));
-        }
-    }
-    Ok(None)
-}
 
-fn find_existing_for_result(
-    candidate: &SourceResult,
-    repo_root: &Path,
-    seen_names: &mut HashSet<String>,
-) -> anyhow::Result<Option<PackageLocation>> {
-    for name in lookup_names(candidate) {
-        if !seen_names.insert(name.clone()) {
-            continue;
-        }
-        if let Some(location) = find_package(&name, repo_root)? {
-            return Ok(Some(location));
+    for candidate in candidates {
+        for name in lookup_names(candidate) {
+            if seen_names.insert(name.clone()) {
+                names.push(name);
+            }
         }
     }
-    Ok(None)
+
+    find_first_package(&names, repo_root)
 }
 
 fn lookup_names(candidate: &SourceResult) -> Vec<String> {

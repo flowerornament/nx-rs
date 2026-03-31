@@ -3,8 +3,7 @@ use std::fs;
 
 use tempfile::TempDir;
 
-use crate::cli::PassthroughArgs;
-use crate::cli::{UpgradeArgs, UpgradeFlowArgs, UpgradeSkipArgs};
+use crate::cli::{RebuildArgs, UpgradeArgs, UpgradeFlowArgs, UpgradeSkipArgs};
 use crate::domain::upgrade::InputChange;
 use crate::infra::shell::run_captured_command;
 

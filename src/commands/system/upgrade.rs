@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::cli::{PassthroughArgs, UpgradeArgs};
+use crate::cli::{RebuildArgs, UpgradeArgs};
 use crate::commands::context::AppContext;
 use crate::domain::upgrade::{InputChange, diff_locks, load_flake_lock, short_rev};
 use crate::infra::ai_engine::DEFAULT_CODEX_MODEL;
@@ -41,11 +41,12 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
         {
             return code;
         }
-        let passthrough = PassthroughArgs {
+        let rebuild = RebuildArgs {
+            preflight: false,
             passthrough: Vec::new(),
         };
         let system_ctx = ctx.system_context();
-        if cmd_rebuild(&passthrough, &system_ctx) != 0 {
+        if cmd_rebuild(&rebuild, &system_ctx) != 0 {
             return 1;
         }
     }

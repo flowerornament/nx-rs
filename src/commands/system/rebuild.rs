@@ -1,7 +1,8 @@
 use std::path::Path;
 
-use crate::cli::PassthroughArgs;
+use crate::cli::RebuildArgs;
 use crate::commands::context::SystemContext;
+use crate::domain::routing::RoutingAudit;
 use crate::infra::shell::{CapturedCommand, run_captured_command, run_indented_command_collecting};
 use crate::output::printer::Printer;
 
@@ -9,8 +10,13 @@ use crate::domain::manifest::Manifest;
 
 use super::DARWIN_REBUILD;
 
-pub fn cmd_rebuild(args: &PassthroughArgs, ctx: &SystemContext<'_>) -> i32 {
+pub fn cmd_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> i32 {
     if let Err(code) = ctx.require_manifest_system_safe("rebuild") {
+        return code;
+    }
+    if args.preflight
+        && let Err(code) = check_routing_preflight(ctx)
+    {
         return code;
     }
     if let Err(code) = check_git_preflight(ctx) {
@@ -19,7 +25,29 @@ pub fn cmd_rebuild(args: &PassthroughArgs, ctx: &SystemContext<'_>) -> i32 {
     if let Err(code) = check_flake(ctx) {
         return code;
     }
+    if args.preflight {
+        println!();
+        ctx.printer.success("Rebuild preflight passed");
+        return 0;
+    }
     do_rebuild(args, ctx)
+}
+
+fn check_routing_preflight(ctx: &SystemContext<'_>) -> Result<(), i32> {
+    ctx.printer.action("Checking nx routing metadata");
+    let audit = RoutingAudit::scan(ctx.repo_root);
+    if audit.is_clean() {
+        ctx.printer.success("Routing metadata passed");
+        return Ok(());
+    }
+
+    ctx.printer.error("Routing metadata failed");
+    println!();
+    Printer::detail("Fix these issues before rebuild:");
+    for issue in audit.issues() {
+        Printer::detail(&format!("- {}", issue.summary(ctx.repo_root)));
+    }
+    Err(1)
 }
 
 /// Returns `stderr.trim()` if non-empty, otherwise `stdout.trim()`.
@@ -156,7 +184,7 @@ fn check_flake(ctx: &SystemContext<'_>) -> Result<(), i32> {
     Ok(())
 }
 
-fn do_rebuild(args: &PassthroughArgs, ctx: &SystemContext<'_>) -> i32 {
+fn do_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> i32 {
     let repo = ctx.repo_root.display().to_string();
     let manifest = ctx.config_files.manifest();
     let use_sudo = manifest.is_none_or(|m| m.platform.sudo);
@@ -226,13 +254,13 @@ fn do_rebuild(args: &PassthroughArgs, ctx: &SystemContext<'_>) -> i32 {
 
 /// Build sudo args for rebuild command (backward-compat wrapper for tests).
 #[cfg(test)]
-pub(super) fn build_rebuild_command(repo: &str, args: &PassthroughArgs) -> Vec<String> {
+pub(super) fn build_rebuild_command(repo: &str, args: &RebuildArgs) -> Vec<String> {
     build_rebuild_command_with_manifest(repo, args, None)
 }
 
 pub(super) fn build_rebuild_command_with_manifest(
     repo: &str,
-    args: &PassthroughArgs,
+    args: &RebuildArgs,
     manifest: Option<&Manifest>,
 ) -> Vec<String> {
     let rebuild_bin = manifest.map_or(DARWIN_REBUILD, |m| m.platform.rebuild_command.as_str());

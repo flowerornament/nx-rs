@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
-use crate::cli::{InstallArgs, PassthroughArgs};
+use crate::cli::{InstallArgs, RebuildArgs};
 use crate::commands::context::AppContext;
 use crate::commands::shared::{
     SnippetMode, missing_argument_error, relative_location, show_dry_run_preview, show_snippet,
@@ -68,11 +68,12 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
     }
 
     run_post_install_actions(success_count, args, ctx, || {
-        let passthrough = PassthroughArgs {
+        let rebuild = RebuildArgs {
+            preflight: false,
             passthrough: Vec::new(),
         };
         let system_ctx = ctx.system_context();
-        cmd_rebuild(&passthrough, &system_ctx)
+        cmd_rebuild(&rebuild, &system_ctx)
     });
 
     i32::from(success_count != args.packages.len())

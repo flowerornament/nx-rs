@@ -17,6 +17,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "info",
     "status",
     "installed",
+    "lint",
     "undo",
     "update",
     "test",
@@ -123,6 +124,8 @@ pub enum CommandKind {
     Status,
     #[command(about = "Check whether package(s) are installed")]
     Installed(InstalledArgs),
+    #[command(about = "Check nx routing annotations and keyword conflicts")]
+    Lint,
     #[command(about = "Revert modified tracked files via git checkout")]
     Undo(UndoArgs),
     #[command(about = "Run nix flake update")]
@@ -130,7 +133,7 @@ pub enum CommandKind {
     #[command(about = "Run repo quality checks")]
     Test,
     #[command(about = "Run darwin-rebuild switch with preflight checks")]
-    Rebuild(PassthroughArgs),
+    Rebuild(RebuildArgs),
     #[command(about = "Run full upgrade flow (flake, brew, rebuild, commit)")]
     Upgrade(UpgradeArgs),
 }
@@ -400,6 +403,20 @@ pub struct PassthroughArgs {
     #[arg(
         last = true,
         help = "Arguments passed through to the underlying system command"
+    )]
+    pub passthrough: Vec<String>,
+}
+
+#[derive(Debug, Clone, Parser, Default)]
+pub struct RebuildArgs {
+    #[arg(
+        long,
+        help = "Run lint, git, and flake preflight checks without rebuilding"
+    )]
+    pub preflight: bool,
+    #[arg(
+        last = true,
+        help = "Arguments passed through to the underlying darwin-rebuild command"
     )]
     pub passthrough: Vec<String>,
 }
@@ -1110,11 +1127,12 @@ mod tests {
         assert_subcommand_local_long_flags("remove", &["yes", "dry-run", "model"]);
         assert_subcommand_local_long_flags("where", &[]);
         assert_subcommand_local_long_flags("installed", &["show-location"]);
+        assert_subcommand_local_long_flags("lint", &[]);
         assert_subcommand_local_long_flags("status", &[]);
         assert_subcommand_local_long_flags("undo", &["yes"]);
         assert_subcommand_local_long_flags("update", &[]);
         assert_subcommand_local_long_flags("test", &[]);
-        assert_subcommand_local_long_flags("rebuild", &[]);
+        assert_subcommand_local_long_flags("rebuild", &["preflight"]);
     }
 
     #[test]

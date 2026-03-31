@@ -46,6 +46,7 @@ Known commands:
 - `info`
 - `status`
 - `installed`
+- `lint`
 - `undo`
 - `update`
 - `test`
@@ -95,6 +96,8 @@ Defined at root callback and persisted in app state:
 - `installed`
   - args: `<packages...>`
   - options: `--json`, `--show-location`
+- `lint`
+  - no args
 - `undo`
   - options: `--yes/-y`
 - `update`
@@ -102,6 +105,7 @@ Defined at root callback and persisted in app state:
 - `test`
   - no args
 - `rebuild`
+  - options: `--preflight`
   - passthrough args accepted
 - `upgrade`
   - options: `--dry-run/-n`, `--verbose/-v`, `--skip-rebuild`, `--skip-commit`, `--skip-brew`, `--no-ai`
@@ -120,6 +124,7 @@ Defined at root callback and persisted in app state:
 - `info`: `2` when no package arg; otherwise `0` (including not-found).
 - `status`: `0`.
 - `installed`: `2` when no package args; otherwise `0` only if all requested packages are installed.
+- `lint`: `0` when routing metadata passes; otherwise `1`.
 - `undo`: `0`.
 - `update`: `0` on flake update success, else `1`.
 - `test`: `0` if all steps pass, else `1`.
@@ -430,6 +435,7 @@ Runs `just ci` from the repository root through the shared streaming command pat
 
 Preflight requirements:
 
+0. When `--preflight` is passed, lint routing metadata first and exit after successful checks.
 1. Git preflight must succeed.
 2. No untracked `.nix` files under `home/`, `packages/`, `system/`, `hosts/`.
 3. `nix flake check <repo_root>` must pass.
@@ -437,6 +443,18 @@ Preflight requirements:
 Then run:
 
 - `sudo /run/current-system/sw/bin/darwin-rebuild switch --flake <repo_root> [passthrough...]`
+
+Routing lint rules:
+
+- Every routable managed `.nix` file under `home/`, `packages/`, `system/`, `hosts/` must start with a non-empty `# nx:` comment.
+- Built-in routing keywords must not match more than one routable file.
+
+## 10.4.1 `lint`
+
+Runs the routing lint rules without invoking git, nix, or rebuild commands.
+
+- Returns `0` when all routing checks pass.
+- Returns `1` when any routing issue is found.
 
 ## 10.5 `upgrade`
 

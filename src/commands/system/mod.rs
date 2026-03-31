@@ -1,9 +1,11 @@
+mod lint;
 mod rebuild;
 mod test;
 mod undo;
 mod update;
 mod upgrade;
 
+pub use lint::cmd_lint;
 pub use rebuild::cmd_rebuild;
 pub use test::cmd_test;
 pub use undo::cmd_undo;

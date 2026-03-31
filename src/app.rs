@@ -12,7 +12,7 @@ use crate::commands::query::{cmd_info, cmd_installed, cmd_list, cmd_status, cmd_
 use crate::commands::remove::cmd_remove;
 use crate::commands::search::cmd_search;
 use crate::commands::secret::cmd_secret;
-use crate::commands::system::{cmd_rebuild, cmd_test, cmd_undo, cmd_update, cmd_upgrade};
+use crate::commands::system::{cmd_lint, cmd_rebuild, cmd_test, cmd_undo, cmd_update, cmd_upgrade};
 use crate::domain::config::ConfigFiles;
 use crate::domain::drift::ManifestHealth;
 use crate::domain::manifest_scan::scan_repo;
@@ -73,6 +73,7 @@ pub fn execute(cli: Cli) -> i32 {
         CommandKind::Info(args) => cmd_info(&args, &ctx.query_context()),
         CommandKind::Status => cmd_status(&ctx.query_context()),
         CommandKind::Installed(args) => cmd_installed(&args, &ctx.query_context()),
+        CommandKind::Lint => cmd_lint(&ctx.system_context()),
         CommandKind::Undo(args) => cmd_undo(&args, &ctx.repo_context()),
         CommandKind::Update(args) => cmd_update(&args, &ctx.repo_context()),
         CommandKind::Test => cmd_test(&ctx.repo_context()),

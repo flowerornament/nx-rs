@@ -46,8 +46,10 @@ const TEST_CI_ARGS: &[&str] = &["ci"];
 const UPDATE_PASSTHROUGH_ARGS: &[&str] = &["update", "--", "--commit-lock-file", "foo"];
 const UPDATE_BASE_ARGS: &[&str] = &["update"];
 const TEST_BASE_ARGS: &[&str] = &["test"];
+const LINT_BASE_ARGS: &[&str] = &["lint"];
 const REBUILD_PASSTHROUGH_ARGS: &[&str] = &["rebuild", "--", "--show-trace", "foo"];
 const REBUILD_BASE_ARGS: &[&str] = &["rebuild"];
+const REBUILD_CHECK_ONLY_ARGS: &[&str] = &["rebuild", "--preflight"];
 const UNDO_BASE_ARGS: &[&str] = &["undo"];
 
 const UPDATE_SUCCESS_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
@@ -73,6 +75,8 @@ const TEST_FAILURE_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
     EXPECTED_CWD_REPO_ROOT,
     TEST_CI_ARGS,
 )];
+
+const LINT_SUCCESS_CALLS: &[ExpectedCall] = &[];
 
 const REBUILD_SUCCESS_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
@@ -109,6 +113,11 @@ const REBUILD_UNTRACKED_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
 )];
 
 const REBUILD_FLAKE_FAIL_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
+];
+
+const REBUILD_CHECK_ONLY_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
 ];
@@ -231,12 +240,28 @@ const COMMAND_CASES: &[CommandCase] = &[
         stdout_contains: &[],
     },
     CommandCase {
+        id: "lint_success_sequence",
+        cli_args: LINT_BASE_ARGS,
+        mode: "success",
+        expected_exit: 0,
+        expected_calls: LINT_SUCCESS_CALLS,
+        stdout_contains: &["nx routing metadata passed"],
+    },
+    CommandCase {
         id: "rebuild_success_passthrough",
         cli_args: REBUILD_PASSTHROUGH_ARGS,
         mode: "success",
         expected_exit: 0,
         expected_calls: REBUILD_SUCCESS_CALLS,
         stdout_contains: &[],
+    },
+    CommandCase {
+        id: "rebuild_preflight_short_circuits_before_rebuild",
+        cli_args: REBUILD_CHECK_ONLY_ARGS,
+        mode: "success",
+        expected_exit: 0,
+        expected_calls: REBUILD_CHECK_ONLY_CALLS,
+        stdout_contains: &["Rebuild preflight passed"],
     },
     CommandCase {
         id: "rebuild_git_preflight_failure_short_circuit",

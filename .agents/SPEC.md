@@ -33,6 +33,7 @@ When implementation and this document disagree, this repository's tests are cons
 Known commands:
 
 - `help`
+- `generations`
 - `init`
 - `install`
 - `remove`
@@ -67,6 +68,14 @@ Defined at root callback and persisted in app state:
 
 - `help`
   - args: `[topics...]`
+- `generations`
+  - subcommands: `status`, `plan`, `prune`
+- `generations status`
+  - options: `--keep`, `--kind`
+- `generations plan`
+  - options: `--keep`, `--kind`, `--no-gc`
+- `generations prune`
+  - options: `--keep`, `--kind`, `--no-gc`, `--yes/-y`, `--dry-run/-n`
 - `init`
   - options: `--refresh`
 - `install`
@@ -114,6 +123,9 @@ Defined at root callback and persisted in app state:
 ## 2.4 Exit Code Contract
 
 - `help`: `0` when help renders successfully; `2` when the requested topic path cannot be resolved.
+- `generations status`: `0`.
+- `generations plan`: `0`.
+- `generations prune`: `0` for `--dry-run`; otherwise `1` until live pruning is implemented.
 - `init`: `0` on success or user cancellation; `1` on manifest load/save failure.
 - `install`: `2` when no package args; otherwise `0` if all requested install actions succeeded or nothing selected; `1` on partial failure.
 - `remove`/`rm`/`uninstall`: `2` when no package args; otherwise `0`.

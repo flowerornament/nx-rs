@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 use anyhow::bail;
 
 use crate::cli::{Cli, CommandKind};
-use crate::commands::context::{AppContext, GlobalFlags};
+use crate::commands::context::{AppContext, GlobalFlags, HostContext};
 use crate::commands::help::cmd_help;
+use crate::commands::host::cmd_generations;
 use crate::commands::init::cmd_init;
 use crate::commands::install::cmd_install;
 use crate::commands::query::{cmd_info, cmd_installed, cmd_list, cmd_status, cmd_where};
@@ -31,6 +32,9 @@ pub fn execute(cli: Cli) -> i32 {
 
     if let CommandKind::Help(args) = &cli.command {
         return cmd_help(args);
+    }
+    if let CommandKind::Generations(args) = &cli.command {
+        return cmd_generations(args, &HostContext::new(&printer, global_flags));
     }
 
     let needs_refresh = matches!(
@@ -63,6 +67,7 @@ pub fn execute(cli: Cli) -> i32 {
 
     match cli.command {
         CommandKind::Help(_) => unreachable!("help handled before repo setup"),
+        CommandKind::Generations(_) => unreachable!("host commands handled before repo setup"),
         CommandKind::Init(args) => cmd_init(args.refresh, &ctx.init_context()),
         CommandKind::Install(args) => cmd_install(&args, &ctx),
         CommandKind::Remove(args) => cmd_remove(&args, &ctx),
@@ -125,9 +130,11 @@ fn config_files_for_manifest_health(
 
 #[cfg(test)]
 mod tests {
-    use super::{config_files_for_manifest_health, detect_repo_root, resolve_repo_root};
+    use super::{config_files_for_manifest_health, detect_repo_root, execute, resolve_repo_root};
+    use crate::cli::Cli;
     use crate::domain::drift::{DriftReport, ManifestHealth};
     use crate::domain::manifest::{Manifest, PlatformConfig, PlatformKind, Slot, SlotKind};
+    use clap::Parser;
     use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
@@ -180,6 +187,32 @@ mod tests {
         let dir = TempDir::new().expect("temp dir");
         // Temp dirs are typically under /tmp which has no flake.nix ancestors
         assert_eq!(detect_repo_root(dir.path()), None);
+    }
+
+    #[test]
+    fn generations_status_bypasses_repo_root_resolution() {
+        let temp = TempDir::new().expect("temp dir");
+        let original = std::env::current_dir().expect("current dir");
+        std::env::set_current_dir(temp.path()).expect("set temp cwd");
+
+        let cli = Cli::try_parse_from(["nx", "generations", "status"]).expect("parse");
+        let code = execute(cli);
+
+        std::env::set_current_dir(original).expect("restore cwd");
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn generations_prune_dry_run_bypasses_repo_root_resolution() {
+        let temp = TempDir::new().expect("temp dir");
+        let original = std::env::current_dir().expect("current dir");
+        std::env::set_current_dir(temp.path()).expect("set temp cwd");
+
+        let cli = Cli::try_parse_from(["nx", "generations", "prune", "--dry-run"]).expect("parse");
+        let code = execute(cli);
+
+        std::env::set_current_dir(original).expect("restore cwd");
+        assert_eq!(code, 0);
     }
 
     #[test]

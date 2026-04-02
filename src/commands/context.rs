@@ -15,6 +15,11 @@ pub struct RepoContext<'a> {
     pub printer: &'a Printer,
 }
 
+pub struct HostContext<'a> {
+    pub printer: &'a Printer,
+    flags: GlobalFlags,
+}
+
 pub struct JsonCommandContext<'a> {
     pub repo_root: &'a Path,
     pub printer: &'a Printer,
@@ -116,6 +121,16 @@ impl AppContext {
 }
 
 impl JsonCommandContext<'_> {
+    pub const fn wants_json(&self, local_json_flag: bool) -> bool {
+        local_json_flag || self.flags.json
+    }
+}
+
+impl HostContext<'_> {
+    pub const fn new(printer: &Printer, flags: GlobalFlags) -> HostContext<'_> {
+        HostContext { printer, flags }
+    }
+
     pub const fn wants_json(&self, local_json_flag: bool) -> bool {
         local_json_flag || self.flags.json
     }

@@ -1,9 +1,10 @@
 use std::ffi::OsString;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 const KNOWN_COMMANDS: &[&str] = &[
     "help",
+    "generations",
     "init",
     "install",
     "remove",
@@ -102,6 +103,8 @@ pub struct GlobalOutputArgs {
 pub enum CommandKind {
     #[command(about = "Show hierarchical help for commands and flags")]
     Help(HelpArgs),
+    #[command(about = "Inspect and manage host Nix generations")]
+    Generations(GenerationsArgs),
     #[command(about = "Scan repo and generate .nx/manifest.toml")]
     Init(InitArgs),
     #[command(about = "Install package(s) into nix config")]
@@ -136,6 +139,72 @@ pub enum CommandKind {
     Rebuild(RebuildArgs),
     #[command(about = "Run full upgrade flow (flake, brew, rebuild, commit)")]
     Upgrade(UpgradeArgs),
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct GenerationsArgs {
+    #[command(subcommand)]
+    pub command: GenerationsCommand,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum GenerationsCommand {
+    #[command(about = "Show generation families and the active retention policy")]
+    Status(GenerationsStatusArgs),
+    #[command(about = "Render the retention and execution plan without mutating the host")]
+    Plan(GenerationsPlanArgs),
+    #[command(about = "Prune generations and optionally run garbage collection")]
+    Prune(GenerationsPruneArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct GenerationsStatusArgs {
+    #[command(flatten)]
+    pub policy: GenerationsPolicyArgs,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct GenerationsPlanArgs {
+    #[command(flatten)]
+    pub policy: GenerationsPolicyArgs,
+    #[arg(long, help = "Skip garbage collection in the rendered plan")]
+    pub no_gc: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct GenerationsPruneArgs {
+    #[command(flatten)]
+    pub policy: GenerationsPolicyArgs,
+    #[arg(long, help = "Skip garbage collection after pruning")]
+    pub no_gc: bool,
+    #[arg(long, short = 'y', help = "Skip confirmation prompts")]
+    pub yes: bool,
+    #[arg(
+        long,
+        short = 'n',
+        help = "Preview the prune plan without mutating anything"
+    )]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct GenerationsPolicyArgs {
+    #[arg(
+        long,
+        value_name = "N",
+        default_value_t = 10,
+        help = "Keep the newest N generations"
+    )]
+    pub keep: usize,
+    #[arg(long, value_enum, default_value_t = GenerationKindArg::All, help = "Generation families to include")]
+    pub kind: GenerationKindArg,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum GenerationKindArg {
+    All,
+    Darwin,
+    HomeManager,
 }
 
 #[derive(Debug, Clone, Parser, Default)]
@@ -979,6 +1048,33 @@ mod tests {
             panic!("expected help command");
         };
         assert_eq!(args.topics, vec!["secret".to_string(), "add".to_string()]);
+    }
+
+    #[test]
+    fn generations_prune_parses_policy_and_dry_run_flags() {
+        let cli = Cli::try_parse_from([
+            "nx",
+            "generations",
+            "prune",
+            "--keep",
+            "25",
+            "--kind",
+            "home-manager",
+            "--no-gc",
+            "--dry-run",
+        ])
+        .expect("parse generations prune");
+
+        let CommandKind::Generations(GenerationsArgs {
+            command: GenerationsCommand::Prune(args),
+        }) = cli.command
+        else {
+            panic!("expected generations prune command");
+        };
+        assert_eq!(args.policy.keep, 25);
+        assert_eq!(args.policy.kind, GenerationKindArg::HomeManager);
+        assert!(args.no_gc);
+        assert!(args.dry_run);
     }
 
     #[test]

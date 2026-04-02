@@ -1,5 +1,6 @@
 pub mod context;
 pub mod help;
+pub mod host;
 pub mod init;
 pub mod install;
 pub mod query;

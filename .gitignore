@@ -8,6 +8,7 @@ result
 # Dolt ephemeral (belt-and-suspenders with .beads/.gitignore)
 .dolt/
 *.db
+.beads-credential-key
 
 .vercel
 .agents/reports/

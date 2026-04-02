@@ -1,5 +1,6 @@
 pub mod config;
 pub mod drift;
+pub mod generations;
 pub mod location;
 pub mod manifest;
 pub mod manifest_scan;

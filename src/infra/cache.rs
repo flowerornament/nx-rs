@@ -6,21 +6,13 @@ use anyhow::Context;
 use serde_json::Value;
 
 use crate::domain::source::{
-    PackageSource, SourcePreferences, SourceResult, normalize_name, sort_results,
+    ALL_PACKAGE_SOURCES, PackageSource, SourcePreferences, SourceResult, normalize_name,
+    sort_results,
 };
 
 // Shared cache primitives used by query/install flows and cache unit coverage.
 const CACHE_SCHEMA_VERSION: u64 = 1;
 const CACHE_FILENAME: &str = "packages_v4.json";
-const CACHED_SOURCES: &[PackageSource] = &[
-    PackageSource::FlakeInput,
-    PackageSource::Nxs,
-    PackageSource::Nur,
-    PackageSource::Homebrew,
-    PackageSource::Cask,
-    PackageSource::Mas,
-];
-
 /// Maps source to flake.lock input name for revision lookup.
 const fn source_to_input(source: PackageSource) -> &'static str {
     match source {
@@ -107,22 +99,26 @@ impl MultiSourceCache {
     /// rules as live search for the given preferences.
     pub fn get_all_with_prefs(&self, name: &str, prefs: &SourcePreferences) -> Vec<SourceResult> {
         let mut results = Vec::new();
-        let mut has_nix_source = false;
+        let mut has_non_homebrew_source = false;
 
-        for &source in CACHED_SOURCES {
+        for &source in ALL_PACKAGE_SOURCES {
             if let Some(result) = self.get(name, source) {
                 if matches!(
                     source,
-                    PackageSource::FlakeInput | PackageSource::Nxs | PackageSource::Nur
+                    PackageSource::FlakeInput
+                        | PackageSource::Nxs
+                        | PackageSource::Nur
+                        | PackageSource::Mas
                 ) {
-                    has_nix_source = true;
+                    has_non_homebrew_source = true;
                 }
                 results.push(result);
             }
         }
 
-        // Homebrew-only guardrail: force fresh search when no nix sources cached
-        if !results.is_empty() && !has_nix_source {
+        // Homebrew-only guardrail: force fresh search when the cache contains only
+        // Homebrew formula/cask matches and no nix or MAS result to anchor the lookup.
+        if !results.is_empty() && !has_non_homebrew_source {
             return Vec::new();
         }
 
@@ -359,6 +355,26 @@ mod tests {
         let results = cache.get_all_with_prefs("ripgrep", &SourcePreferences::default());
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].source, PackageSource::Nxs);
+    }
+
+    #[test]
+    fn mas_only_cache_results_are_reused() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        write_flake_lock(&repo);
+
+        let home = tmp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+
+        let mut cache = make_cache(&repo, &home);
+        cache
+            .set_many(&[result("xcode", PackageSource::Mas, "xcode", 0.9)])
+            .unwrap();
+
+        let results = cache.get_all_with_prefs("xcode", &SourcePreferences::default());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].source, PackageSource::Mas);
     }
 
     #[test]

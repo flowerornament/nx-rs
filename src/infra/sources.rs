@@ -765,7 +765,7 @@ pub fn cached_search_all_sources(
     repo_root: &Path,
     cache: &mut Option<MultiSourceCache>,
 ) -> SourceSearchOutcome {
-    cached_search_with(name, prefs, repo_root, cache, search_all_sources)
+    cached_search_with_status(name, prefs, repo_root, cache, search_all_sources).outcome
 }
 
 pub fn cached_search_all_sources_quiet(
@@ -774,25 +774,47 @@ pub fn cached_search_all_sources_quiet(
     repo_root: &Path,
     cache: &mut Option<MultiSourceCache>,
 ) -> SourceSearchOutcome {
-    cached_search_with(name, prefs, repo_root, cache, search_all_sources_quiet)
+    cached_search_with_status(name, prefs, repo_root, cache, search_all_sources_quiet).outcome
 }
 
+pub struct CachedSearchOutcome {
+    pub outcome: SourceSearchOutcome,
+    pub cache_hit: bool,
+}
+
+#[cfg(test)]
 pub fn cached_search_with<F>(
     name: &str,
     prefs: &SourcePreferences,
     repo_root: &Path,
     cache: &mut Option<MultiSourceCache>,
-    mut search: F,
+    search: F,
 ) -> SourceSearchOutcome
+where
+    F: FnMut(&str, &SourcePreferences, Option<&Path>) -> SourceSearchOutcome,
+{
+    cached_search_with_status(name, prefs, repo_root, cache, search).outcome
+}
+
+pub fn cached_search_with_status<F>(
+    name: &str,
+    prefs: &SourcePreferences,
+    repo_root: &Path,
+    cache: &mut Option<MultiSourceCache>,
+    mut search: F,
+) -> CachedSearchOutcome
 where
     F: FnMut(&str, &SourcePreferences, Option<&Path>) -> SourceSearchOutcome,
 {
     if let Some(cache_ref) = cache.as_ref() {
         let cached = cache_ref.get_all_with_prefs(name, prefs);
         if !cached.is_empty() {
-            return SourceSearchOutcome {
-                results: cached,
-                unavailable_sources: Vec::new(),
+            return CachedSearchOutcome {
+                outcome: SourceSearchOutcome {
+                    results: cached,
+                    unavailable_sources: Vec::new(),
+                },
+                cache_hit: true,
             };
         }
     }
@@ -807,7 +829,10 @@ where
         let _ = cache_ref.set_many(&outcome.results);
     }
 
-    outcome
+    CachedSearchOutcome {
+        outcome,
+        cache_hit: false,
+    }
 }
 
 fn search_all_sources_with_timeout_reporting(

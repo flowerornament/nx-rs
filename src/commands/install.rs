@@ -25,7 +25,9 @@ use crate::infra::file_edit::{EditOutcome, analyse_manifest_for_preview, apply_e
 use crate::infra::finder::{find_first_package, find_package};
 use crate::infra::flake_input::{FlakeInputEdit, add_flake_input};
 use crate::infra::shell::git_diff;
-use crate::infra::sources::{cached_search_all_sources, check_nix_available};
+use crate::infra::sources::{
+    cached_search_all_sources, cached_search_with_status, check_nix_available,
+};
 use crate::output::printer::Printer;
 
 pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
@@ -667,12 +669,16 @@ fn search_for_package(
     }
 
     let prefs = source_prefs_from_args(args);
-    let cache_hit = cache
-        .as_ref()
-        .is_some_and(|cache_ref| !cache_ref.get_all_with_prefs(package, &prefs).is_empty());
-    let outcome = cached_search_all_sources(package, &prefs, &ctx.repo_root, cache);
+    let cached = cached_search_with_status(
+        package,
+        &prefs,
+        &ctx.repo_root,
+        cache,
+        crate::infra::sources::search_all_sources,
+    );
+    let outcome = cached.outcome;
 
-    if args.explain() && cache_hit {
+    if args.explain() && cached.cache_hit {
         Printer::detail(&format!(
             "Cache hit for '{package}' ({} sources)",
             outcome.results.len()
@@ -997,13 +1003,10 @@ fn find_existing_for_candidates(
     repo_root: &Path,
 ) -> anyhow::Result<Option<PackageLocation>> {
     let mut names = Vec::new();
-    let mut seen_names = HashSet::new();
 
     for candidate in candidates {
         for name in lookup_names(candidate) {
-            if seen_names.insert(name.clone()) {
-                names.push(name);
-            }
+            names.push(name);
         }
     }
 

@@ -117,24 +117,12 @@ fn finder_index_rebuilds(repo_root: &Path) -> usize {
 
 fn find_package_exact(name: &str, repo_root: &Path) -> anyhow::Result<Option<PackageLocation>> {
     let escaped = regex::escape(name);
-    let patterns = build_patterns(&escaped)?;
+    let lookup_specs = vec![LookupSpec {
+        name: name.to_string(),
+        patterns: build_patterns(&escaped)?,
+    }];
     let index = finder_index(repo_root)?;
-
-    for indexed_file in &index.files {
-        for (line_index, line) in indexed_file.lines.iter().enumerate() {
-            if line.trim_start().starts_with('#') {
-                continue;
-            }
-            if is_alias_rhs_for(line, name) {
-                continue;
-            }
-            if patterns.iter().any(|pattern| pattern.is_match(line)) {
-                return Ok(Some(package_location(indexed_file, line_index + 1)));
-            }
-        }
-    }
-
-    Ok(None)
+    Ok(find_first_package_in_index(&lookup_specs, &index))
 }
 
 fn finder_index(repo_root: &Path) -> anyhow::Result<Arc<FinderIndex>> {
@@ -283,7 +271,11 @@ fn find_first_package_in_index(
                 }
 
                 if spec.patterns.iter().any(|pattern| pattern.is_match(line)) {
-                    matches[spec_index] = Some(package_location(indexed_file, line_index + 1));
+                    let location = package_location(indexed_file, line_index + 1);
+                    if spec_index == 0 {
+                        return Some(location);
+                    }
+                    matches[spec_index] = Some(location);
                 }
             }
         }

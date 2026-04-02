@@ -18,6 +18,15 @@ pub enum PackageSource {
     Mas,
 }
 
+pub const ALL_PACKAGE_SOURCES: &[PackageSource] = &[
+    PackageSource::FlakeInput,
+    PackageSource::Nxs,
+    PackageSource::Nur,
+    PackageSource::Homebrew,
+    PackageSource::Cask,
+    PackageSource::Mas,
+];
+
 impl fmt::Display for PackageSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())

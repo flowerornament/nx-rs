@@ -26,7 +26,6 @@ impl GenerationKind {
 #[serde(transparent)]
 pub struct GenerationId(u64);
 
-#[cfg(test)]
 impl GenerationId {
     #[must_use]
     pub const fn new(value: u64) -> Self {
@@ -46,6 +45,16 @@ pub struct GenerationRecord {
     pub created_at: Option<String>,
     pub current: bool,
     pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DiskUsageSnapshot {
+    pub filesystem: String,
+    pub size: String,
+    pub used: String,
+    pub available: String,
+    pub capacity: String,
+    pub mounted_on: String,
 }
 
 impl GenerationRecord {

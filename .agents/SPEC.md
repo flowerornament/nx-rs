@@ -125,7 +125,7 @@ Defined at root callback and persisted in app state:
 - `help`: `0` when help renders successfully; `2` when the requested topic path cannot be resolved.
 - `generations status`: `0`.
 - `generations plan`: `0`.
-- `generations prune`: `0` for `--dry-run`; otherwise `1` until live pruning is implemented.
+- `generations prune`: `0` on success, no-op, user cancellation, or `--dry-run`; `1` on discovery, command execution, or post-prune refresh failure.
 - `init`: `0` on success or user cancellation; `1` on manifest load/save failure.
 - `install`: `2` when no package args; otherwise `0` if all requested install actions succeeded or nothing selected; `1` on partial failure.
 - `remove`/`rm`/`uninstall`: `2` when no package args; otherwise `0`.

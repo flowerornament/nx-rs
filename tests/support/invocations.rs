@@ -37,10 +37,10 @@ impl ExpectedCall {
 
 #[derive(Debug)]
 pub struct Invocation {
-    program: String,
-    cwd: PathBuf,
-    args: Vec<String>,
-    env: Vec<(String, String)>,
+    pub program: String,
+    pub cwd: PathBuf,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
 }
 
 pub fn assert_invocations(

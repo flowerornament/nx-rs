@@ -150,20 +150,14 @@ pub fn planned_commands(plan: &PrunePlan) -> Vec<PlannedCommand> {
     commands
 }
 
-#[allow(dead_code)]
-pub fn execute_planned_commands(
-    commands: &[PlannedCommand],
-    printer: &Printer,
-) -> anyhow::Result<()> {
-    for command in commands {
-        let args = command.args.iter().map(String::as_str).collect::<Vec<_>>();
-        let code = run_indented_command(&command.program, &args, None, printer, "  ")?;
-        if code != 0 {
-            return Err(anyhow!(
-                "{} failed with exit code {code}",
-                command.description
-            ));
-        }
+pub fn run_planned_command(command: &PlannedCommand, printer: &Printer) -> anyhow::Result<()> {
+    let args = command.args.iter().map(String::as_str).collect::<Vec<_>>();
+    let code = run_indented_command(&command.program, &args, None, printer, "  ")?;
+    if code != 0 {
+        return Err(anyhow!(
+            "{} failed with exit code {code}",
+            command.description
+        ));
     }
     Ok(())
 }

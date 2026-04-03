@@ -19,7 +19,17 @@ pub fn prepend_path(stub_dir: &Path) -> String {
 }
 
 pub fn install_stubs(stub_dir: &Path) -> Result<(), Box<dyn Error>> {
-    for program in ["git", "nix", "gh", "brew", "just", "sudo", "darwin-rebuild"] {
+    for program in [
+        "git",
+        "nix",
+        "gh",
+        "brew",
+        "just",
+        "sudo",
+        "darwin-rebuild",
+        "home-manager",
+        "df",
+    ] {
         write_executable(&stub_dir.join(program), STUB_SCRIPT)?;
     }
     Ok(())
@@ -209,6 +219,34 @@ case "$program" in
     fi
     echo "stub unittest ok"
     exit 0
+    ;;
+  home-manager)
+    if [ "${1:-}" = "generations" ]; then
+      printf '%s\n' "${NX_SYSTEM_IT_HOME_MANAGER_GENERATIONS:-2026-04-02 13:00 : id 7 -> /nix/store/example-home-manager-generation (current)}"
+      exit 0
+    fi
+
+    if [ "${1:-}" = "remove-generations" ]; then
+      if [ "$mode" = "hm_remove_fail" ]; then
+        echo "stub home-manager remove-generations failed" >&2
+        exit 1
+      fi
+      echo "stub home-manager remove-generations ok"
+      exit 0
+    fi
+
+    echo "stub home-manager unsupported: $*" >&2
+    exit 1
+    ;;
+  df)
+    if [ "${1:-}" = "-h" ] && [ "${2:-}" = "/nix" ]; then
+      printf '%s\n' "${NX_SYSTEM_IT_DF_OUTPUT:-Filesystem      Size    Used   Avail Capacity Mounted on
+/dev/disk-test  100Gi   40Gi   60Gi   40% /nix}"
+      exit 0
+    fi
+
+    echo "stub df unsupported: $*" >&2
+    exit 1
     ;;
   darwin-rebuild)
     if [ "$mode" = "darwin_rebuild_fail" ]; then

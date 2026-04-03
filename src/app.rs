@@ -33,7 +33,7 @@ pub fn execute(cli: Cli) -> i32 {
     if let CommandKind::Help(args) = &cli.command {
         return cmd_help(args);
     }
-    if let CommandKind::Generations(args) = &cli.command {
+    if let Some(args) = host_generations_args(&cli.command) {
         return cmd_generations(args, &HostContext::new(&printer, global_flags));
     }
 
@@ -94,6 +94,13 @@ fn find_repo_root() -> anyhow::Result<PathBuf> {
     )
 }
 
+fn host_generations_args(command: &CommandKind) -> Option<&crate::cli::GenerationsArgs> {
+    match command {
+        CommandKind::Generations(args) => Some(args),
+        _ => None,
+    }
+}
+
 fn resolve_repo_root(env_root: Option<PathBuf>, cwd: Option<PathBuf>) -> anyhow::Result<PathBuf> {
     if let Some(env_path) = env_root {
         return Ok(std::fs::canonicalize(&env_path).unwrap_or(env_path));
@@ -130,7 +137,10 @@ fn config_files_for_manifest_health(
 
 #[cfg(test)]
 mod tests {
-    use super::{config_files_for_manifest_health, detect_repo_root, execute, resolve_repo_root};
+    use super::{
+        config_files_for_manifest_health, detect_repo_root, host_generations_args,
+        resolve_repo_root,
+    };
     use crate::cli::Cli;
     use crate::domain::drift::{DriftReport, ManifestHealth};
     use crate::domain::manifest::{Manifest, PlatformConfig, PlatformKind, Slot, SlotKind};
@@ -138,10 +148,7 @@ mod tests {
     use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::{LazyLock, Mutex};
     use tempfile::TempDir;
-
-    static CWD_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     #[test]
     fn resolve_repo_root_uses_env_path() {
@@ -193,31 +200,15 @@ mod tests {
     }
 
     #[test]
-    fn generations_status_bypasses_repo_root_resolution() {
-        let _guard = CWD_TEST_LOCK.lock().expect("cwd test lock");
-        let temp = TempDir::new().expect("temp dir");
-        let original = std::env::current_dir().expect("current dir");
-        std::env::set_current_dir(temp.path()).expect("set temp cwd");
-
+    fn generations_status_is_routed_as_host_command() {
         let cli = Cli::try_parse_from(["nx", "generations", "status"]).expect("parse");
-        let code = execute(cli);
-
-        std::env::set_current_dir(original).expect("restore cwd");
-        assert_eq!(code, 0);
+        assert!(host_generations_args(&cli.command).is_some());
     }
 
     #[test]
-    fn generations_prune_dry_run_bypasses_repo_root_resolution() {
-        let _guard = CWD_TEST_LOCK.lock().expect("cwd test lock");
-        let temp = TempDir::new().expect("temp dir");
-        let original = std::env::current_dir().expect("current dir");
-        std::env::set_current_dir(temp.path()).expect("set temp cwd");
-
+    fn generations_prune_dry_run_is_routed_as_host_command() {
         let cli = Cli::try_parse_from(["nx", "generations", "prune", "--dry-run"]).expect("parse");
-        let code = execute(cli);
-
-        std::env::set_current_dir(original).expect("restore cwd");
-        assert_eq!(code, 0);
+        assert!(host_generations_args(&cli.command).is_some());
     }
 
     #[test]

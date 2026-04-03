@@ -19,39 +19,6 @@ require a repository root.
 
 ### Install
 
-#### Quick install (macOS / Linux)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/flowerornament/nx-rs/main/install.sh | bash
-```
-
-The installer is the primary path for prebuilt binaries. It installs `nx` to
-`~/.local/bin` by default, prints the exact target / URL / destination before
-it writes anything, and supports `--dry-run` so you can preview the install.
-
-Common variations:
-
-```bash
-# Install somewhere else
-curl -fsSL https://raw.githubusercontent.com/flowerornament/nx-rs/main/install.sh | INSTALL_DIR="$HOME/bin" bash
-
-# Same override, but passed as an installer flag
-curl -fsSL https://raw.githubusercontent.com/flowerornament/nx-rs/main/install.sh | bash -s -- --install-dir "$HOME/bin"
-
-# Preview what would happen without writing anything
-curl -fsSL https://raw.githubusercontent.com/flowerornament/nx-rs/main/install.sh | bash -s -- --dry-run
-```
-
-Binaries available for: `aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`.
-
-#### From source
-
-```bash
-git clone https://github.com/flowerornament/nx-rs.git
-cd nx-rs
-cargo install --path . --locked --bin nx
-```
-
 #### Nix
 
 Run without installing:

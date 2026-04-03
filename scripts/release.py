@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import subprocess
 import sys
@@ -52,31 +51,6 @@ def flake_version() -> str:
     if match is None:
         fail("could not find nxVersion in flake.nix")
     return match.group(2)
-
-
-def workflow_targets() -> list[str]:
-    text = read_text(ROOT / ".github/workflows/release.yml")
-    return re.findall(r"- target: ([^\n]+)", text)
-
-
-def installer_targets() -> list[str]:
-    text = read_text(ROOT / "install.sh")
-    match = re.search(
-        r"SUPPORTED_RELEASE_TARGETS=\(\n(?P<body>(?:\s+\"[^\"]+\"\n)+)\)",
-        text,
-    )
-    if match is None:
-        fail("could not find SUPPORTED_RELEASE_TARGETS in install.sh")
-    return re.findall(r'"([^"]+)"', match.group("body"))
-
-
-def readme_targets() -> list[str]:
-    text = read_text(ROOT / "README.md")
-    match = re.search(r"Binaries available for: (.+)\.", text)
-    if match is None:
-        fail("could not find release target list in README.md")
-    return re.findall(r"`([^`]+)`", match.group(1))
-
 
 def changelog_text() -> str:
     return read_text(ROOT / "CHANGELOG.md")
@@ -178,49 +152,6 @@ def run(cmd: list[str]) -> None:
     print(f"+ {' '.join(cmd)}")
     subprocess.run(cmd, cwd=ROOT, check=True)
 
-
-def host_target() -> str:
-    completed = subprocess.run(
-        ["bash", "install.sh", "--print-target"],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return completed.stdout.strip()
-
-
-def installer_smoke() -> None:
-    dist_dir = ROOT / "target" / "release-installer"
-    install_root = ROOT / "target" / "release-installer-smoke"
-    dist_dir.mkdir(parents=True, exist_ok=True)
-    install_root.mkdir(parents=True, exist_ok=True)
-
-    target = host_target()
-    archive = dist_dir / f"nx-{target}.tar.gz"
-    subprocess.run(
-        ["tar", "czf", str(archive), "-C", str(ROOT / "target" / "release"), "nx"],
-        cwd=ROOT,
-        check=True,
-    )
-
-    env = dict(os.environ)
-    env["NX_RS_INSTALL_BASE_URL"] = dist_dir.resolve().as_uri()
-    env["INSTALL_DIR"] = str(install_root / "bin")
-    subprocess.run(
-        ["bash", "install.sh", "--tag", "local"],
-        cwd=ROOT,
-        check=True,
-        env=env,
-    )
-    subprocess.run(
-        [str(install_root / "bin" / "nx"), "--help"],
-        cwd=ROOT,
-        check=True,
-        stdout=subprocess.DEVNULL,
-    )
-
-
 def verify() -> None:
     versions = {
         "Cargo.toml": cargo_version(),
@@ -231,15 +162,6 @@ def verify() -> None:
     if len(unique_versions) != 1:
         details = ", ".join(f"{name}={version}" for name, version in versions.items())
         fail(f"release versions do not match: {details}")
-
-    workflow = workflow_targets()
-    installer = installer_targets()
-    readme = readme_targets()
-    if workflow != installer or workflow != readme:
-        fail(
-            "release targets do not match across release.yml, install.sh, and README.md: "
-            f"workflow={workflow}, install={installer}, readme={readme}"
-        )
 
     version = unique_versions.pop()
     if not changelog_entry_is_ready(version):
@@ -252,13 +174,11 @@ def verify() -> None:
     run(["just", "test-system"])
     run(["just", "build"])
     run(["bash", "scripts/test-home-manager-module.sh"])
+    run(["nix", "build", "."])
+    run(["nix", "run", ".", "--", "--help"])
     run(["./target/release/nx", "--help"])
-    run(["bash", "install.sh", "--help"])
-    run(["bash", "install.sh", "--tag", "local", "--dry-run"])
-    installer_smoke()
 
     print(f"release verification passed for {version}")
-    print(f"release targets: {', '.join(workflow)}")
 
 
 def tag(version: str) -> None:

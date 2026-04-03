@@ -33,7 +33,14 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 SOURCE_ROOT="$TMPDIR/source"
 mkdir -p "$SOURCE_ROOT"
-(cd "$ROOT" && git ls-files -z | tar --null -T - -cf -) | tar -xf - -C "$SOURCE_ROOT"
+(
+  cd "$ROOT"
+  while IFS= read -r -d '' path; do
+      if [ -e "$path" ]; then
+          printf '%s\0' "$path"
+      fi
+  done < <(git ls-files -z)
+) | tar --null -T - -cf - | tar -xf - -C "$SOURCE_ROOT"
 
 configured_json="$TMPDIR/configured.json"
 bare_json="$TMPDIR/bare.json"

@@ -31,24 +31,6 @@ jobs:
       - name: Build release binary
         run: just build
 
-      - name: Installer checks
-        run: |
-          bash -n install.sh
-          bash install.sh --help >/dev/null
-          bash install.sh --print-target >/dev/null
-          bash install.sh --tag local --dry-run >/dev/null
-
-      - name: Installer smoke test
-        run: |
-          target="$(bash install.sh --print-target)"
-          mkdir -p dist
-          tar czf "dist/nx-${target}.tar.gz" -C target/release nx
-          tmpdir="$(mktemp -d)"
-          NX_RS_INSTALL_BASE_URL="file://$PWD/dist" \
-            INSTALL_DIR="$tmpdir/bin" \
-            bash install.sh --tag local
-          "$tmpdir/bin/nx" --help >/dev/null
-
   nix-home-manager-smoke:
     runs-on: ubuntu-latest
     steps:
@@ -59,3 +41,8 @@ jobs:
 
       - name: Home Manager module smoke test
         run: bash scripts/test-home-manager-module.sh
+
+      - name: Flake package smoke test
+        run: |
+          nix build .
+          nix run . -- --help >/dev/null

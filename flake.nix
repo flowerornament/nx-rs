@@ -7,8 +7,10 @@
 
   outputs = { self, nixpkgs }:
     let
+      nxVersion = "1.2.2";
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
+        inherit system;
         pkgs = nixpkgs.legacyPackages.${system};
       });
     in
@@ -16,7 +18,7 @@
       packages = forAllSystems ({ pkgs }: {
         default = pkgs.rustPlatform.buildRustPackage {
           pname = "nx";
-          version = "1.2.2";
+          version = nxVersion;
 
           src = ./.;
 
@@ -41,6 +43,13 @@
             license = licenses.mit;
             mainProgram = "nx";
           };
+        };
+      });
+
+      apps = forAllSystems ({ system, ... }: {
+        default = {
+          type = "app";
+          program = "${self.packages.${system}.default}/bin/nx";
         };
       });
     };

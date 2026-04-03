@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.1
+          components: clippy, rustfmt
+
+      - uses: taiki-e/install-action@just
+      - uses: Swatinem/rust-cache@v2
+
+      - name: CI gate
+        run: just ci
+
+      - name: System tests
+        run: just test-system
+
+      - name: Build release binary
+        run: just build
+
+      - name: Installer checks
+        run: |
+          bash -n install.sh
+          bash install.sh --help >/dev/null
+          bash install.sh --print-target >/dev/null
+          bash install.sh --tag local --dry-run >/dev/null
+
+      - name: Installer smoke test
+        run: |
+          target="$(bash install.sh --print-target)"
+          mkdir -p dist
+          tar czf "dist/nx-${target}.tar.gz" -C target/release nx
+          tmpdir="$(mktemp -d)"
+          NX_RS_INSTALL_BASE_URL="file://$PWD/dist" \
+            INSTALL_DIR="$tmpdir/bin" \
+            bash install.sh --tag local
+          "$tmpdir/bin/nx" --help >/dev/null

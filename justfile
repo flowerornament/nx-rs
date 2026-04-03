@@ -30,7 +30,9 @@ help:
     @echo "  just lint            # Clippy with -D warnings"
     @echo "  just test            # Full test suite"
     @echo "  just check           # cargo check for all targets/features"
+    @echo "  just build           # Build a release binary"
     @echo "  just ci              # fmt-check + lint + test + check"
+    @echo "  just release-verify  # Run release-readiness checks"
     @echo
     @echo "Notes"
     @echo "  - 'just compile' is the authoritative compile path for agents."
@@ -99,5 +101,13 @@ test-system:
 check:
     @cargo check {{STRICT_FLAGS}}
 
+# Build a release binary.
+build:
+    @cargo build --release
+
 # Full strict CI-equivalent local gate.
 ci: fmt-check lint test check
+
+# Release-readiness checks and validation.
+release-verify:
+    @python3 scripts/release.py verify

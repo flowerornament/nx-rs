@@ -34,6 +34,37 @@ pub struct LockDiff {
     pub removed: Vec<String>,
 }
 
+pub fn github_owner_repo(url: &str) -> Option<(String, String)> {
+    let trimmed = url.trim().trim_end_matches('/');
+    let path = trimmed
+        .strip_prefix("https://github.com/")
+        .or_else(|| trimmed.strip_prefix("http://github.com/"))
+        .or_else(|| trimmed.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| trimmed.strip_prefix("git@github.com:"))?;
+
+    let mut parts = path.split('/');
+    let owner = parts.next()?.trim();
+    let repo_part = parts.next()?.trim();
+
+    if owner.is_empty() || repo_part.is_empty() {
+        return None;
+    }
+
+    let repo = repo_part
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(".git")
+        .trim()
+        .to_string();
+
+    if repo.is_empty() {
+        return None;
+    }
+
+    Some((owner.to_string(), repo))
+}
+
 // ─── Lock Parsing ────────────────────────────────────────────────────────────
 
 /// Load and parse `flake.lock` from the repository root.
@@ -104,21 +135,28 @@ pub fn parse_flake_lock(path: &Path) -> anyhow::Result<HashMap<String, FlakeLock
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        let (owner, repo) = if source_type_str == "tarball" {
-            let url = locked
+        let owner = locked
+            .get("owner")
+            .and_then(Value::as_str)
+            .map(String::from);
+        let repo = locked.get("repo").and_then(Value::as_str).map(String::from);
+        let (owner, repo) = match (owner, repo, source_type_str) {
+            (Some(owner), Some(repo), _) => (Some(owner), Some(repo)),
+            (None, None, "tarball") => {
+                let url = locked
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                flakehub_re.captures(url).map_or((None, None), |caps| {
+                    (Some(caps[1].to_string()), Some(caps[2].to_string()))
+                })
+            }
+            (None, None, "git") => locked
                 .get("url")
                 .and_then(Value::as_str)
-                .unwrap_or_default();
-            flakehub_re.captures(url).map_or((None, None), |caps| {
-                (Some(caps[1].to_string()), Some(caps[2].to_string()))
-            })
-        } else {
-            let owner = locked
-                .get("owner")
-                .and_then(Value::as_str)
-                .map(String::from);
-            let repo = locked.get("repo").and_then(Value::as_str).map(String::from);
-            (owner, repo)
+                .and_then(github_owner_repo)
+                .map_or((None, None), |(owner, repo)| (Some(owner), Some(repo))),
+            (owner, repo, _) => (owner, repo),
         };
 
         inputs.insert(input_name.clone(), FlakeLockInput { owner, repo, rev });
@@ -326,6 +364,35 @@ mod tests {
     }
 
     #[test]
+    fn parse_extracts_github_git_ssh_input() {
+        let tmp = TempDir::new().unwrap();
+        write_lock(
+            tmp.path(),
+            r#"{
+  "nodes": {
+    "anneal": {
+      "locked": {
+        "type": "git",
+        "url": "ssh://git@github.com/flowerornament/anneal",
+        "rev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "root": {
+      "inputs": {
+        "anneal": "anneal"
+      }
+    }
+  }
+}"#,
+        );
+
+        let inputs = parse_flake_lock(&tmp.path().join("flake.lock")).unwrap();
+        let anneal = &inputs["anneal"];
+        assert_eq!(anneal.owner.as_deref(), Some("flowerornament"));
+        assert_eq!(anneal.repo.as_deref(), Some("anneal"));
+    }
+
+    #[test]
     fn parse_skips_file_type() {
         let tmp = TempDir::new().unwrap();
         write_lock(tmp.path(), FIXTURE_LOCK);
@@ -429,6 +496,58 @@ mod tests {
         assert!(diff.removed.is_empty());
     }
 
+    #[test]
+    fn diff_detects_changed_github_git_inputs() {
+        let tmp = TempDir::new().unwrap();
+        write_lock(
+            tmp.path(),
+            r#"{
+  "nodes": {
+    "anneal": {
+      "locked": {
+        "type": "git",
+        "url": "ssh://git@github.com/flowerornament/anneal",
+        "rev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "root": {
+      "inputs": {
+        "anneal": "anneal"
+      }
+    }
+  }
+}"#,
+        );
+        let old = parse_flake_lock(&tmp.path().join("flake.lock")).unwrap();
+
+        write_lock(
+            tmp.path(),
+            r#"{
+  "nodes": {
+    "anneal": {
+      "locked": {
+        "type": "git",
+        "url": "ssh://git@github.com/flowerornament/anneal",
+        "rev": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    "root": {
+      "inputs": {
+        "anneal": "anneal"
+      }
+    }
+  }
+}"#,
+        );
+        let new = parse_flake_lock(&tmp.path().join("flake.lock")).unwrap();
+
+        let diff = diff_locks(&old, &new);
+        assert_eq!(diff.changed.len(), 1);
+        assert_eq!(diff.changed[0].name, "anneal");
+        assert_eq!(diff.changed[0].owner, "flowerornament");
+        assert_eq!(diff.changed[0].repo, "anneal");
+    }
+
     // --- short_rev ---
 
     #[test]
@@ -442,5 +561,23 @@ mod tests {
     #[test]
     fn short_rev_short_input_unchanged() {
         assert_eq!(short_rev("abc"), "abc");
+    }
+
+    #[test]
+    fn github_owner_repo_handles_github_ssh_urls() {
+        let result = github_owner_repo("ssh://git@github.com/flowerornament/anneal");
+        assert_eq!(
+            result,
+            Some(("flowerornament".to_string(), "anneal".to_string()))
+        );
+    }
+
+    #[test]
+    fn github_owner_repo_handles_scp_style_urls() {
+        let result = github_owner_repo("git@github.com:flowerornament/anneal.git");
+        assert_eq!(
+            result,
+            Some(("flowerornament".to_string(), "anneal".to_string()))
+        );
     }
 }

@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use crate::cli::{RebuildArgs, UpgradeArgs};
 use crate::commands::context::AppContext;
-use crate::domain::upgrade::{InputChange, diff_locks, load_flake_lock, short_rev};
+use crate::domain::upgrade::{
+    InputChange, diff_locks, github_owner_repo, load_flake_lock, short_rev,
+};
 use crate::infra::ai_engine::DEFAULT_CODEX_MODEL;
 use crate::infra::shell::{
     run_captured_command, run_indented_command, run_indented_command_collecting_with_env,
@@ -710,36 +712,6 @@ pub(super) fn brew_compare_url(
     Some(format!(
         "https://github.com/{owner}/{repo}/compare/{old}...{new}"
     ))
-}
-
-pub(super) fn github_owner_repo(url: &str) -> Option<(String, String)> {
-    let trimmed = url.trim().trim_end_matches('/');
-    let without_scheme = trimmed
-        .strip_prefix("https://")
-        .or_else(|| trimmed.strip_prefix("http://"))?;
-    let path = without_scheme.strip_prefix("github.com/")?;
-
-    let mut parts = path.split('/');
-    let owner = parts.next()?.trim();
-    let repo_part = parts.next()?.trim();
-
-    if owner.is_empty() || repo_part.is_empty() {
-        return None;
-    }
-
-    let repo = repo_part
-        .split(['?', '#'])
-        .next()
-        .unwrap_or_default()
-        .trim_end_matches(".git")
-        .trim()
-        .to_string();
-
-    if repo.is_empty() {
-        return None;
-    }
-
-    Some((owner.to_string(), repo))
 }
 
 fn normalize_version(version: &str) -> &str {

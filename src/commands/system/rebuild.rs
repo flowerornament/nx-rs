@@ -2,7 +2,9 @@ use std::path::Path;
 
 use crate::cli::RebuildArgs;
 use crate::commands::context::SystemContext;
-use crate::infra::shell::{CapturedCommand, run_captured_command, run_indented_command_collecting};
+use crate::infra::shell::{
+    first_nonempty_output, run_captured_command, run_indented_command_collecting,
+};
 use crate::output::printer::Printer;
 
 use crate::domain::manifest::Manifest;
@@ -40,15 +42,6 @@ fn check_routing_preflight(ctx: &SystemContext<'_>) -> Result<(), i32> {
         "Routing metadata failed",
         "Fix these issues before rebuild:",
     )
-}
-
-/// Returns `stderr.trim()` if non-empty, otherwise `stdout.trim()`.
-fn first_nonempty_output(output: &CapturedCommand) -> &str {
-    let stderr = output.stderr.trim();
-    if !stderr.is_empty() {
-        return stderr;
-    }
-    output.stdout.trim()
 }
 
 pub(super) fn has_nix_extension(path: &str) -> bool {

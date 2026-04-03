@@ -1,14 +1,14 @@
 use std::fs;
 use std::path::Path;
+use std::thread;
 
 use anyhow::{Context, anyhow, bail};
-use regex::Regex;
 use serde::Serialize;
 
 use crate::domain::generations::{
     DiskUsageSnapshot, GenerationId, GenerationKind, GenerationRecord, PrunePlan,
 };
-use crate::infra::shell::{run_captured_command, run_indented_command};
+use crate::infra::shell::{first_nonempty_output, run_captured_command, run_indented_command};
 use crate::output::printer::Printer;
 
 const SYSTEM_PROFILES_DIR: &str = "/nix/var/nix/profiles";
@@ -39,23 +39,26 @@ impl PlannedCommand {
 }
 
 pub fn discover_generation_state() -> anyhow::Result<GenerationState> {
-    Ok(GenerationState {
-        generations: discover_generations()?,
-        disk_usage: snapshot_nix_disk_usage()?,
-    })
-}
+    thread::scope(|scope| {
+        let darwin = scope.spawn(discover_darwin_generations);
+        let home_manager = scope.spawn(discover_home_manager_generations);
+        let disk_usage = scope.spawn(snapshot_nix_disk_usage);
 
-pub fn discover_generations() -> anyhow::Result<Vec<GenerationRecord>> {
-    let mut generations = discover_darwin_generations()?;
-    generations.extend(discover_home_manager_generations()?);
-    Ok(generations)
+        let mut generations = join_scoped("darwin generation discovery", darwin)??;
+        generations.extend(join_scoped(
+            "home-manager generation discovery",
+            home_manager,
+        )??);
+
+        Ok(GenerationState {
+            generations,
+            disk_usage: join_scoped("disk usage discovery", disk_usage)??,
+        })
+    })
 }
 
 pub fn discover_darwin_generations() -> anyhow::Result<Vec<GenerationRecord>> {
     let profiles_dir = Path::new(SYSTEM_PROFILES_DIR);
-    if !profiles_dir.exists() {
-        return Ok(Vec::new());
-    }
     let current_link = fs::read_link(SYSTEM_CURRENT_LINK).ok().and_then(|path| {
         path.file_name()
             .and_then(|name| name.to_str())
@@ -120,7 +123,7 @@ pub fn planned_commands(plan: &PrunePlan) -> Vec<PlannedCommand> {
             "nix-env".to_string(),
             "--delete-generations".to_string(),
             "--profile".to_string(),
-            "/nix/var/nix/profiles/system".to_string(),
+            SYSTEM_CURRENT_LINK.to_string(),
         ];
         args.extend(
             plan.execution
@@ -169,23 +172,27 @@ fn discover_darwin_generations_in_dir(
     profiles_dir: &Path,
     current_link_name: Option<&str>,
 ) -> anyhow::Result<Vec<GenerationRecord>> {
-    let mut generations = fs::read_dir(profiles_dir)
-        .with_context(|| format!("reading {}", profiles_dir.display()))?
+    let read_dir = match fs::read_dir(profiles_dir) {
+        Ok(read_dir) => read_dir,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err).with_context(|| format!("reading {}", profiles_dir.display())),
+    };
+
+    let mut generations = read_dir
         .filter_map(Result::ok)
         .filter_map(|entry| {
-            let file_name = entry.file_name().to_string_lossy().to_string();
-            parse_system_generation_name(&entry.file_name().to_string_lossy()).map(|id| {
-                GenerationRecord {
-                    kind: GenerationKind::DarwinSystem,
-                    id,
-                    created_at: None,
-                    current: current_link_name.is_some_and(|name| name == file_name),
-                    label: entry
-                        .path()
-                        .read_link()
-                        .ok()
-                        .map(|target| target.to_string_lossy().to_string()),
-                }
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy();
+            parse_system_generation_name(&file_name).map(|id| GenerationRecord {
+                kind: GenerationKind::DarwinSystem,
+                id,
+                created_at: None,
+                current: current_link_name.is_some_and(|name| name == file_name),
+                label: entry
+                    .path()
+                    .read_link()
+                    .ok()
+                    .map(|target| target.to_string_lossy().to_string()),
             })
         })
         .collect::<Vec<_>>();
@@ -194,32 +201,16 @@ fn discover_darwin_generations_in_dir(
 }
 
 fn parse_system_generation_name(name: &str) -> Option<GenerationId> {
-    let regex = Regex::new(r"^system-(\d+)-link$").expect("valid regex");
-    regex
-        .captures(name)
-        .and_then(|captures| captures.get(1))
-        .and_then(|digits| digits.as_str().parse::<u64>().ok())
+    name.strip_prefix("system-")
+        .and_then(|rest| rest.strip_suffix("-link"))
+        .and_then(|digits| digits.parse::<u64>().ok())
         .map(GenerationId::new)
 }
 
 fn parse_home_manager_generations(output: &str) -> anyhow::Result<Vec<GenerationRecord>> {
-    let regex = Regex::new(r"\bid\s+(\d+)\s+->\s+(\S+)(?:\s+\((current)\))?").expect("valid regex");
     let mut generations = output
         .lines()
-        .filter_map(|line| {
-            regex.captures(line).and_then(|captures| {
-                let id = captures.get(1)?.as_str().parse::<u64>().ok()?;
-                let label = captures.get(2)?.as_str().to_string();
-                let current = captures.get(3).is_some() || line.contains("(current)");
-                Some(GenerationRecord {
-                    kind: GenerationKind::HomeManager,
-                    id: GenerationId::new(id),
-                    created_at: None,
-                    current,
-                    label: Some(label),
-                })
-            })
-        })
+        .filter_map(parse_home_manager_generation_line)
         .collect::<Vec<_>>();
 
     if output.lines().any(|line| line.contains("id")) && generations.is_empty() {
@@ -228,6 +219,33 @@ fn parse_home_manager_generations(output: &str) -> anyhow::Result<Vec<Generation
 
     generations.sort_by_key(|generation| std::cmp::Reverse(generation.id));
     Ok(generations)
+}
+
+fn parse_home_manager_generation_line(line: &str) -> Option<GenerationRecord> {
+    let (_, rest) = line.split_once("id ")?;
+    let (id_text, target_part) = rest.split_once(" -> ")?;
+    let id = id_text.trim().parse::<u64>().ok()?;
+    let (label, current) = match target_part.split_once(" (current)") {
+        Some((label, _)) => (label, true),
+        None => (target_part, false),
+    };
+
+    Some(GenerationRecord {
+        kind: GenerationKind::HomeManager,
+        id: GenerationId::new(id),
+        created_at: None,
+        current,
+        label: Some(label.trim().to_string()),
+    })
+}
+
+fn join_scoped<T>(
+    label: &str,
+    handle: thread::ScopedJoinHandle<'_, anyhow::Result<T>>,
+) -> anyhow::Result<anyhow::Result<T>> {
+    handle
+        .join()
+        .map_err(|_| anyhow!("{label} thread panicked"))
 }
 
 fn parse_disk_usage(output: &str) -> anyhow::Result<DiskUsageSnapshot> {
@@ -260,15 +278,6 @@ fn generation_id_args(subcommand: &str, ids: &[GenerationId]) -> Vec<String> {
 
 fn render_generation_id(id: GenerationId) -> String {
     id.get().to_string()
-}
-
-fn first_nonempty_output(output: &crate::infra::shell::CapturedCommand) -> &str {
-    let stderr = output.stderr.trim();
-    if stderr.is_empty() {
-        output.stdout.trim()
-    } else {
-        stderr
-    }
 }
 
 #[cfg(test)]

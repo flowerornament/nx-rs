@@ -138,7 +138,10 @@ mod tests {
     use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::{LazyLock, Mutex};
     use tempfile::TempDir;
+
+    static CWD_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     #[test]
     fn resolve_repo_root_uses_env_path() {
@@ -191,6 +194,7 @@ mod tests {
 
     #[test]
     fn generations_status_bypasses_repo_root_resolution() {
+        let _guard = CWD_TEST_LOCK.lock().expect("cwd test lock");
         let temp = TempDir::new().expect("temp dir");
         let original = std::env::current_dir().expect("current dir");
         std::env::set_current_dir(temp.path()).expect("set temp cwd");
@@ -204,6 +208,7 @@ mod tests {
 
     #[test]
     fn generations_prune_dry_run_bypasses_repo_root_resolution() {
+        let _guard = CWD_TEST_LOCK.lock().expect("cwd test lock");
         let temp = TempDir::new().expect("temp dir");
         let original = std::env::current_dir().expect("current dir");
         std::env::set_current_dir(temp.path()).expect("set temp cwd");

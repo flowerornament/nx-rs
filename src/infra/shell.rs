@@ -17,6 +17,16 @@ pub struct CapturedCommand {
     pub stderr: String,
 }
 
+/// Returns `stderr.trim()` if non-empty, otherwise `stdout.trim()`.
+pub fn first_nonempty_output(output: &CapturedCommand) -> &str {
+    let stderr = output.stderr.trim();
+    if stderr.is_empty() {
+        output.stdout.trim()
+    } else {
+        stderr
+    }
+}
+
 struct StreamedCommand {
     code: i32,
     collected: Option<String>,

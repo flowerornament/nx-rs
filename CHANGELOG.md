@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.0 - 2026-04-03
+
+- added a first-class Home Manager module for `nx`, including `programs.nx.repoRoot`, `programs.nx.autoRefresh`, `programs.nx.sops.package`, and `programs.nx.sops.bin`
+- added nix-native smoke coverage for the Home Manager module and wired it into CI and release verification
+- shifted distribution to a fully Nix-first model by removing the curl installer and binary release artifacts
+- updated release verification to check `nix build .`, `nix run . -- --help`, and the Home Manager module path directly
+- clarified the configuration model as repo-owned behavior plus machine/session defaults from Home Manager
+
 ## v1.3.0 - 2026-04-03
 
 - added host-scoped `nx generations status|plan|prune` with deterministic planning, confirmation-gated pruning, JSON output, and dry-run parity

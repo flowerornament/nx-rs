@@ -21,6 +21,9 @@ require a repository root.
 
 #### Nix
 
+For a one-off install, use `nix run` or `nix profile install`.
+If you want persistent session defaults like `NX_REPO_ROOT`, prefer the Home Manager path below.
+
 Run without installing:
 
 ```bash
@@ -54,6 +57,8 @@ sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .
 ```
 
 #### Nix + Home Manager
+
+This is the recommended install path for declarative Nix users.
 
 For a declarative user-level install, `nx-rs` now exports a Home Manager
 module. It installs `nx` into `home.packages` and can optionally export the

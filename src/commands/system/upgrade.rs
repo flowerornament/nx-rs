@@ -147,8 +147,6 @@ pub(super) struct CompareSummary {
 }
 
 fn fetch_flake_compare_summary(change: &InputChange) -> Option<CompareSummary> {
-    // Keep URL and API endpoint helpers exercised together to avoid drift.
-    let _ = flake_compare_url(change);
     let endpoint = flake_compare_endpoint(change)?;
     fetch_compare_summary(&endpoint)
 }
@@ -392,6 +390,7 @@ pub(super) fn flake_compare_endpoint(change: &InputChange) -> Option<String> {
     ))
 }
 
+#[cfg(test)]
 pub(super) fn flake_compare_url(change: &InputChange) -> Option<String> {
     let old = short_rev(&change.old_rev);
     let new = short_rev(&change.new_rev);

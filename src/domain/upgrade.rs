@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use anyhow::Context;
 use regex::Regex;
@@ -34,7 +35,10 @@ pub struct LockDiff {
     pub removed: Vec<String>,
 }
 
-pub fn github_owner_repo(url: &str) -> Option<(String, String)> {
+static FLAKEHUB_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"/f/pinned/([^/]+)/([^/]+)/").expect("valid regex"));
+
+pub(crate) fn github_owner_repo(url: &str) -> Option<(String, String)> {
     let trimmed = url.trim().trim_end_matches('/');
     let path = trimmed
         .strip_prefix("https://github.com/")
@@ -103,7 +107,6 @@ pub fn parse_flake_lock(path: &Path) -> anyhow::Result<HashMap<String, FlakeLock
         return Ok(HashMap::new());
     };
 
-    let flakehub_re = Regex::new(r"/f/pinned/([^/]+)/([^/]+)/").expect("valid regex");
     let mut inputs = HashMap::new();
 
     for (input_name, node_ref) in root_inputs {
@@ -147,7 +150,7 @@ pub fn parse_flake_lock(path: &Path) -> anyhow::Result<HashMap<String, FlakeLock
                     .get("url")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                flakehub_re.captures(url).map_or((None, None), |caps| {
+                FLAKEHUB_RE.captures(url).map_or((None, None), |caps| {
                     (Some(caps[1].to_string()), Some(caps[2].to_string()))
                 })
             }

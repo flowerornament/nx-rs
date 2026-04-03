@@ -1,6 +1,7 @@
 {
   "database": "dolt",
   "backend": "dolt",
+  "dolt_mode": "server",
   "dolt_database": "nx-rs",
   "project_id": "fd14d814-f1e0-42aa-8412-b7da076294fa"
 }

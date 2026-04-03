@@ -1,16 +1,19 @@
 # nx-rs
 
-`nx-rs` provides `nx`, a CLI for managing packages and related Nix configuration repositories.
+`nx-rs` provides `nx`, a CLI for managing Nix configuration repositories and host maintenance tasks.
 
 ## About
 
 `nx` is a workflow-oriented tool for maintaining a Nix config repo from the command line.
-It helps you find package definitions, inspect what is installed, and make deterministic
-manifest edits for package add/remove flows.
+It helps you find package definitions, inspect what is installed, make deterministic
+manifest edits for package add/remove flows, and manage host-level Nix generations.
 
 The tool is intended for repositories that manage system and home configuration in Nix,
 and it uses `NX_REPO_ROOT` as an override when you want to target a repo other than the
 current `flake.nix` tree.
+
+Host maintenance commands under `nx generations` are intentionally host-scoped and do not
+require a repository root.
 
 ## Usage
 
@@ -91,12 +94,16 @@ nx remove ripgrep
 nx where ripgrep
 nx list --plain
 nx status
+nx generations status
+nx generations plan
+nx generations prune --dry-run
 nx upgrade
 ```
 
 ### Commands
 
 - `help` (hierarchical command/flag help topics)
+- `generations`
 - `init`
 - `install`
 - `remove` (aliases: `rm`, `uninstall`)
@@ -106,6 +113,7 @@ nx upgrade
 - `info`
 - `status`
 - `installed`
+- `lint`
 - `secret add` (top-level command `secret`, alias `secrets`)
 - `undo`
 - `update`
@@ -123,9 +131,11 @@ nx <command> --help
 
 ### Command Behavior
 
-- `help`, `where`, `list`, `info`, `status`, `installed`, and `search` are read-only.
+- `help`, `where`, `list`, `info`, `status`, `installed`, `search`, `generations status`, and `generations plan` are read-only.
 - `init` scans the repo and writes `.nx/manifest.toml` after confirmation.
 - `install` and `remove` support `--dry-run` to preview changes.
+- `generations prune --dry-run` renders the same host-retention plan as `generations plan`.
+- `generations` commands are host-scoped and work from any directory.
 
 ## Development
 

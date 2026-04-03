@@ -26,7 +26,9 @@ const KNOWN_COMMANDS: &[&str] = &[
     "upgrade",
 ];
 
-const ROOT_HELP: &str = "Run `nx help <topic>` for hierarchical help, or `nx <command> --help` for full command docs.\n\nExamples:\n  nx help install\n  nx help secret add\n  nx help --verbose\n  nx help dry-run";
+const ROOT_HELP: &str = "Run `nx help <topic>` for hierarchical help, or `nx <command> --help` for full command docs.\n\nExamples:\n  nx help install\n  nx help secret add\n  nx generations plan\n  nx generations prune --dry-run";
+const GENERATIONS_HELP: &str = "Examples:\n  nx generations status\n  nx generations plan\n  nx generations prune --dry-run\n  nx generations prune --keep 5 --kind darwin\n\nNotes:\n  - `nx generations` is host-scoped and works from any directory.\n  - Use `plan` or `prune --dry-run` to preview exact prune/GC commands.";
+const GENERATIONS_PRUNE_HELP: &str = "Examples:\n  nx generations prune --dry-run\n  nx generations prune --yes\n  nx generations prune --keep 5 --kind darwin\n  nx generations prune --kind home-manager --no-gc\n\nNotes:\n  - `--dry-run` renders the same plan as `nx generations plan`.\n  - By default, `prune` asks for confirmation before mutating the host.";
 const SECRET_HELP: &str = "Examples:\n  nx secret add example_secret_key --value '<token>'\n  printf '%s' '<token>' | nx secret add example_secret_key --value-stdin";
 const SECRET_ADD_HELP: &str = "Examples:
   nx secret add example_secret_key --value '<token>'
@@ -40,7 +42,7 @@ Notes:
 #[derive(Debug, Clone, Parser)]
 #[command(
     name = "nx",
-    about = "Multi-source package installer for nix-darwin",
+    about = "CLI for managing Nix config repos and host generations",
     disable_help_subcommand = true,
     arg_required_else_help = true,
     after_long_help = ROOT_HELP
@@ -142,6 +144,7 @@ pub enum CommandKind {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(after_long_help = GENERATIONS_HELP)]
 pub struct GenerationsArgs {
     #[command(subcommand)]
     pub command: GenerationsCommand,
@@ -172,6 +175,7 @@ pub struct GenerationsPlanArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+#[command(after_long_help = GENERATIONS_PRUNE_HELP)]
 pub struct GenerationsPruneArgs {
     #[command(flatten)]
     pub policy: GenerationsPolicyArgs,

@@ -123,10 +123,34 @@ Available module options:
 - `programs.nx.package`
 - `programs.nx.repoRoot`
 - `programs.nx.autoRefresh`
+- `programs.nx.sops.package`
+- `programs.nx.sops.bin`
 
 The module only manages binary installation and environment variables. Repo
 structure, manifests, and command behavior still live in the target Nix config
 repository itself.
+
+That boundary is intentional:
+
+- the managed repo owns `nx` behavior over your Nix configuration
+- `programs.nx` owns machine/session defaults only
+- CLI flags still own one-off overrides
+
+If you use `nx secret add`, you can wire `sops` declaratively too:
+
+```nix
+{
+  imports = [
+    inputs.nx-rs.homeManagerModules.default
+  ];
+
+  programs.nx = {
+    enable = true;
+    sops.package = pkgs.sops;
+    sops.bin = "${pkgs.sops}/bin/sops";
+  };
+}
+```
 
 ### Configure Repository Root
 

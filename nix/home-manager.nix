@@ -6,12 +6,16 @@ let
     version = nxVersion;
   };
   cfg = config.programs.nx;
+  sopsCfg = cfg.sops;
   sessionVariables =
     lib.optionalAttrs (cfg.repoRoot != null) {
       NX_REPO_ROOT = cfg.repoRoot;
     }
     // lib.optionalAttrs (!cfg.autoRefresh) {
       NX_RS_AUTO_REFRESH = "0";
+    }
+    // lib.optionalAttrs (sopsCfg.bin != null) {
+      NX_RS_SOPS_BIN = sopsCfg.bin;
     };
 in
 {
@@ -45,11 +49,32 @@ in
         `NX_RS_AUTO_REFRESH=0`.
       '';
     };
+
+    sops = {
+      package = lib.mkOption {
+        type = lib.types.nullOr lib.types.package;
+        default = null;
+        description = ''
+          Optional `sops` package to install alongside `nx` for secret
+          management workflows.
+        '';
+      };
+
+      bin = lib.mkOption {
+        type = lib.types.nullOr (lib.types.addCheck lib.types.str (value: value != ""));
+        default = null;
+        example = "${pkgs.sops}/bin/sops";
+        description = ''
+          Optional path exported as `NX_RS_SOPS_BIN` when `nx secret add`
+          should use a specific `sops` binary.
+        '';
+      };
+    };
   };
 
   config = lib.mkMerge [
     (lib.mkIf cfg.enable {
-      home.packages = [ cfg.package ];
+      home.packages = [ cfg.package ] ++ lib.optional (sopsCfg.package != null) sopsCfg.package;
       home.sessionVariables = sessionVariables;
     })
   ];

@@ -67,10 +67,17 @@ let
         programs.nx.enable = true;
         programs.nx.repoRoot = "/tmp/nix-config";
         programs.nx.autoRefresh = false;
+        programs.nx.sops.package = pkgs.sops;
+        programs.nx.sops.bin = "/run/current-system/sw/bin/sops";
       }
     else if mode == "bare" then
       {
         programs.nx.enable = true;
+      }
+    else if mode == "invalid-sops-bin" then
+      {
+        programs.nx.enable = true;
+        programs.nx.sops.bin = "";
       }
     else
       {
@@ -88,6 +95,8 @@ in
   repoRoot = evaluated.config.home.sessionVariables.NX_REPO_ROOT or null;
   hasAutoRefresh = evaluated.config.home.sessionVariables ? NX_RS_AUTO_REFRESH;
   autoRefresh = evaluated.config.home.sessionVariables.NX_RS_AUTO_REFRESH or null;
+  hasSopsBin = evaluated.config.home.sessionVariables ? NX_RS_SOPS_BIN;
+  sopsBin = evaluated.config.home.sessionVariables.NX_RS_SOPS_BIN or null;
 }
 EOF
 
@@ -97,6 +106,11 @@ nix eval --impure --json --expr "import ${eval_module_json} { root = ${root_json
 
 if nix eval --impure --json --expr "import ${eval_module_json} { root = ${root_json}; mode = \"invalid\"; }" >/dev/null 2>&1; then
     printf 'invalid repoRoot case unexpectedly succeeded\n' >&2
+    exit 1
+fi
+
+if nix eval --impure --json --expr "import ${eval_module_json} { root = ${root_json}; mode = \"invalid-sops-bin\"; }" >/dev/null 2>&1; then
+    printf 'invalid sops.bin case unexpectedly succeeded\n' >&2
     exit 1
 fi
 
@@ -111,6 +125,9 @@ bare = json.loads(pathlib.Path(sys.argv[2]).read_text())
 if configured["packageCount"] < 1:
     raise SystemExit("configured case did not add nx to home.packages")
 
+if configured["packageCount"] < 2:
+    raise SystemExit("configured case did not add the optional sops package")
+
 if bare["packageCount"] < 1:
     raise SystemExit("bare case did not add nx to home.packages")
 
@@ -120,15 +137,23 @@ if not configured["hasRepoRoot"] or configured["repoRoot"] != "/tmp/nix-config":
 if not configured["hasAutoRefresh"] or configured["autoRefresh"] != "0":
     raise SystemExit("configured case did not export NX_RS_AUTO_REFRESH=0")
 
+if not configured["hasSopsBin"] or configured["sopsBin"] != "/run/current-system/sw/bin/sops":
+    raise SystemExit("configured case did not export NX_RS_SOPS_BIN correctly")
+
 if bare["hasRepoRoot"]:
     raise SystemExit("bare case unexpectedly exported NX_REPO_ROOT")
 
 if bare["hasAutoRefresh"]:
     raise SystemExit("bare case unexpectedly exported NX_RS_AUTO_REFRESH")
 
+if bare["hasSopsBin"]:
+    raise SystemExit("bare case unexpectedly exported NX_RS_SOPS_BIN")
+
 print("configured_package_count=true")
 print("configured_repo_root=true")
 print("configured_auto_refresh_disabled=true")
+print("configured_sops_package=true")
+print("configured_sops_bin=true")
 print("bare_package_count=true")
 print("bare_session_variables_absent=true")
 PY

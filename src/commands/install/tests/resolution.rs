@@ -7,8 +7,9 @@ fn start_install_resolution_completes_when_package_already_installed() {
     let ctx = test_context(root);
     let args = install_args_template();
     let mut cache = None;
+    let prefetched = InstallSearchPrefetch::default();
 
-    let state = start_install_resolution("ripgrep", &args, &ctx, &mut cache);
+    let state = start_install_resolution("ripgrep", &args, &ctx, &mut cache, &prefetched);
     assert!(matches!(state, InstallStart::Completed));
 }
 

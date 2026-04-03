@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
@@ -26,7 +26,8 @@ use crate::infra::finder::{find_first_package, find_package};
 use crate::infra::flake_input::{FlakeInputEdit, add_flake_input};
 use crate::infra::shell::git_diff;
 use crate::infra::sources::{
-    cached_search_all_sources, cached_search_with_status, check_nix_available,
+    CachedSearchOutcome, cached_search_all_sources, cached_search_many_with_status,
+    cached_search_with_status, check_nix_available,
 };
 use crate::output::printer::Printer;
 
@@ -53,6 +54,7 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
     let engine = select_engine(args.engine(), args.model(), ctx.printer.style());
     let routing_context = InstallRoutingContext::build(ctx);
     let mut cache = load_cache(ctx);
+    let prefetched_searches = prefetch_install_searches(args, ctx, &mut cache);
 
     let mut success_count = 0;
 
@@ -62,6 +64,7 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
             args,
             ctx,
             &mut cache,
+            &prefetched_searches,
             engine.as_ref(),
             &routing_context,
         ) {
@@ -104,10 +107,11 @@ fn install_one(
     args: &InstallArgs,
     ctx: &AppContext,
     cache: &mut Option<MultiSourceCache>,
+    prefetched_searches: &InstallSearchPrefetch,
     engine: &dyn AiEngine,
     routing_context: &InstallRoutingContext,
 ) -> bool {
-    let resolved = match start_install_resolution(package, args, ctx, cache) {
+    let resolved = match start_install_resolution(package, args, ctx, cache, prefetched_searches) {
         InstallStart::Proceed(resolved) => resolved,
         InstallStart::Completed => return true,
         InstallStart::Failed => return false,
@@ -134,6 +138,7 @@ fn start_install_resolution(
     args: &InstallArgs,
     ctx: &AppContext,
     cache: &mut Option<MultiSourceCache>,
+    prefetched_searches: &InstallSearchPrefetch,
 ) -> InstallStart {
     match find_package(package, &ctx.repo_root) {
         Ok(Some(location)) => {
@@ -147,7 +152,8 @@ fn start_install_resolution(
         }
     }
 
-    let Some(resolution) = search_for_package(package, args, ctx, cache) else {
+    let Some(resolution) = search_for_package(package, args, ctx, cache, prefetched_searches)
+    else {
         return InstallStart::Failed;
     };
 
@@ -582,6 +588,17 @@ struct PreparedInstall {
     rel_target: String,
 }
 
+#[derive(Debug, Default)]
+struct InstallSearchPrefetch {
+    by_package: HashMap<String, CachedSearchOutcome>,
+}
+
+impl InstallSearchPrefetch {
+    fn get(&self, package: &str) -> Option<CachedSearchOutcome> {
+        self.by_package.get(package).cloned()
+    }
+}
+
 struct InstallRoutingContext {
     base: String,
     enriched: Option<String>,
@@ -660,22 +677,31 @@ fn search_for_package(
     args: &InstallArgs,
     ctx: &AppContext,
     cache: &mut Option<MultiSourceCache>,
+    prefetched_searches: &InstallSearchPrefetch,
 ) -> Option<SearchResolution> {
     // Explicit --cask / --mas skip search (instant, no ambiguity)
     if args.cask() || args.mas() {
         let prefs = source_prefs_from_args(args);
-        let outcome = cached_search_all_sources(package, &prefs, &ctx.repo_root, cache);
+        let outcome = prefetched_searches
+            .get(package)
+            .unwrap_or_else(|| CachedSearchOutcome {
+                outcome: cached_search_all_sources(package, &prefs, &ctx.repo_root, cache),
+                cache_hit: false,
+            })
+            .outcome;
         return resolve_search_candidates(package, &outcome.results, args, &ctx.repo_root, ctx);
     }
 
     let prefs = source_prefs_from_args(args);
-    let cached = cached_search_with_status(
-        package,
-        &prefs,
-        &ctx.repo_root,
-        cache,
-        crate::infra::sources::search_all_sources,
-    );
+    let cached = prefetched_searches.get(package).unwrap_or_else(|| {
+        cached_search_with_status(
+            package,
+            &prefs,
+            &ctx.repo_root,
+            cache,
+            crate::infra::sources::search_all_sources,
+        )
+    });
     let outcome = cached.outcome;
 
     if args.explain() && cached.cache_hit {
@@ -1011,6 +1037,39 @@ fn find_existing_for_candidates(
     }
 
     find_first_package(&names, repo_root)
+}
+
+fn prefetch_install_searches(
+    args: &InstallArgs,
+    ctx: &AppContext,
+    cache: &mut Option<MultiSourceCache>,
+) -> InstallSearchPrefetch {
+    let packages = packages_needing_search_prefetch(&args.packages, &ctx.repo_root);
+    if packages.len() < 2 {
+        return InstallSearchPrefetch::default();
+    }
+
+    let prefs = source_prefs_from_args(args);
+    InstallSearchPrefetch {
+        by_package: cached_search_many_with_status(&packages, &prefs, &ctx.repo_root, cache),
+    }
+}
+
+fn packages_needing_search_prefetch(packages: &[String], repo_root: &Path) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut pending = Vec::new();
+
+    for package in packages {
+        if !seen.insert(package.clone()) {
+            continue;
+        }
+
+        if matches!(find_package(package, repo_root), Ok(None) | Err(_)) {
+            pending.push(package.clone());
+        }
+    }
+
+    pending
 }
 
 fn lookup_names(candidate: &SourceResult) -> Vec<String> {

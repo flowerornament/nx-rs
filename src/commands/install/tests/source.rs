@@ -87,3 +87,24 @@ fn find_existing_for_candidates_checks_alternates() {
         location.path().display()
     );
 }
+
+#[test]
+fn packages_needing_search_prefetch_skips_already_installed_packages() {
+    let tmp = temp_root();
+    let root = tmp.path();
+
+    write_nix(
+        root,
+        "packages/nix/cli.nix",
+        r"{ pkgs }:
+[
+  ripgrep
+]
+",
+    );
+
+    let packages = vec!["ripgrep".to_string(), "fd".to_string(), "fd".to_string()];
+    let prefetched = packages_needing_search_prefetch(&packages, root);
+
+    assert_eq!(prefetched, vec!["fd".to_string()]);
+}

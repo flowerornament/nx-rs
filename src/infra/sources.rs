@@ -777,9 +777,19 @@ pub fn cached_search_all_sources_quiet(
     cached_search_with_status(name, prefs, repo_root, cache, search_all_sources_quiet).outcome
 }
 
+#[derive(Debug, Clone)]
 pub struct CachedSearchOutcome {
     pub outcome: SourceSearchOutcome,
     pub cache_hit: bool,
+}
+
+pub fn cached_search_many_with_status(
+    names: &[String],
+    prefs: &SourcePreferences,
+    repo_root: &Path,
+    cache: &mut Option<MultiSourceCache>,
+) -> HashMap<String, CachedSearchOutcome> {
+    cached_search_many_with_status_using(names, prefs, repo_root, cache, search_all_sources)
 }
 
 #[cfg(test)]
@@ -788,33 +798,17 @@ pub fn cached_search_with<F>(
     prefs: &SourcePreferences,
     repo_root: &Path,
     cache: &mut Option<MultiSourceCache>,
-    search: F,
-) -> SourceSearchOutcome
-where
-    F: FnMut(&str, &SourcePreferences, Option<&Path>) -> SourceSearchOutcome,
-{
-    cached_search_with_status(name, prefs, repo_root, cache, search).outcome
-}
-
-pub fn cached_search_with_status<F>(
-    name: &str,
-    prefs: &SourcePreferences,
-    repo_root: &Path,
-    cache: &mut Option<MultiSourceCache>,
     mut search: F,
-) -> CachedSearchOutcome
+) -> SourceSearchOutcome
 where
     F: FnMut(&str, &SourcePreferences, Option<&Path>) -> SourceSearchOutcome,
 {
     if let Some(cache_ref) = cache.as_ref() {
         let cached = cache_ref.get_all_with_prefs(name, prefs);
         if !cached.is_empty() {
-            return CachedSearchOutcome {
-                outcome: SourceSearchOutcome {
-                    results: cached,
-                    unavailable_sources: Vec::new(),
-                },
-                cache_hit: true,
+            return SourceSearchOutcome {
+                results: cached,
+                unavailable_sources: Vec::new(),
             };
         }
     }
@@ -829,10 +823,135 @@ where
         let _ = cache_ref.set_many(&outcome.results);
     }
 
-    CachedSearchOutcome {
-        outcome,
-        cache_hit: false,
+    outcome
+}
+
+pub fn cached_search_with_status<F>(
+    name: &str,
+    prefs: &SourcePreferences,
+    repo_root: &Path,
+    cache: &mut Option<MultiSourceCache>,
+    search: F,
+) -> CachedSearchOutcome
+where
+    F: Fn(&str, &SourcePreferences, Option<&Path>) -> SourceSearchOutcome + Sync,
+{
+    cached_search_many_with_status_using(&[name.to_string()], prefs, repo_root, cache, search)
+        .remove(name)
+        .unwrap_or(CachedSearchOutcome {
+            outcome: SourceSearchOutcome::default(),
+            cache_hit: false,
+        })
+}
+
+fn cached_search_many_with_status_using<F>(
+    names: &[String],
+    prefs: &SourcePreferences,
+    repo_root: &Path,
+    cache: &mut Option<MultiSourceCache>,
+    search: F,
+) -> HashMap<String, CachedSearchOutcome>
+where
+    F: Fn(&str, &SourcePreferences, Option<&Path>) -> SourceSearchOutcome + Sync,
+{
+    let unique_names = unique_names(names);
+    if unique_names.is_empty() {
+        return HashMap::new();
     }
+
+    let mut outcomes = HashMap::with_capacity(unique_names.len());
+    let mut uncached_names = Vec::new();
+
+    for name in unique_names {
+        if let Some(cache_ref) = cache.as_ref() {
+            let cached = cache_ref.get_all_with_prefs(&name, prefs);
+            if !cached.is_empty() {
+                outcomes.insert(
+                    name,
+                    CachedSearchOutcome {
+                        outcome: SourceSearchOutcome {
+                            results: cached,
+                            unavailable_sources: Vec::new(),
+                        },
+                        cache_hit: true,
+                    },
+                );
+                continue;
+            }
+        }
+
+        uncached_names.push(name);
+    }
+
+    if uncached_names.is_empty() {
+        return outcomes;
+    }
+
+    let flake_lock = repo_root.join("flake.lock");
+    let flake_lock_path = flake_lock.exists().then_some(flake_lock);
+    let mut fresh_results = Vec::new();
+
+    if uncached_names.len() == 1 {
+        let name = uncached_names
+            .pop()
+            .expect("single uncached name should exist");
+        let outcome = search(&name, prefs, flake_lock_path.as_deref());
+        fresh_results.extend(outcome.results.iter().cloned());
+        outcomes.insert(
+            name,
+            CachedSearchOutcome {
+                outcome,
+                cache_hit: false,
+            },
+        );
+    } else {
+        thread::scope(|scope| {
+            let search = &search;
+            let mut handles = Vec::with_capacity(uncached_names.len());
+
+            for name in uncached_names {
+                let prefs = prefs.clone();
+                let flake_lock_path = flake_lock_path.clone();
+                handles.push(scope.spawn(move || {
+                    let outcome = search(&name, &prefs, flake_lock_path.as_deref());
+                    (name, outcome)
+                }));
+            }
+
+            for handle in handles {
+                let (name, outcome) = handle.join().expect("search worker should not panic");
+                fresh_results.extend(outcome.results.iter().cloned());
+                outcomes.insert(
+                    name,
+                    CachedSearchOutcome {
+                        outcome,
+                        cache_hit: false,
+                    },
+                );
+            }
+        });
+    }
+
+    if !fresh_results.is_empty()
+        && let Some(cache_ref) = cache.as_mut()
+    {
+        let _ = cache_ref.set_many(&fresh_results);
+    }
+
+    outcomes
+}
+
+fn unique_names(names: &[String]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut unique = Vec::with_capacity(names.len());
+
+    for name in names {
+        if seen.insert(name.clone()) {
+            unique.push(name.clone());
+        }
+    }
+
+    unique
 }
 
 fn search_all_sources_with_timeout_reporting(
@@ -1066,6 +1185,19 @@ mod tests {
         SourceBackendOutcome::default()
     }
 
+    fn cache_result(name: &str, source: PackageSource, attr: &str) -> SourceResult {
+        SourceResult {
+            name: name.to_string(),
+            source,
+            attr: Some(attr.to_string()),
+            version: None,
+            confidence: 1.0,
+            description: "cached".to_string(),
+            requires_flake_mod: false,
+            flake_url: None,
+        }
+    }
+
     #[test]
     fn parallel_search_timeout_returns_partial_results_and_warns() {
         let prefs = SourcePreferences {
@@ -1101,6 +1233,72 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("timed out waiting for nxs search")),
             "expected timeout warning, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn cached_search_many_reuses_cache_hits_and_only_searches_misses() {
+        let tmp = tempfile::tempdir().expect("temp dir should be created");
+        let repo_root = tmp.path().join("repo");
+        let cache_root = tmp.path().join("cache");
+        fs::create_dir_all(&repo_root).expect("repo dir should be created");
+        fs::create_dir_all(&cache_root).expect("cache dir should be created");
+
+        let mut cache = Some(
+            MultiSourceCache::load_with_cache_dir(&repo_root, &cache_root)
+                .expect("cache should load"),
+        );
+        cache
+            .as_mut()
+            .expect("cache should exist")
+            .set_many(&[cache_result("ripgrep", PackageSource::Nxs, "ripgrep")])
+            .expect("cached result should save");
+
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let call_log = std::sync::Arc::clone(&calls);
+        let prefs = SourcePreferences::default();
+        let names = vec![
+            "ripgrep".to_string(),
+            "fd".to_string(),
+            "ripgrep".to_string(),
+        ];
+
+        let outcomes = cached_search_many_with_status_using(
+            &names,
+            &prefs,
+            &repo_root,
+            &mut cache,
+            move |name, _prefs, _flake_lock_path| {
+                call_log
+                    .lock()
+                    .expect("call log should not be poisoned")
+                    .push(name.to_string());
+                SourceSearchOutcome {
+                    results: vec![cache_result(name, PackageSource::Nxs, name)],
+                    unavailable_sources: Vec::new(),
+                }
+            },
+        );
+
+        let logged_calls = calls.lock().expect("call log should not be poisoned");
+        assert_eq!(logged_calls.as_slice(), ["fd"]);
+        assert!(
+            outcomes
+                .get("ripgrep")
+                .is_some_and(|outcome| outcome.cache_hit),
+            "expected cached ripgrep lookup to stay a cache hit"
+        );
+        assert!(
+            outcomes.get("fd").is_some_and(|outcome| !outcome.cache_hit),
+            "expected uncached fd lookup to be searched live"
+        );
+        assert!(
+            cache
+                .as_ref()
+                .expect("cache should exist")
+                .get("fd", PackageSource::Nxs)
+                .is_some(),
+            "expected fresh miss results to be written back to cache"
         );
     }
 

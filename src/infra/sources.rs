@@ -803,25 +803,12 @@ pub fn cached_search_with<F>(
 where
     F: FnMut(&str, &SourcePreferences, Option<&Path>) -> SourceSearchOutcome,
 {
-    if let Some(cache_ref) = cache.as_ref() {
-        let cached = cache_ref.get_all_with_prefs(name, prefs);
-        if !cached.is_empty() {
-            return SourceSearchOutcome {
-                results: cached,
-                unavailable_sources: Vec::new(),
-            };
-        }
+    if let Some(cached) = cached_search_result(name, prefs, cache.as_ref()) {
+        return cached.outcome;
     }
 
-    let flake_lock = repo_root.join("flake.lock");
-    let flake_lock_path = flake_lock.exists().then_some(flake_lock.as_path());
-    let outcome = search(name, prefs, flake_lock_path);
-
-    if !outcome.results.is_empty()
-        && let Some(cache_ref) = cache.as_mut()
-    {
-        let _ = cache_ref.set_many(&outcome.results);
-    }
+    let outcome = search(name, prefs, flake_lock_path(repo_root).as_deref());
+    cache_search_results(cache, &outcome.results);
 
     outcome
 }
@@ -836,12 +823,17 @@ pub fn cached_search_with_status<F>(
 where
     F: Fn(&str, &SourcePreferences, Option<&Path>) -> SourceSearchOutcome + Sync,
 {
-    cached_search_many_with_status_using(&[name.to_string()], prefs, repo_root, cache, search)
-        .remove(name)
-        .unwrap_or(CachedSearchOutcome {
-            outcome: SourceSearchOutcome::default(),
-            cache_hit: false,
-        })
+    if let Some(cached) = cached_search_result(name, prefs, cache.as_ref()) {
+        return cached;
+    }
+
+    let outcome = search(name, prefs, flake_lock_path(repo_root).as_deref());
+    cache_search_results(cache, &outcome.results);
+
+    CachedSearchOutcome {
+        outcome,
+        cache_hit: false,
+    }
 }
 
 fn cached_search_many_with_status_using<F>(
@@ -863,23 +855,10 @@ where
     let mut uncached_names = Vec::new();
 
     for name in unique_names {
-        if let Some(cache_ref) = cache.as_ref() {
-            let cached = cache_ref.get_all_with_prefs(&name, prefs);
-            if !cached.is_empty() {
-                outcomes.insert(
-                    name,
-                    CachedSearchOutcome {
-                        outcome: SourceSearchOutcome {
-                            results: cached,
-                            unavailable_sources: Vec::new(),
-                        },
-                        cache_hit: true,
-                    },
-                );
-                continue;
-            }
+        if let Some(cached) = cached_search_result(&name, prefs, cache.as_ref()) {
+            outcomes.insert(name, cached);
+            continue;
         }
-
         uncached_names.push(name);
     }
 
@@ -887,11 +866,11 @@ where
         return outcomes;
     }
 
-    let flake_lock = repo_root.join("flake.lock");
-    let flake_lock_path = flake_lock.exists().then_some(flake_lock);
+    let flake_lock_path = flake_lock_path(repo_root);
     let mut fresh_results = Vec::new();
+    let worker_count = uncached_names.len().min(search_worker_limit());
 
-    if uncached_names.len() == 1 {
+    if worker_count <= 1 {
         let name = uncached_names
             .pop()
             .expect("single uncached name should exist");
@@ -907,38 +886,69 @@ where
     } else {
         thread::scope(|scope| {
             let search = &search;
-            let mut handles = Vec::with_capacity(uncached_names.len());
+            let mut handles = Vec::with_capacity(worker_count);
 
-            for name in uncached_names {
+            for names in split_evenly(uncached_names, worker_count) {
                 let prefs = prefs.clone();
                 let flake_lock_path = flake_lock_path.clone();
                 handles.push(scope.spawn(move || {
-                    let outcome = search(&name, &prefs, flake_lock_path.as_deref());
-                    (name, outcome)
+                    names
+                        .into_iter()
+                        .map(|name| {
+                            let outcome = search(&name, &prefs, flake_lock_path.as_deref());
+                            (name, outcome)
+                        })
+                        .collect::<Vec<_>>()
                 }));
             }
 
             for handle in handles {
-                let (name, outcome) = handle.join().expect("search worker should not panic");
-                fresh_results.extend(outcome.results.iter().cloned());
-                outcomes.insert(
-                    name,
-                    CachedSearchOutcome {
-                        outcome,
-                        cache_hit: false,
-                    },
-                );
+                let batch = handle.join().expect("search worker should not panic");
+                for (name, outcome) in batch {
+                    fresh_results.extend(outcome.results.iter().cloned());
+                    outcomes.insert(
+                        name,
+                        CachedSearchOutcome {
+                            outcome,
+                            cache_hit: false,
+                        },
+                    );
+                }
             }
         });
     }
 
-    if !fresh_results.is_empty()
-        && let Some(cache_ref) = cache.as_mut()
-    {
-        let _ = cache_ref.set_many(&fresh_results);
-    }
+    cache_search_results(cache, &fresh_results);
 
     outcomes
+}
+
+fn cached_search_result(
+    name: &str,
+    prefs: &SourcePreferences,
+    cache: Option<&MultiSourceCache>,
+) -> Option<CachedSearchOutcome> {
+    let cached = cache?.get_all_with_prefs(name, prefs);
+    (!cached.is_empty()).then_some(CachedSearchOutcome {
+        outcome: SourceSearchOutcome {
+            results: cached,
+            unavailable_sources: Vec::new(),
+        },
+        cache_hit: true,
+    })
+}
+
+fn flake_lock_path(repo_root: &Path) -> Option<std::path::PathBuf> {
+    let flake_lock = repo_root.join("flake.lock");
+    flake_lock.exists().then_some(flake_lock)
+}
+
+fn cache_search_results(cache: &mut Option<MultiSourceCache>, results: &[SourceResult]) {
+    if !results.is_empty()
+        && let Some(cache_ref) = cache.as_mut()
+    {
+        let _ = cache_ref.set_many(results);
+    }
 }
 
 fn unique_names(names: &[String]) -> Vec<String> {
@@ -952,6 +962,23 @@ fn unique_names(names: &[String]) -> Vec<String> {
     }
 
     unique
+}
+
+fn search_worker_limit() -> usize {
+    thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get)
+}
+
+fn split_evenly(items: Vec<String>, groups: usize) -> Vec<Vec<String>> {
+    let mut buckets = vec![Vec::new(); groups];
+
+    for (index, item) in items.into_iter().enumerate() {
+        buckets[index % groups].push(item);
+    }
+
+    buckets
+        .into_iter()
+        .filter(|bucket| !bucket.is_empty())
+        .collect()
 }
 
 fn search_all_sources_with_timeout_reporting(

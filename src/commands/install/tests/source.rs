@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 
 #[test]
 fn source_prefs_defaults_match_no_flags() {
@@ -104,7 +105,12 @@ fn packages_needing_search_prefetch_skips_already_installed_packages() {
     );
 
     let packages = vec!["ripgrep".to_string(), "fd".to_string(), "fd".to_string()];
-    let prefetched = packages_needing_search_prefetch(&packages, root);
+    let mut prefetched_entries = HashMap::new();
+    let prefetched = packages_needing_search_prefetch(&packages, root, &mut prefetched_entries);
 
     assert_eq!(prefetched, vec!["fd".to_string()]);
+    assert!(matches!(
+        prefetched_entries.get("ripgrep"),
+        Some(InstallPrefetchEntry::AlreadyInstalled(_))
+    ));
 }

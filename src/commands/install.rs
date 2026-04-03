@@ -140,6 +140,26 @@ fn start_install_resolution(
     cache: &mut Option<MultiSourceCache>,
     prefetched_searches: &InstallSearchPrefetch,
 ) -> InstallStart {
+    if let Some(prefetched) = prefetched_searches.get(package) {
+        return finish_install_resolution(
+            package,
+            ctx,
+            search_for_package(
+                package,
+                args,
+                ctx,
+                cache,
+                match prefetched {
+                    InstallPrefetchEntry::AlreadyInstalled(location) => {
+                        report_already_installed(package, location, ctx);
+                        return InstallStart::Completed;
+                    }
+                    InstallPrefetchEntry::Search(cached) => Some(cached),
+                },
+            ),
+        );
+    }
+
     match find_package(package, &ctx.repo_root) {
         Ok(Some(location)) => {
             report_already_installed(package, &location, ctx);
@@ -152,8 +172,19 @@ fn start_install_resolution(
         }
     }
 
-    let Some(resolution) = search_for_package(package, args, ctx, cache, prefetched_searches)
-    else {
+    finish_install_resolution(
+        package,
+        ctx,
+        search_for_package(package, args, ctx, cache, None),
+    )
+}
+
+fn finish_install_resolution(
+    package: &str,
+    ctx: &AppContext,
+    resolution: Option<SearchResolution>,
+) -> InstallStart {
+    let Some(resolution) = resolution else {
         return InstallStart::Failed;
     };
 
@@ -590,13 +621,19 @@ struct PreparedInstall {
 
 #[derive(Debug, Default)]
 struct InstallSearchPrefetch {
-    by_package: HashMap<String, CachedSearchOutcome>,
+    by_package: HashMap<String, InstallPrefetchEntry>,
 }
 
 impl InstallSearchPrefetch {
-    fn get(&self, package: &str) -> Option<CachedSearchOutcome> {
-        self.by_package.get(package).cloned()
+    fn get(&self, package: &str) -> Option<&InstallPrefetchEntry> {
+        self.by_package.get(package)
     }
+}
+
+#[derive(Debug)]
+enum InstallPrefetchEntry {
+    AlreadyInstalled(PackageLocation),
+    Search(CachedSearchOutcome),
 }
 
 struct InstallRoutingContext {
@@ -677,32 +714,40 @@ fn search_for_package(
     args: &InstallArgs,
     ctx: &AppContext,
     cache: &mut Option<MultiSourceCache>,
-    prefetched_searches: &InstallSearchPrefetch,
+    prefetched: Option<&CachedSearchOutcome>,
 ) -> Option<SearchResolution> {
     // Explicit --cask / --mas skip search (instant, no ambiguity)
     if args.cask() || args.mas() {
         let prefs = source_prefs_from_args(args);
-        let outcome = prefetched_searches
-            .get(package)
-            .unwrap_or_else(|| CachedSearchOutcome {
-                outcome: cached_search_all_sources(package, &prefs, &ctx.repo_root, cache),
-                cache_hit: false,
-            })
-            .outcome;
+        if let Some(prefetched) = prefetched {
+            return resolve_search_candidates(
+                package,
+                &prefetched.outcome.results,
+                args,
+                &ctx.repo_root,
+                ctx,
+            );
+        }
+
+        let outcome = cached_search_all_sources(package, &prefs, &ctx.repo_root, cache);
         return resolve_search_candidates(package, &outcome.results, args, &ctx.repo_root, ctx);
     }
 
     let prefs = source_prefs_from_args(args);
-    let cached = prefetched_searches.get(package).unwrap_or_else(|| {
-        cached_search_with_status(
+    let live_lookup;
+    let cached = if let Some(prefetched) = prefetched {
+        prefetched
+    } else {
+        live_lookup = cached_search_with_status(
             package,
             &prefs,
             &ctx.repo_root,
             cache,
             crate::infra::sources::search_all_sources,
-        )
-    });
-    let outcome = cached.outcome;
+        );
+        &live_lookup
+    };
+    let outcome = &cached.outcome;
 
     if args.explain() && cached.cache_hit {
         Printer::detail(&format!(
@@ -1044,18 +1089,27 @@ fn prefetch_install_searches(
     ctx: &AppContext,
     cache: &mut Option<MultiSourceCache>,
 ) -> InstallSearchPrefetch {
-    let packages = packages_needing_search_prefetch(&args.packages, &ctx.repo_root);
-    if packages.len() < 2 {
-        return InstallSearchPrefetch::default();
+    let mut by_package = HashMap::new();
+    let packages =
+        packages_needing_search_prefetch(&args.packages, &ctx.repo_root, &mut by_package);
+
+    if packages.len() >= 2 {
+        let prefs = source_prefs_from_args(args);
+        for (package, outcome) in
+            cached_search_many_with_status(&packages, &prefs, &ctx.repo_root, cache)
+        {
+            by_package.insert(package, InstallPrefetchEntry::Search(outcome));
+        }
     }
 
-    let prefs = source_prefs_from_args(args);
-    InstallSearchPrefetch {
-        by_package: cached_search_many_with_status(&packages, &prefs, &ctx.repo_root, cache),
-    }
+    InstallSearchPrefetch { by_package }
 }
 
-fn packages_needing_search_prefetch(packages: &[String], repo_root: &Path) -> Vec<String> {
+fn packages_needing_search_prefetch(
+    packages: &[String],
+    repo_root: &Path,
+    prefetched: &mut HashMap<String, InstallPrefetchEntry>,
+) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut pending = Vec::new();
 
@@ -1064,8 +1118,14 @@ fn packages_needing_search_prefetch(packages: &[String], repo_root: &Path) -> Ve
             continue;
         }
 
-        if matches!(find_package(package, repo_root), Ok(None) | Err(_)) {
-            pending.push(package.clone());
+        match find_package(package, repo_root) {
+            Ok(Some(location)) => {
+                prefetched.insert(
+                    package.clone(),
+                    InstallPrefetchEntry::AlreadyInstalled(location),
+                );
+            }
+            Ok(None) | Err(_) => pending.push(package.clone()),
         }
     }
 

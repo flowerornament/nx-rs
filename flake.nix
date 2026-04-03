@@ -15,34 +15,11 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs }: {
-        default = pkgs.rustPlatform.buildRustPackage {
-          pname = "nx";
-          version = nxVersion;
-
+      packages = forAllSystems ({ pkgs, ... }: {
+        default = import ./nix/package.nix {
+          inherit pkgs;
           src = ./.;
-
-          cargoLock = {
-            lockFile = ./Cargo.lock;
-          };
-
-          nativeCheckInputs = [ pkgs.git pkgs.which ];
-
-          preCheck = ''
-            export HOME="$TMPDIR"
-            git config --global init.defaultBranch main
-            git config --global user.email "test@test"
-            git config --global user.name "test"
-          '';
-
-          # Only run unit tests in sandbox; integration tests require external repo/env setup.
-          cargoTestFlags = [ "--lib" ];
-
-          meta = with pkgs.lib; {
-            description = "Nix configuration management tool";
-            license = licenses.mit;
-            mainProgram = "nx";
-          };
+          version = nxVersion;
         };
       });
 
@@ -52,5 +29,10 @@
           program = "${self.packages.${system}.default}/bin/nx";
         };
       });
+
+      homeManagerModules.default = import ./nix/home-manager.nix {
+        src = ./.;
+        inherit nxVersion;
+      };
     };
 }

@@ -86,6 +86,48 @@ nix flake lock --update-input nx-rs
 sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .
 ```
 
+#### Nix + Home Manager
+
+For a declarative user-level install, `nx-rs` now exports a Home Manager
+module. It installs `nx` into `home.packages` and can optionally export the
+same environment variables that drive `nx` at runtime.
+
+Add the flake input:
+
+```nix
+nx-rs = {
+  url = "github:flowerornament/nx-rs";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+```
+
+Then include the module in your Home Manager configuration:
+
+```nix
+{
+  imports = [
+    inputs.nx-rs.homeManagerModules.default
+  ];
+
+  programs.nx = {
+    enable = true;
+    repoRoot = "/Users/alice/code/nix-config";
+    autoRefresh = false;
+  };
+}
+```
+
+Available module options:
+
+- `programs.nx.enable`
+- `programs.nx.package`
+- `programs.nx.repoRoot`
+- `programs.nx.autoRefresh`
+
+The module only manages binary installation and environment variables. Repo
+structure, manifests, and command behavior still live in the target Nix config
+repository itself.
+
 ### Configure Repository Root
 
 `nx` auto-detects the managed repo by walking up from the current working directory until

@@ -48,3 +48,14 @@ jobs:
             INSTALL_DIR="$tmpdir/bin" \
             bash install.sh --tag local
           "$tmpdir/bin/nx" --help >/dev/null
+
+  nix-home-manager-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Home Manager module smoke test
+        run: bash scripts/test-home-manager-module.sh

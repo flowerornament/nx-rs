@@ -251,6 +251,7 @@ def verify() -> None:
     run(["just", "ci"])
     run(["just", "test-system"])
     run(["just", "build"])
+    run(["bash", "scripts/test-home-manager-module.sh"])
     run(["./target/release/nx", "--help"])
     run(["bash", "install.sh", "--help"])
     run(["bash", "install.sh", "--tag", "local", "--dry-run"])

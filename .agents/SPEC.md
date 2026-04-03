@@ -33,7 +33,6 @@ When implementation and this document disagree, this repository's tests are cons
 Known commands:
 
 - `help`
-- `generations`
 - `init`
 - `install`
 - `remove`
@@ -53,6 +52,7 @@ Known commands:
 - `test`
 - `rebuild`
 - `upgrade`
+- `generations`
 
 ## 2.2 Global Options
 
@@ -68,14 +68,6 @@ Defined at root callback and persisted in app state:
 
 - `help`
   - args: `[topics...]`
-- `generations`
-  - subcommands: `status`, `plan`, `prune`
-- `generations status`
-  - options: `--keep`, `--kind`
-- `generations plan`
-  - options: `--keep`, `--kind`, `--no-gc`
-- `generations prune`
-  - options: `--keep`, `--kind`, `--no-gc`, `--yes/-y`, `--dry-run/-n`
 - `init`
   - options: `--refresh`
 - `install`
@@ -119,6 +111,14 @@ Defined at root callback and persisted in app state:
 - `upgrade`
   - options: `--dry-run/-n`, `--verbose/-v`, `--skip-rebuild`, `--skip-commit`, `--skip-brew`, `--no-ai`
   - passthrough args accepted
+- `generations`
+  - subcommands: `status`, `plan`, `prune`
+- `generations status`
+  - options: `--keep`, `--kind`
+- `generations plan`
+  - options: `--keep`, `--kind`, `--no-gc`
+- `generations prune`
+  - options: `--keep`, `--kind`, `--no-gc`, `--yes/-y`, `--dry-run/-n`
 
 ## 2.4 Exit Code Contract
 

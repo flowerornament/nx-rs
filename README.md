@@ -238,19 +238,13 @@ nx <command> --help
 
 Shows hierarchical help for commands and flags. Use `nx help install`, `nx help secret add`, or `nx help -- --dry-run` when you want the command tree rather than raw clap help.
 
-#### `generations`
-
-Host-scoped retention and garbage-collection commands. These work from any directory and do not require a managed repo.
-
-- `nx generations status` shows discovered nix-darwin and Home Manager generations plus the active retention policy.
-- `nx generations plan` renders the exact prune and garbage-collection plan without mutating the host.
-- `nx generations prune` executes that plan, prompting by default.
-- Important flags: `--keep`, `--kind`, `--no-gc`, `--yes`, `--dry-run`.
-- `nx generations prune --dry-run` renders the same plan as `nx generations plan`.
+---
 
 #### `init`
 
 Scans the current repo and writes `.nx/manifest.toml`. Use `--refresh` to rescan and merge with an existing manifest.
+
+---
 
 #### `install`
 
@@ -264,6 +258,8 @@ Installs one or more packages into the managed repo. If you run `nx ripgrep`, `n
 - Use `--rebuild` to rebuild after successful changes.
 - Use `--engine`, `--model`, and `--explain` for AI-assisted routing/edit flows.
 
+---
+
 #### `remove` / `rm` / `uninstall`
 
 Removes installed packages from the managed repo.
@@ -271,6 +267,8 @@ Removes installed packages from the managed repo.
 - Supports `--dry-run` and `--yes`.
 - Supports `--model` for the AI fallback removal path.
 - `rm` and `uninstall` are aliases of `remove`.
+
+---
 
 #### `secret add`
 
@@ -281,6 +279,8 @@ Adds or updates an encrypted secret via `sops`.
 - Prefer `--value-stdin` to avoid leaving secrets in shell history.
 - Top-level command aliases: `secret`, `secrets`.
 
+---
+
 #### `search`
 
 Searches package sources without editing the repo.
@@ -288,9 +288,13 @@ Searches package sources without editing the repo.
 - Good first step when you are not sure which backend will provide a package.
 - Supports `--bleeding-edge`, `--nur`, and `--json`.
 
+---
+
 #### `where`
 
 Shows where a package is declared in the managed repo. This is the fastest way to jump to the owning file before a manual edit or review.
+
+---
 
 #### `list`
 
@@ -299,6 +303,8 @@ Lists installed packages by source bucket.
 - Optional source filter: `nix`, `homebrew`, or `mas`.
 - Supports `--verbose`, `--json`, and `--plain`.
 
+---
+
 #### `info`
 
 Shows package metadata plus candidate source information.
@@ -306,9 +312,13 @@ Shows package metadata plus candidate source information.
 - Useful when deciding between nixpkgs, NUR, flake input, Homebrew, or MAS routes.
 - Supports `--json`, `--bleeding-edge`, and `--verbose`.
 
+---
+
 #### `status`
 
 Shows a package distribution summary for the managed repo. This is a read-only overview of how packages are split across supported source families.
+
+---
 
 #### `installed`
 
@@ -318,21 +328,31 @@ Checks whether one or more packages are currently installed.
 - Supports `--show-location` to include file and line matches.
 - Returns success only when all requested packages are installed.
 
+---
+
 #### `lint`
 
 Checks `# nx:` routing annotations and keyword overlap across routable `.nix` files. Use this before reorganizing manifests or adding new routable files.
+
+---
 
 #### `undo`
 
 Reverts modified tracked files via git checkout. Use `--yes` to skip the confirmation prompt.
 
+---
+
 #### `update`
 
 Runs `nix flake update`. Additional args after `--` are passed through to the underlying flake update invocation.
 
+---
+
 #### `test`
 
 Runs repo quality checks. This is the CLI entry point for validating the managed Nix config repository itself.
+
+---
 
 #### `rebuild`
 
@@ -340,6 +360,8 @@ Runs `darwin-rebuild switch` for the managed repo.
 
 - Use `--preflight` to stop after lint, git, and flake checks without switching.
 - Additional args after `--` pass through to the underlying `darwin-rebuild` command.
+
+---
 
 #### `upgrade`
 
@@ -349,6 +371,18 @@ Runs the full upgrade flow: flake update, Homebrew update/upgrade, rebuild, and 
 - Use `--skip-brew`, `--skip-rebuild`, or `--skip-commit` to trim the flow.
 - Use `--no-ai` to disable AI-generated summaries and recovery prompts.
 - Additional args after `--` pass through to `darwin-rebuild switch`.
+
+---
+
+#### `generations`
+
+Host-scoped retention and garbage-collection commands. These work from any directory and do not require a managed repo.
+
+- `nx generations status` shows discovered nix-darwin and Home Manager generations plus the active retention policy.
+- `nx generations plan` renders the exact prune and garbage-collection plan without mutating the host.
+- `nx generations prune` executes that plan, prompting by default.
+- Important flags: `--keep`, `--kind`, `--no-gc`, `--yes`, `--dry-run`.
+- `nx generations prune --dry-run` renders the same plan as `nx generations plan`.
 
 ### Behavior Notes
 

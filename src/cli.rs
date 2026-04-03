@@ -4,7 +4,6 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 const KNOWN_COMMANDS: &[&str] = &[
     "help",
-    "generations",
     "init",
     "install",
     "remove",
@@ -24,9 +23,10 @@ const KNOWN_COMMANDS: &[&str] = &[
     "test",
     "rebuild",
     "upgrade",
+    "generations",
 ];
 
-const ROOT_HELP: &str = "Run `nx help <topic>` for hierarchical help, or `nx <command> --help` for full command docs.\n\nExamples:\n  nx help install\n  nx help secret add\n  nx generations plan\n  nx generations prune --dry-run";
+const ROOT_HELP: &str = "Run `nx help <topic>` for hierarchical help, or `nx <command> --help` for full command docs.\n\nExamples:\n  nx help install\n  nx help secret add\n  nx upgrade --dry-run\n  nx generations prune --dry-run";
 const GENERATIONS_HELP: &str = "Examples:\n  nx generations status\n  nx generations plan\n  nx generations prune --dry-run\n  nx generations prune --keep 5 --kind darwin\n\nNotes:\n  - `nx generations` is host-scoped and works from any directory.\n  - Use `plan` or `prune --dry-run` to preview exact prune/GC commands.";
 const GENERATIONS_PRUNE_HELP: &str = "Examples:\n  nx generations prune --dry-run\n  nx generations prune --yes\n  nx generations prune --keep 5 --kind darwin\n  nx generations prune --kind home-manager --no-gc\n\nNotes:\n  - `--dry-run` renders the same plan as `nx generations plan`.\n  - By default, `prune` asks for confirmation before mutating the host.";
 const SECRET_HELP: &str = "Examples:\n  nx secret add example_secret_key --value '<token>'\n  printf '%s' '<token>' | nx secret add example_secret_key --value-stdin";
@@ -105,8 +105,6 @@ pub struct GlobalOutputArgs {
 pub enum CommandKind {
     #[command(about = "Show hierarchical help for commands and flags")]
     Help(HelpArgs),
-    #[command(about = "Inspect and manage host Nix generations")]
-    Generations(GenerationsArgs),
     #[command(about = "Scan repo and generate .nx/manifest.toml")]
     Init(InitArgs),
     #[command(about = "Install package(s) into nix config")]
@@ -141,6 +139,8 @@ pub enum CommandKind {
     Rebuild(RebuildArgs),
     #[command(about = "Run full upgrade flow (flake, brew, rebuild, commit)")]
     Upgrade(UpgradeArgs),
+    #[command(about = "Inspect and manage host Nix generations")]
+    Generations(GenerationsArgs),
 }
 
 #[derive(Debug, Clone, Parser)]

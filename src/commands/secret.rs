@@ -313,8 +313,11 @@ fn command_failure_text(stdout: &[u8], stderr: &[u8]) -> String {
     };
     preferred
         .lines()
-        .next()
-        .map_or_else(String::new, |line| line.trim().to_string())
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 fn redact_secret(text: &str, value: &str, json_value: &str) -> String {
@@ -448,7 +451,7 @@ in
         let script = tmp.path().join("fake-sops.sh");
         fs::write(
             &script,
-            "#!/bin/sh\npayload=\"$(cat)\"\necho \"bad value: ${payload}\" 1>&2\nexit 1\n",
+            "#!/bin/sh\npayload=\"$(cat)\"\necho \"wrapper failed\" 1>&2\necho \"bad value: ${payload}\" 1>&2\nexit 1\n",
         )
         .unwrap();
         make_executable(&script);
@@ -466,6 +469,7 @@ in
         let text = err.to_string();
         assert!(!text.contains("top-secret-value"));
         assert!(text.contains("[REDACTED]"));
+        assert!(text.contains("wrapper failed"));
     }
 
     #[cfg(unix)]

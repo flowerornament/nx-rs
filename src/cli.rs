@@ -29,6 +29,7 @@ const KNOWN_COMMANDS: &[&str] = &[
 const ROOT_HELP: &str = "Run `nx help <topic>` for hierarchical help, or `nx <command> --help` for full command docs.\n\nExamples:\n  nx help install\n  nx help secret add\n  nx upgrade --dry-run\n  nx generations prune --dry-run";
 const GENERATIONS_HELP: &str = "Examples:\n  nx generations status\n  nx generations plan\n  nx generations prune --dry-run\n  nx generations prune --keep 5 --kind darwin\n\nNotes:\n  - `nx generations` is host-scoped and works from any directory.\n  - Use `plan` or `prune --dry-run` to preview exact prune/GC commands.";
 const GENERATIONS_PRUNE_HELP: &str = "Examples:\n  nx generations prune --dry-run\n  nx generations prune --yes\n  nx generations prune --keep 5 --kind darwin\n  nx generations prune --kind home-manager --no-gc\n\nNotes:\n  - `--dry-run` renders the same plan as `nx generations plan`.\n  - By default, `prune` asks for confirmation before mutating the host.";
+const UPGRADE_HELP: &str = "Examples:\n  nx upgrade\n  nx upgrade --dry-run\n  nx upgrade nx-rs\n  nx upgrade nx-rs anneal -- --show-trace\n\nNotes:\n  - Without positional inputs, `upgrade` runs the full repo-wide flow: flake update, brew, rebuild, and commit.\n  - With positional inputs, `upgrade` updates only those flake inputs and skips the brew phase by default.";
 const SECRET_HELP: &str = "Examples:\n  nx secret add example_secret_key --value '<token>'\n  printf '%s' '<token>' | nx secret add example_secret_key --value-stdin";
 const SECRET_ADD_HELP: &str = "Examples:
   nx secret add example_secret_key --value '<token>'
@@ -137,7 +138,7 @@ pub enum CommandKind {
     Test,
     #[command(about = "Run darwin-rebuild switch with preflight checks")]
     Rebuild(RebuildArgs),
-    #[command(about = "Run full upgrade flow (flake, brew, rebuild, commit)")]
+    #[command(about = "Run repo-wide or targeted flake upgrade flows")]
     Upgrade(UpgradeArgs),
     #[command(about = "Inspect and manage host Nix generations")]
     Generations(GenerationsArgs),
@@ -495,6 +496,7 @@ pub struct RebuildArgs {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(after_long_help = UPGRADE_HELP)]
 pub struct UpgradeArgs {
     #[command(flatten)]
     pub flow: UpgradeFlowArgs,

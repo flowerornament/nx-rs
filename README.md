@@ -212,6 +212,7 @@ nx lint
 nx rebuild --preflight
 nx rebuild
 nx upgrade
+nx upgrade nx-rs
 nx generations status
 nx generations plan
 nx generations prune --dry-run
@@ -365,12 +366,24 @@ Runs `darwin-rebuild switch` for the managed repo.
 
 #### `upgrade`
 
-Runs the full upgrade flow: flake update, Homebrew update/upgrade, rebuild, and git commit.
+Runs the upgrade flow for either the whole repo or named flake inputs.
 
 - Use `--dry-run` to preview without mutating files.
-- Use `--skip-brew`, `--skip-rebuild`, or `--skip-commit` to trim the flow.
+- `nx upgrade` with no positional inputs runs the full repo-wide flow: flake update, Homebrew update/upgrade, rebuild, and git commit.
+- `nx upgrade <input...>` updates only the named flake inputs via `nix flake lock --update-input ...`.
+- Targeted input upgrades skip the Homebrew phase by default.
+- Use `--skip-brew`, `--skip-rebuild`, or `--skip-commit` to trim the flow further.
 - Use `--no-ai` to disable AI-generated summaries and recovery prompts.
 - Additional args after `--` pass through to `darwin-rebuild switch`.
+
+Examples:
+
+```bash
+nx upgrade
+nx upgrade --dry-run
+nx upgrade nx-rs
+nx upgrade nx-rs anneal -- --show-trace
+```
 
 ---
 

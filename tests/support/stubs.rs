@@ -104,9 +104,9 @@ case "$program" in
     exit 0
     ;;
   nix)
-    if [ "${1:-}" = "flake" ] && [ "${2:-}" = "update" ]; then
+    if [ "${1:-}" = "flake" ] && { [ "${2:-}" = "update" ] || [ "${2:-}" = "lock" ]; }; then
       if [ "$mode" = "update_fail" ]; then
-        echo "stub nix flake update failed"
+        echo "stub nix flake command failed"
         exit 1
       fi
       if [ "$mode" = "upgrade_cache_corruption" ]; then
@@ -120,7 +120,7 @@ case "$program" in
       if [ "$mode" = "upgrade_flake_changed" ]; then
         printf '%s' "${NX_SYSTEM_IT_UPGRADE_NEW_LOCK:?NX_SYSTEM_IT_UPGRADE_NEW_LOCK must be set}" > flake.lock
       fi
-      echo "stub nix flake update ok"
+      echo "stub nix flake command ok"
       exit 0
     fi
 

@@ -135,19 +135,76 @@ fn cache_corruption_not_detected_for_other_errors() {
 
 #[test]
 fn build_command_without_ulimit() {
-    let args = vec!["flake".into(), "update".into()];
+    let args = build_flake_update_args(&[]);
     let result = build_nix_update_command(&args, None);
     assert_eq!(result, vec!["flake", "update"]);
 }
 
 #[test]
 fn build_command_with_ulimit() {
-    let args = vec!["flake".into(), "update".into()];
+    let args = build_flake_update_args(&[]);
     let result = build_nix_update_command(&args, Some(8192));
     assert_eq!(result.len(), 2);
     assert_eq!(result[0], "-lc");
     assert!(result[1].contains("ulimit -n 8192"));
     assert!(result[1].contains("exec nix flake update"));
+}
+
+#[test]
+fn targeted_upgrade_builds_lock_update_input_args() {
+    let args = build_flake_update_args(&["nx-rs".to_string(), "anneal".to_string()]);
+    assert_eq!(
+        args,
+        vec![
+            "flake",
+            "lock",
+            "--update-input",
+            "nx-rs",
+            "--update-input",
+            "anneal",
+        ]
+    );
+}
+
+#[test]
+fn targeted_upgrade_command_with_ulimit_wraps_lock_update_input() {
+    let args = build_flake_update_args(&["nx-rs".to_string()]);
+    let result = build_nix_update_command(&args, Some(8192));
+    assert_eq!(result.len(), 2);
+    assert_eq!(result[0], "-lc");
+    assert!(result[1].contains("exec nix flake lock --update-input nx-rs"));
+}
+
+#[test]
+fn brew_phase_runs_for_repo_wide_upgrade() {
+    let args = UpgradeArgs {
+        flow: UpgradeFlowArgs {
+            dry_run: false,
+            verbose: false,
+            no_ai: true,
+        },
+        skip: UpgradeSkipArgs::default(),
+        targets: Vec::new(),
+        passthrough: Vec::new(),
+    };
+
+    assert!(should_run_brew_phase(&args));
+}
+
+#[test]
+fn brew_phase_skipped_for_targeted_upgrade() {
+    let args = UpgradeArgs {
+        flow: UpgradeFlowArgs {
+            dry_run: false,
+            verbose: false,
+            no_ai: true,
+        },
+        skip: UpgradeSkipArgs::default(),
+        targets: vec!["nx-rs".to_string()],
+        passthrough: Vec::new(),
+    };
+
+    assert!(!should_run_brew_phase(&args));
 }
 
 #[test]
@@ -159,6 +216,7 @@ fn upgrade_manifest_guard_not_required_for_dry_run() {
             no_ai: true,
         },
         skip: UpgradeSkipArgs::default(),
+        targets: Vec::new(),
         passthrough: Vec::new(),
     };
 
@@ -178,6 +236,7 @@ fn upgrade_manifest_guard_not_required_when_rebuild_is_skipped() {
             skip_commit: false,
             skip_brew: false,
         },
+        targets: Vec::new(),
         passthrough: Vec::new(),
     };
 
@@ -193,6 +252,7 @@ fn upgrade_manifest_guard_required_for_full_upgrade() {
             no_ai: true,
         },
         skip: UpgradeSkipArgs::default(),
+        targets: Vec::new(),
         passthrough: Vec::new(),
     };
 

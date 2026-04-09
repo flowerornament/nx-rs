@@ -109,6 +109,7 @@ Defined at root callback and persisted in app state:
   - options: `--preflight`
   - passthrough args accepted
 - `upgrade`
+  - args: `[inputs...]`
   - options: `--dry-run/-n`, `--verbose/-v`, `--skip-rebuild`, `--skip-commit`, `--skip-brew`, `--no-ai`
   - passthrough args accepted
 - `generations`
@@ -475,10 +476,13 @@ High-level phases:
 1. Flake phase:
   - load old lock
   - dry-run: skip update
-  - non-dry-run: stream `nix flake update`
+  - non-dry-run with no positional inputs: stream `nix flake update`
+  - non-dry-run with positional inputs: stream `nix flake lock --update-input <input>` for each requested input, preserving CLI order
   - load new lock and diff
   - fetch change info and summaries
-2. Brew phase (unless `--skip-brew`):
+2. Brew phase:
+  - repo-wide upgrades run brew unless `--skip-brew`
+  - targeted input upgrades skip brew by default
   - `brew outdated --json`
   - enrich and changelog fetch
   - non-dry-run `brew upgrade <pkgs...>`
@@ -493,7 +497,8 @@ Dry-run behavior:
 ## 11. Upgrade/Changelog Contracts
 
 - `stream_nix_update`:
-  - fetches `gh auth token` and passes as `--option access-tokens github.com=...` when available.
+  - fetches `gh auth token` and passes it via `NIX_CONFIG=access-tokens = github.com=...` when available.
+  - runs either `nix flake update` or `nix flake lock --update-input ...` depending on whether targeted inputs were requested.
   - retries once if output indicates known fetcher-cache corruption.
   - corruption retry clears `~/.cache/nix/fetcher-cache-v4.sqlite`.
 - `parse_flake_lock`:

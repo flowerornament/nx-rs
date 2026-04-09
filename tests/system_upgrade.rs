@@ -69,6 +69,14 @@ const UPGRADE_PASSTHROUGH_ARGS: &[&str] = &[
     "--commit-lock-file",
     "foo",
 ];
+const UPGRADE_TARGETED_ARGS: &[&str] = &[
+    "upgrade",
+    "nx-rs",
+    "anneal",
+    "--skip-rebuild",
+    "--skip-commit",
+    "--no-ai",
+];
 const UPGRADE_TOKEN_MODE_ARGS: &[&str] = &[
     "upgrade",
     "--skip-brew",
@@ -191,6 +199,22 @@ const UPGRADE_TOKEN_MODE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"])
         .with_env(&[("NIX_CONFIG", UPGRADE_NIX_CONFIG)]),
+];
+
+const UPGRADE_TARGETED_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "flake",
+            "lock",
+            "--update-input",
+            "nx-rs",
+            "--update-input",
+            "anneal",
+        ],
+    ),
 ];
 
 const UPGRADE_CACHE_RETRY_CALLS: &[ExpectedCall] = &[
@@ -342,6 +366,14 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
         expected_exit: 0,
         expected_calls: UPGRADE_PASSTHROUGH_CALLS,
         stdout_contains: &[],
+    },
+    UpgradeCase {
+        id: "upgrade_targeted_inputs_skip_brew_by_default",
+        cli_args: UPGRADE_TARGETED_ARGS,
+        mode: "success",
+        expected_exit: 0,
+        expected_calls: UPGRADE_TARGETED_CALLS,
+        stdout_contains: &["All flake inputs up to date"],
     },
     UpgradeCase {
         id: "upgrade_flake_update_injects_access_token_option",

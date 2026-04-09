@@ -501,6 +501,11 @@ pub struct UpgradeArgs {
     #[command(flatten)]
     pub skip: UpgradeSkipArgs,
     #[arg(
+        value_name = "INPUTS",
+        help = "Optional flake input names to upgrade instead of updating the entire lockfile"
+    )]
+    pub targets: Vec<String>,
+    #[arg(
         last = true,
         help = "Arguments passed through to `darwin-rebuild switch` during upgrade"
     )]
@@ -531,6 +536,11 @@ impl UpgradeArgs {
     #[must_use]
     pub const fn skip_brew(&self) -> bool {
         self.skip.skip_brew
+    }
+
+    #[must_use]
+    pub fn has_targets(&self) -> bool {
+        !self.targets.is_empty()
     }
 }
 
@@ -1140,6 +1150,20 @@ mod tests {
             panic!("expected upgrade command");
         };
         assert!(args.flow.verbose);
+    }
+
+    #[test]
+    fn upgrade_parses_target_inputs_and_passthrough() {
+        let cli = Cli::try_parse_from(["nx", "upgrade", "nx-rs", "anneal", "--", "--show-trace"])
+            .expect("parse targeted upgrade");
+        let CommandKind::Upgrade(args) = cli.command else {
+            panic!("expected upgrade command");
+        };
+        assert_eq!(
+            args.targets,
+            vec!["nx-rs".to_string(), "anneal".to_string()]
+        );
+        assert_eq!(args.passthrough, vec!["--show-trace".to_string()]);
     }
 
     #[test]

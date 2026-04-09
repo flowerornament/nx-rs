@@ -52,7 +52,7 @@ inputs.nx-rs.packages.${pkgs.system}.default
 Then rebuild:
 
 ```bash
-nix flake lock --update-input nx-rs
+nix flake update nx-rs
 sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .
 ```
 
@@ -370,11 +370,11 @@ Runs the upgrade flow for either the whole repo or named flake inputs.
 
 - Use `--dry-run` to preview without mutating files.
 - `nx upgrade` with no positional inputs runs the full repo-wide flow: flake update, Homebrew update/upgrade, rebuild, and git commit.
-- `nx upgrade <input...>` updates only the named flake inputs via `nix flake lock --update-input ...`.
+- `nx upgrade <input...>` updates only the named flake inputs via `nix flake update <input...>`.
 - Targeted input upgrades skip the Homebrew phase by default.
 - Use `--skip-brew`, `--skip-rebuild`, or `--skip-commit` to trim the flow further.
 - Use `--no-ai` to disable AI-generated summaries and recovery prompts.
-- Additional args after `--` pass through to `darwin-rebuild switch`.
+- Additional args after `--` pass through to the underlying `nix flake update` command.
 
 Examples:
 

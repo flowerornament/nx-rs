@@ -477,7 +477,7 @@ High-level phases:
   - load old lock
   - dry-run: skip update
   - non-dry-run with no positional inputs: stream `nix flake update`
-  - non-dry-run with positional inputs: stream `nix flake lock --update-input <input>` for each requested input, preserving CLI order
+  - non-dry-run with positional inputs: stream `nix flake update <input...>`, preserving CLI order
   - load new lock and diff
   - fetch change info and summaries
 2. Brew phase:
@@ -498,7 +498,7 @@ Dry-run behavior:
 
 - `stream_nix_update`:
   - fetches `gh auth token` and passes it via `NIX_CONFIG=access-tokens = github.com=...` when available.
-  - runs either `nix flake update` or `nix flake lock --update-input ...` depending on whether targeted inputs were requested.
+  - runs either `nix flake update` or `nix flake update <input...>` depending on whether targeted inputs were requested.
   - retries once if output indicates known fetcher-cache corruption.
   - corruption retry clears `~/.cache/nix/fetcher-cache-v4.sqlite`.
 - `parse_flake_lock`:

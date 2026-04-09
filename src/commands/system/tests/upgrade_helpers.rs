@@ -164,28 +164,18 @@ fn build_command_with_ulimit() {
 }
 
 #[test]
-fn targeted_upgrade_builds_lock_update_input_args() {
+fn targeted_upgrade_builds_flake_update_input_args() {
     let args = build_flake_update_args(&["nx-rs".to_string(), "anneal".to_string()], &[]);
-    assert_eq!(
-        args,
-        vec![
-            "flake",
-            "lock",
-            "--update-input",
-            "nx-rs",
-            "--update-input",
-            "anneal",
-        ]
-    );
+    assert_eq!(args, vec!["flake", "update", "nx-rs", "anneal",]);
 }
 
 #[test]
-fn targeted_upgrade_command_with_ulimit_wraps_lock_update_input() {
+fn targeted_upgrade_command_with_ulimit_wraps_flake_update_input() {
     let args = build_flake_update_args(&["nx-rs".to_string()], &[]);
     let result = build_nix_update_command(&args, Some(8192));
     assert_eq!(result.len(), 2);
     assert_eq!(result[0], "-lc");
-    assert!(result[1].contains("exec nix flake lock --update-input nx-rs"));
+    assert!(result[1].contains("exec nix flake update nx-rs"));
 }
 
 #[test]

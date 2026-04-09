@@ -229,19 +229,10 @@ pub fn short_rev(rev: &str) -> &str {
 
 /// Build nix flake command args for repo-wide or targeted input updates.
 pub fn build_flake_update_args(targets: &[String], passthrough: &[String]) -> Vec<String> {
-    let mut args = if targets.is_empty() {
-        vec!["flake".to_string(), "update".to_string()]
-    } else {
-        let mut args = Vec::with_capacity(2 + targets.len() * 2);
-        args.push("flake".to_string());
-        args.push("lock".to_string());
-        for target in targets {
-            args.push("--update-input".to_string());
-            args.push(target.clone());
-        }
-        args
-    };
-
+    let mut args = Vec::with_capacity(2 + targets.len() + passthrough.len());
+    args.push("flake".to_string());
+    args.push("update".to_string());
+    args.extend(targets.iter().cloned());
     args.extend(passthrough.iter().cloned());
     args
 }
@@ -599,15 +590,7 @@ mod tests {
         );
         assert_eq!(
             args,
-            vec![
-                "flake",
-                "lock",
-                "--update-input",
-                "nx-rs",
-                "--update-input",
-                "anneal",
-                "--show-trace",
-            ]
+            vec!["flake", "update", "nx-rs", "anneal", "--show-trace",]
         );
     }
 

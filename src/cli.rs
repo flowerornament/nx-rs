@@ -509,7 +509,7 @@ pub struct UpgradeArgs {
     pub targets: Vec<String>,
     #[arg(
         last = true,
-        help = "Arguments passed through to `darwin-rebuild switch` during upgrade"
+        help = "Arguments passed through to the underlying nix flake update invocation"
     )]
     pub passthrough: Vec<String>,
 }

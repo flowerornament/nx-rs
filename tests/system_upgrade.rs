@@ -206,14 +206,7 @@ const UPGRADE_TARGETED_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new(
         "nix",
         EXPECTED_CWD_REPO_ROOT,
-        &[
-            "flake",
-            "lock",
-            "--update-input",
-            "nx-rs",
-            "--update-input",
-            "anneal",
-        ],
+        &["flake", "update", "nx-rs", "anneal"],
     ),
 ];
 

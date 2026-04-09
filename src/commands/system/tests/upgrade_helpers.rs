@@ -1,5 +1,18 @@
 use super::*;
 
+fn sample_upgrade_args() -> UpgradeArgs {
+    UpgradeArgs {
+        flow: UpgradeFlowArgs {
+            dry_run: false,
+            verbose: false,
+            no_ai: true,
+        },
+        skip: UpgradeSkipArgs::default(),
+        targets: Vec::new(),
+        passthrough: Vec::new(),
+    }
+}
+
 #[test]
 fn flake_compare_url_uses_short_revs() {
     let url = flake_compare_url(&sample_input_change());
@@ -135,14 +148,14 @@ fn cache_corruption_not_detected_for_other_errors() {
 
 #[test]
 fn build_command_without_ulimit() {
-    let args = build_flake_update_args(&[]);
+    let args = build_flake_update_args(&[], &[]);
     let result = build_nix_update_command(&args, None);
     assert_eq!(result, vec!["flake", "update"]);
 }
 
 #[test]
 fn build_command_with_ulimit() {
-    let args = build_flake_update_args(&[]);
+    let args = build_flake_update_args(&[], &[]);
     let result = build_nix_update_command(&args, Some(8192));
     assert_eq!(result.len(), 2);
     assert_eq!(result[0], "-lc");
@@ -152,7 +165,7 @@ fn build_command_with_ulimit() {
 
 #[test]
 fn targeted_upgrade_builds_lock_update_input_args() {
-    let args = build_flake_update_args(&["nx-rs".to_string(), "anneal".to_string()]);
+    let args = build_flake_update_args(&["nx-rs".to_string(), "anneal".to_string()], &[]);
     assert_eq!(
         args,
         vec![
@@ -168,7 +181,7 @@ fn targeted_upgrade_builds_lock_update_input_args() {
 
 #[test]
 fn targeted_upgrade_command_with_ulimit_wraps_lock_update_input() {
-    let args = build_flake_update_args(&["nx-rs".to_string()]);
+    let args = build_flake_update_args(&["nx-rs".to_string()], &[]);
     let result = build_nix_update_command(&args, Some(8192));
     assert_eq!(result.len(), 2);
     assert_eq!(result[0], "-lc");
@@ -177,84 +190,38 @@ fn targeted_upgrade_command_with_ulimit_wraps_lock_update_input() {
 
 #[test]
 fn brew_phase_runs_for_repo_wide_upgrade() {
-    let args = UpgradeArgs {
-        flow: UpgradeFlowArgs {
-            dry_run: false,
-            verbose: false,
-            no_ai: true,
-        },
-        skip: UpgradeSkipArgs::default(),
-        targets: Vec::new(),
-        passthrough: Vec::new(),
-    };
+    let args = sample_upgrade_args();
 
-    assert!(should_run_brew_phase(&args));
+    assert!(args.should_run_brew_phase());
 }
 
 #[test]
 fn brew_phase_skipped_for_targeted_upgrade() {
-    let args = UpgradeArgs {
-        flow: UpgradeFlowArgs {
-            dry_run: false,
-            verbose: false,
-            no_ai: true,
-        },
-        skip: UpgradeSkipArgs::default(),
-        targets: vec!["nx-rs".to_string()],
-        passthrough: Vec::new(),
-    };
+    let mut args = sample_upgrade_args();
+    args.targets = vec!["nx-rs".to_string()];
 
-    assert!(!should_run_brew_phase(&args));
+    assert!(!args.should_run_brew_phase());
 }
 
 #[test]
 fn upgrade_manifest_guard_not_required_for_dry_run() {
-    let args = UpgradeArgs {
-        flow: UpgradeFlowArgs {
-            dry_run: true,
-            verbose: false,
-            no_ai: true,
-        },
-        skip: UpgradeSkipArgs::default(),
-        targets: Vec::new(),
-        passthrough: Vec::new(),
-    };
+    let mut args = sample_upgrade_args();
+    args.flow.dry_run = true;
 
     assert!(!upgrade_requires_manifest_system_safety(&args));
 }
 
 #[test]
 fn upgrade_manifest_guard_not_required_when_rebuild_is_skipped() {
-    let args = UpgradeArgs {
-        flow: UpgradeFlowArgs {
-            dry_run: false,
-            verbose: false,
-            no_ai: true,
-        },
-        skip: UpgradeSkipArgs {
-            skip_rebuild: true,
-            skip_commit: false,
-            skip_brew: false,
-        },
-        targets: Vec::new(),
-        passthrough: Vec::new(),
-    };
+    let mut args = sample_upgrade_args();
+    args.skip.skip_rebuild = true;
 
     assert!(!upgrade_requires_manifest_system_safety(&args));
 }
 
 #[test]
 fn upgrade_manifest_guard_required_for_full_upgrade() {
-    let args = UpgradeArgs {
-        flow: UpgradeFlowArgs {
-            dry_run: false,
-            verbose: false,
-            no_ai: true,
-        },
-        skip: UpgradeSkipArgs::default(),
-        targets: Vec::new(),
-        passthrough: Vec::new(),
-    };
+    let args = sample_upgrade_args();
 
     assert!(upgrade_requires_manifest_system_safety(&args));
 }

@@ -227,6 +227,25 @@ pub fn short_rev(rev: &str) -> &str {
     if rev.len() >= 7 { &rev[..7] } else { rev }
 }
 
+/// Build nix flake command args for repo-wide or targeted input updates.
+pub fn build_flake_update_args(targets: &[String], passthrough: &[String]) -> Vec<String> {
+    let mut args = if targets.is_empty() {
+        vec!["flake".to_string(), "update".to_string()]
+    } else {
+        let mut args = Vec::with_capacity(2 + targets.len() * 2);
+        args.push("flake".to_string());
+        args.push("lock".to_string());
+        for target in targets {
+            args.push("--update-input".to_string());
+            args.push(target.clone());
+        }
+        args
+    };
+
+    args.extend(passthrough.iter().cloned());
+    args
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -564,6 +583,32 @@ mod tests {
     #[test]
     fn short_rev_short_input_unchanged() {
         assert_eq!(short_rev("abc"), "abc");
+    }
+
+    #[test]
+    fn build_flake_update_args_defaults_to_repo_wide_update() {
+        let args = build_flake_update_args(&[], &[]);
+        assert_eq!(args, vec!["flake", "update"]);
+    }
+
+    #[test]
+    fn build_flake_update_args_builds_targeted_update_inputs() {
+        let args = build_flake_update_args(
+            &["nx-rs".to_string(), "anneal".to_string()],
+            &["--show-trace".to_string()],
+        );
+        assert_eq!(
+            args,
+            vec![
+                "flake",
+                "lock",
+                "--update-input",
+                "nx-rs",
+                "--update-input",
+                "anneal",
+                "--show-trace",
+            ]
+        );
     }
 
     #[test]

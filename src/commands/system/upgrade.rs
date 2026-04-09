@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::cli::{RebuildArgs, UpgradeArgs};
 use crate::commands::context::AppContext;
 use crate::domain::upgrade::{
-    InputChange, diff_locks, github_owner_repo, load_flake_lock, short_rev,
+    InputChange, build_flake_update_args, diff_locks, github_owner_repo, load_flake_lock, short_rev,
 };
 use crate::infra::ai_engine::DEFAULT_CODEX_MODEL;
 use crate::infra::shell::{
@@ -27,7 +27,7 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
     };
 
     // Phase 2: Brew
-    if should_run_brew_phase(args) {
+    if args.should_run_brew_phase() {
         run_brew_phase(args, ctx);
     }
 
@@ -60,10 +60,6 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
 
 pub(super) const fn upgrade_requires_manifest_system_safety(args: &UpgradeArgs) -> bool {
     !args.dry_run() && !args.skip_rebuild()
-}
-
-pub(super) fn should_run_brew_phase(args: &UpgradeArgs) -> bool {
-    !args.skip_brew() && !args.has_targets()
 }
 
 /// Flake phase: load old lock → update → load new lock → diff → report.
@@ -742,21 +738,6 @@ pub(super) fn build_nix_update_command(
     )
 }
 
-pub(super) fn build_flake_update_args(targets: &[String]) -> Vec<String> {
-    if targets.is_empty() {
-        return vec!["flake".to_string(), "update".to_string()];
-    }
-
-    let mut args = Vec::with_capacity(2 + targets.len() * 2);
-    args.push("flake".to_string());
-    args.push("lock".to_string());
-    for target in targets {
-        args.push("--update-input".to_string());
-        args.push(target.clone());
-    }
-    args
-}
-
 /// Detect file descriptor exhaustion in command output.
 pub(super) fn is_fd_exhaustion(output: &str) -> bool {
     output.contains("Too many open files") || output.contains("too many open files")
@@ -779,8 +760,7 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext) -> bool {
     let token = gh_auth_token();
     let nix_config = nix_access_tokens_config(&token);
 
-    let mut base_args = build_flake_update_args(&args.targets);
-    base_args.extend(args.passthrough.clone());
+    let base_args = build_flake_update_args(&args.targets, &args.passthrough);
 
     // Proactively raise FD limit to avoid "Too many open files" from libgit2.
     let mut raise_nofile: Option<u32> = Some(8192);

@@ -1,5 +1,6 @@
 use crate::cli::PassthroughArgs;
 use crate::commands::context::RepoContext;
+use crate::domain::upgrade::build_flake_update_args;
 use crate::infra::shell::run_indented_command;
 use crate::output::printer::Printer;
 
@@ -8,8 +9,8 @@ use crate::output::printer::Printer;
 pub fn cmd_update(args: &PassthroughArgs, ctx: &RepoContext<'_>) -> i32 {
     ctx.printer.action("Updating flake inputs");
 
-    let mut command_args: Vec<&str> = vec!["flake", "update"];
-    command_args.extend(args.passthrough.iter().map(String::as_str));
+    let raw_args = build_flake_update_args(&[], &args.passthrough);
+    let command_args = raw_args.iter().map(String::as_str).collect::<Vec<_>>();
     let return_code =
         match run_indented_command("nix", &command_args, Some(ctx.repo_root), ctx.printer, "  ") {
             Ok(code) => code,

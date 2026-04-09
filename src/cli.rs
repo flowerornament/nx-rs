@@ -542,6 +542,11 @@ impl UpgradeArgs {
     pub fn has_targets(&self) -> bool {
         !self.targets.is_empty()
     }
+
+    #[must_use]
+    pub fn should_run_brew_phase(&self) -> bool {
+        !self.skip_brew() && !self.has_targets()
+    }
 }
 
 #[derive(Debug, Clone, Args, Default)]

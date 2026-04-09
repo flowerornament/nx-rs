@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.1 - 2026-04-09
+
+- changed targeted `nx upgrade <input...>` to call the documented `nix flake update <input...>` syntax instead of deprecated `nix flake lock --update-input`
+- corrected upgrade help/docs so passthrough args are described as flake-update passthrough rather than rebuild passthrough
+
 ## v1.5.0 - 2026-04-08
 
 - added targeted flake input upgrades via `nx upgrade <input...>`, including support for multiple inputs and passthrough rebuild flags after `--`

@@ -72,56 +72,44 @@ Quality gate enforcement:
 - **Safety net**: Claude Code Stop hook runs `just check` before session ends
 - **Git hooks**: Owned by bd for beads sync (installed via `just hooks-install`)
 
-## Issue Tracking
-
-This project uses **bd** (beads) for task management. Run `bd help` for commands.
-
-Tracking model:
-
-- `bd` is the only source of truth for executable tasks, dependencies, and status.
-- Do not track task checklists or status in markdown docs.
-- Use this repo's tracker at `./.beads`.
-- Use `bd ready` to identify the active epic/task set for the current session.
-- Do not track any state in markdown docs
-- Avoid duplicating information between AGENTS.md and other markdown docs
-- Do not create additional documents unless new categories of information need to be recorded
-
-Quick reference:
+## Task Tracking (bd)
 
 ```bash
-bd prime              # full context about using bd
-bd ready              # find available work
+# orient
+bd show --current --short
+bd query "status=in_progress"
+bd ready --explain
+
+# work
+bd update <id> --claim
+bd note <id> "context"
+bd close <id> --suggest-next
+
+# capture
+bd todo add "quick thought"
 bd create --title="..." --type=task --priority=2
-bd close <id>         # complete work
-bd hooks install      # update git hooks after bd upgrades
+
+# query
+bd query "type=bug AND priority<=1 AND updated>7d"
+bd search "keyword"
+bd count "status=open"
+bd graph --compact <id>
+
+# state
+bd kv set/get key [value]
+bd find-duplicates
 ```
 
-## Landing the Plane (Session Completion)
+Full ref: `bd prime`
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+## Completion
 
-**MANDATORY WORKFLOW:**
+Before ending a session:
+1. Run `just ci` if code changed.
+2. Commit with a clear message.
+3. `bd dolt push && git push`
 
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   # If shipping a release change, bump version first (Cargo.toml + flake.nix).
-   git pull --rebase
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
+Work is not complete until `git push` succeeds.
 
 ## Rust Guidelines
 

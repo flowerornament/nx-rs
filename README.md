@@ -230,14 +230,43 @@ printf '%s' "$TOKEN" | nx secret add github_token --value-stdin
 Use command help for the full flag surface:
 
 ```bash
+nx --version
 nx --help
 nx help <topic>
 nx <command> --help
 ```
 
+#### `version`
+
+Shows the current `nx` version.
+
+- Supports `nx --version`, `nx -V`, and `nx version`.
+- Supports `nx version --json`.
+
+---
+
 #### `help`
 
 Shows hierarchical help for commands and flags. Use `nx help install`, `nx help secret add`, or `nx help -- --dry-run` when you want the command tree rather than raw clap help.
+
+---
+
+#### `completion`
+
+Generates shell completion scripts to stdout.
+
+- Supported shells: `bash`, `zsh`, `fish`, `elvish`, `powershell`.
+- Example: `nx completion zsh > ~/.zsh/completions/_nx`.
+
+---
+
+#### `doctor`
+
+Diagnoses repo and host prerequisites that affect normal `nx` usage.
+
+- Reports repo root resolution, manifest health, routing status, flake lock state, cache availability, and tool presence.
+- Supports `--verbose` for extra detail.
+- Supports `--json` for automation.
 
 ---
 
@@ -258,6 +287,7 @@ Installs one or more packages into the managed repo. If you run `nx ripgrep`, `n
 - Use `--service` to offer service scaffolding after install.
 - Use `--rebuild` to rebuild after successful changes.
 - Use `--engine`, `--model`, and `--explain` for AI-assisted routing/edit flows.
+- Use `--verbose` to surface cache and query timing diagnostics.
 
 ---
 
@@ -287,7 +317,7 @@ Adds or updates an encrypted secret via `sops`.
 Searches package sources without editing the repo.
 
 - Good first step when you are not sure which backend will provide a package.
-- Supports `--bleeding-edge`, `--nur`, and `--json`.
+- Supports `--bleeding-edge`, `--nur`, `--source`, `--json`, and `--verbose`.
 
 ---
 
@@ -311,13 +341,15 @@ Lists installed packages by source bucket.
 Shows package metadata plus candidate source information.
 
 - Useful when deciding between nixpkgs, NUR, flake input, Homebrew, or MAS routes.
-- Supports `--json`, `--bleeding-edge`, and `--verbose`.
+- Supports `--json`, `--bleeding-edge`, `--nur`, `--source`, and `--verbose`.
 
 ---
 
 #### `status`
 
 Shows a package distribution summary for the managed repo. This is a read-only overview of how packages are split across supported source families.
+
+- Supports `--json`.
 
 ---
 
@@ -334,6 +366,8 @@ Checks whether one or more packages are currently installed.
 #### `lint`
 
 Checks `# nx:` routing annotations and keyword overlap across routable `.nix` files. Use this before reorganizing manifests or adding new routable files.
+
+- Supports `--json`.
 
 ---
 
@@ -400,6 +434,7 @@ Host-scoped retention and garbage-collection commands. These work from any direc
 ### Behavior Notes
 
 - `help`, `where`, `list`, `info`, `status`, `installed`, `search`, `generations status`, and `generations plan` are read-only.
+- `version`, `completion`, and `doctor` are also read-only.
 - `install` and `remove` support `--dry-run` to preview changes before writing files.
 - `generations` commands are host-scoped and work from any directory.
 - Most commands operate on the current repo root; set `NX_REPO_ROOT` only when you want to override auto-discovery.

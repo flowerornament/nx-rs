@@ -24,11 +24,9 @@ use crate::infra::cache::MultiSourceCache;
 use crate::infra::file_edit::{EditOutcome, analyse_manifest_for_preview, apply_edit};
 use crate::infra::finder::{find_first_package, find_package};
 use crate::infra::flake_input::{FlakeInputEdit, add_flake_input};
+use crate::infra::package_query::{PackageQueryReport, query_package, query_packages};
 use crate::infra::shell::git_diff;
-use crate::infra::sources::{
-    CachedSearchOutcome, cached_search_all_sources, cached_search_many_with_status,
-    cached_search_with_status, check_nix_available,
-};
+use crate::infra::sources::check_nix_available;
 use crate::output::printer::Printer;
 
 pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
@@ -633,7 +631,7 @@ impl InstallSearchPrefetch {
 #[derive(Debug)]
 enum InstallPrefetchEntry {
     AlreadyInstalled(PackageLocation),
-    Search(CachedSearchOutcome),
+    Search(PackageQueryReport),
 }
 
 struct InstallRoutingContext {
@@ -714,7 +712,7 @@ fn search_for_package(
     args: &InstallArgs,
     ctx: &AppContext,
     cache: &mut Option<MultiSourceCache>,
-    prefetched: Option<&CachedSearchOutcome>,
+    prefetched: Option<&PackageQueryReport>,
 ) -> Option<SearchResolution> {
     // Explicit --cask / --mas skip search (instant, no ambiguity)
     if args.cask() || args.mas() {
@@ -729,8 +727,22 @@ fn search_for_package(
             );
         }
 
-        let outcome = cached_search_all_sources(package, &prefs, &ctx.repo_root, cache);
-        return resolve_search_candidates(package, &outcome.results, args, &ctx.repo_root, ctx);
+        let report = query_package(package, &prefs, &ctx.repo_root, cache);
+        if args.verbose() {
+            Printer::detail(&format!(
+                "Query diagnostics: cache={}, elapsed={}ms, unavailable_backends={}",
+                if report.cache_hit { "hit" } else { "miss" },
+                report.elapsed.as_millis(),
+                report.outcome.unavailable_sources.len()
+            ));
+        }
+        return resolve_search_candidates(
+            package,
+            &report.outcome.results,
+            args,
+            &ctx.repo_root,
+            ctx,
+        );
     }
 
     let prefs = source_prefs_from_args(args);
@@ -738,20 +750,16 @@ fn search_for_package(
     let cached = if let Some(prefetched) = prefetched {
         prefetched
     } else {
-        live_lookup = cached_search_with_status(
-            package,
-            &prefs,
-            &ctx.repo_root,
-            cache,
-            crate::infra::sources::search_all_sources,
-        );
+        live_lookup = query_package(package, &prefs, &ctx.repo_root, cache);
         &live_lookup
     };
     let outcome = &cached.outcome;
 
-    if args.explain() && cached.cache_hit {
+    if args.verbose() || (args.explain() && cached.cache_hit) {
         Printer::detail(&format!(
-            "Cache hit for '{package}' ({} sources)",
+            "Query diagnostics for '{package}': cache={}, elapsed={}ms, sources={}",
+            if cached.cache_hit { "hit" } else { "miss" },
+            cached.elapsed.as_millis(),
             outcome.results.len()
         ));
     }
@@ -1095,9 +1103,7 @@ fn prefetch_install_searches(
 
     if packages.len() >= 2 {
         let prefs = source_prefs_from_args(args);
-        for (package, outcome) in
-            cached_search_many_with_status(&packages, &prefs, &ctx.repo_root, cache)
-        {
+        for (package, outcome) in query_packages(&packages, &prefs, &ctx.repo_root, cache) {
             by_package.insert(package, InstallPrefetchEntry::Search(outcome));
         }
     }

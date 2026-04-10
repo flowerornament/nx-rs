@@ -5,11 +5,6 @@ use crate::domain::drift::ManifestHealth;
 use crate::domain::manifest_scan::ScannedRepo;
 use crate::output::printer::Printer;
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct GlobalFlags {
-    pub json: bool,
-}
-
 pub struct RepoContext<'a> {
     pub repo_root: &'a Path,
     pub printer: &'a Printer,
@@ -17,13 +12,6 @@ pub struct RepoContext<'a> {
 
 pub struct HostContext<'a> {
     pub printer: &'a Printer,
-    flags: GlobalFlags,
-}
-
-pub struct JsonCommandContext<'a> {
-    pub repo_root: &'a Path,
-    pub printer: &'a Printer,
-    flags: GlobalFlags,
 }
 
 pub struct InitContext<'a> {
@@ -36,7 +24,6 @@ pub struct QueryContext<'a> {
     pub repo_root: &'a Path,
     pub printer: &'a Printer,
     pub manifest_health: &'a ManifestHealth,
-    flags: GlobalFlags,
 }
 
 pub struct SystemContext<'a> {
@@ -52,7 +39,6 @@ pub struct AppContext {
     pub config_files: ConfigFiles,
     pub manifest_health: ManifestHealth,
     pub scanned_repo: ScannedRepo,
-    pub flags: GlobalFlags,
 }
 
 impl AppContext {
@@ -62,7 +48,6 @@ impl AppContext {
         config_files: ConfigFiles,
         manifest_health: ManifestHealth,
         scanned_repo: ScannedRepo,
-        flags: GlobalFlags,
     ) -> Self {
         Self {
             repo_root,
@@ -70,7 +55,6 @@ impl AppContext {
             config_files,
             manifest_health,
             scanned_repo,
-            flags,
         }
     }
 
@@ -82,14 +66,6 @@ impl AppContext {
         RepoContext {
             repo_root: &self.repo_root,
             printer: &self.printer,
-        }
-    }
-
-    pub fn json_context(&self) -> JsonCommandContext<'_> {
-        JsonCommandContext {
-            repo_root: &self.repo_root,
-            printer: &self.printer,
-            flags: self.flags,
         }
     }
 
@@ -106,7 +82,6 @@ impl AppContext {
             repo_root: &self.repo_root,
             printer: &self.printer,
             manifest_health: &self.manifest_health,
-            flags: self.flags,
         }
     }
 
@@ -120,25 +95,9 @@ impl AppContext {
     }
 }
 
-impl JsonCommandContext<'_> {
-    pub const fn wants_json(&self, local_json_flag: bool) -> bool {
-        local_json_flag || self.flags.json
-    }
-}
-
 impl HostContext<'_> {
-    pub const fn new(printer: &Printer, flags: GlobalFlags) -> HostContext<'_> {
-        HostContext { printer, flags }
-    }
-
-    pub const fn wants_json(&self, local_json_flag: bool) -> bool {
-        local_json_flag || self.flags.json
-    }
-}
-
-impl QueryContext<'_> {
-    pub const fn wants_json(&self, local_json_flag: bool) -> bool {
-        local_json_flag || self.flags.json
+    pub const fn new(printer: &Printer) -> HostContext<'_> {
+        HostContext { printer }
     }
 }
 

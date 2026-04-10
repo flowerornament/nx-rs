@@ -32,7 +32,10 @@ When implementation and this document disagree, this repository's tests are cons
 
 Known commands:
 
+- `version`
 - `help`
+- `completion`
+- `doctor`
 - `init`
 - `install`
 - `remove`
@@ -56,23 +59,27 @@ Known commands:
 
 ## 2.2 Global Options
 
-Defined at root callback and persisted in app state:
+Defined at root callback:
 
 - `--plain`
 - `--unicode`
 - `--minimal`
-- `--verbose` / `-v`
-- `--json`
 
 ## 2.3 Command Options
 
+- `version`
+  - options: `--json`
 - `help`
   - args: `[topics...]`
+- `completion`
+  - args: `<shell>`
+- `doctor`
+  - options: `--json`, `--verbose/-v`
 - `init`
   - options: `--refresh`
 - `install`
   - args: `<packages...>`
-  - options: `--yes/-y`, `--dry-run/-n`, `--cask`, `--mas`, `--service`, `--rebuild`, `--bleeding-edge`, `--nur`, `--source`, `--explain`, `--engine`, `--model`
+  - options: `--yes/-y`, `--dry-run/-n`, `--verbose/-v`, `--cask`, `--mas`, `--service`, `--rebuild`, `--bleeding-edge`, `--nur`, `--source`, `--explain`, `--engine`, `--model`
 - `remove` / `rm` / `uninstall`
   - args: `<packages...>`
   - options: `--yes/-y`, `--dry-run/-n`, `--model`
@@ -83,7 +90,7 @@ Defined at root callback and persisted in app state:
   - options: `--name/--key`, `--value`, `--value-stdin`
 - `search`
   - args: `<package>`
-  - options: `--bleeding-edge`, `--nur`, `--json`
+  - options: `--bleeding-edge`, `--nur`, `--source`, `--json`, `--verbose/-v`
 - `where`
   - args: `<package>`
 - `list`
@@ -91,14 +98,14 @@ Defined at root callback and persisted in app state:
   - options: `--verbose`, `--json`, `--plain`
 - `info`
   - args: `<package>`
-  - options: `--json`, `--bleeding-edge`, `--verbose`
+  - options: `--json`, `--bleeding-edge`, `--nur`, `--source`, `--verbose`
 - `status`
-  - no args
+  - options: `--json`
 - `installed`
   - args: `<packages...>`
   - options: `--json`, `--show-location`
 - `lint`
-  - no args
+  - options: `--json`
 - `undo`
   - options: `--yes/-y`
 - `update`
@@ -114,6 +121,7 @@ Defined at root callback and persisted in app state:
   - passthrough args accepted
 - `generations`
   - subcommands: `status`, `plan`, `prune`
+  - options: `--json`
 - `generations status`
   - options: `--keep`, `--kind`
 - `generations plan`
@@ -123,20 +131,23 @@ Defined at root callback and persisted in app state:
 
 ## 2.4 Exit Code Contract
 
+- `version`: `0`.
 - `help`: `0` when help renders successfully; `2` when the requested topic path cannot be resolved.
+- `completion`: `0`.
+- `doctor`: `0` when all checks pass; `1` when any check fails.
 - `generations status`: `0`.
 - `generations plan`: `0`.
 - `generations prune`: `0` on success, no-op, user cancellation, or `--dry-run`; `1` on discovery, command execution, or post-prune refresh failure.
 - `init`: `0` on success or user cancellation; `1` on manifest load/save failure.
-- `install`: `2` when no package args; otherwise `0` if all requested install actions succeeded or nothing selected; `1` on partial failure.
-- `remove`/`rm`/`uninstall`: `2` when no package args; otherwise `0`.
+- `install`: `0` if all requested install actions succeeded or nothing selected; `1` on partial failure; clap usage errors exit `2`.
+- `remove`/`rm`/`uninstall`: `0`; clap usage errors exit `2`.
 - `secret add`: `0` on successful update; `1` on input validation, file, or `sops` failure.
 - `search`: `0` when at least one result is rendered; `1` on not found or rendering failure.
-- `where`: `2` when no package arg; otherwise `0` (including not-found).
+- `where`: `0` (including not-found); clap usage errors exit `2`.
 - `list`: `1` for invalid source filter; otherwise `0`.
-- `info`: `2` when no package arg; otherwise `0` (including not-found).
+- `info`: `0` (including not-found); clap usage errors exit `2`.
 - `status`: `0`.
-- `installed`: `2` when no package args; otherwise `0` only if all requested packages are installed.
+- `installed`: `0` only if all requested packages are installed; clap usage errors exit `2`.
 - `lint`: `0` when routing metadata passes; otherwise `1`.
 - `undo`: `0`.
 - `update`: `0` on flake update success, else `1`.

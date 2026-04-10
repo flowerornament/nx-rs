@@ -571,12 +571,16 @@ pub fn sort_results(results: &mut [SourceResult], prefs: &SourcePreferences) {
     results.sort_by(|a, b| {
         let pa = priority(a.source);
         let pb = priority(b.source);
-        pa.cmp(&pb).then_with(|| {
-            // Higher confidence first (reverse order)
-            b.confidence
-                .partial_cmp(&a.confidence)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
+        pa.cmp(&pb)
+            .then_with(|| {
+                // Higher confidence first (reverse order)
+                b.confidence
+                    .partial_cmp(&a.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| a.attr.cmp(&b.attr))
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.description.cmp(&b.description))
     });
 }
 

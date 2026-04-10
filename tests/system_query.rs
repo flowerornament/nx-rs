@@ -25,9 +25,9 @@ const INFO_MISSING_ARGS: &[&str] = &["info"];
 const INSTALLED_MISSING_ARGS: &[&str] = &["installed"];
 const INFO_FOUND_ARGS: &[&str] = &["info", "ripgrep"];
 const INFO_JSON_FOUND_ARGS: &[&str] = &["info", "ripgrep", "--json"];
-const LIST_JSON_GLOBAL_ARGS: &[&str] = &["--json", "list"];
-const INFO_JSON_GLOBAL_ARGS: &[&str] = &["--json", "info", "ripgrep"];
-const INSTALLED_JSON_GLOBAL_ARGS: &[&str] = &["--json", "installed", "ripgrep"];
+const LIST_JSON_ARGS: &[&str] = &["list", "--json"];
+const INFO_JSON_ARGS: &[&str] = &["info", "ripgrep", "--json"];
+const INSTALLED_JSON_ARGS: &[&str] = &["installed", "ripgrep", "--json"];
 const INFO_BLEEDING_EDGE_ARGS: &[&str] = &["info", "ripgrep", "--bleeding-edge"];
 const INFO_JSON_HM_MODULE_ARGS: &[&str] = &["info", "git", "--json"];
 const INFO_JSON_DARWIN_SERVICE_ARGS: &[&str] = &["info", "yabai", "--json"];
@@ -149,6 +149,9 @@ fn normalize_snapshot_json(mut value: Value, repo_root_candidates: &[String]) ->
         .map(|location| normalize_repo_relative(location, repo_root_candidates));
     if let Some(location) = normalized_location {
         value["location"] = Value::String(location);
+    }
+    if value.get("elapsed_ms").is_some() {
+        value["elapsed_ms"] = Value::from(0);
     }
     value
 }
@@ -274,17 +277,17 @@ fn system_query_surface() -> Result<(), Box<dyn Error>> {
             },
         ),
         (
-            "info_global_json_flag_renders_json",
+            "info_local_json_flag_renders_json",
             QueryCase {
-                args: INFO_JSON_GLOBAL_ARGS,
+                args: INFO_JSON_ARGS,
                 expected_exit: 0,
                 stdout_contains: INFO_JSON_FOUND_STDOUT,
             },
         ),
         (
-            "installed_global_json_flag_renders_json",
+            "installed_local_json_flag_renders_json",
             QueryCase {
-                args: INSTALLED_JSON_GLOBAL_ARGS,
+                args: INSTALLED_JSON_ARGS,
                 expected_exit: 0,
                 stdout_contains: INSTALLED_JSON_GLOBAL_STDOUT,
             },
@@ -333,9 +336,9 @@ fn system_query_list_json_snapshot() -> Result<(), Box<dyn Error>> {
     let nx_bin = resolve_nx_bin(&workspace_root)?;
 
     assert_query_json_snapshot(
-        "system_query_list_global_json_flag_renders_json",
+        "system_query_list_local_json_flag_renders_json",
         &nx_bin,
         &repo_base,
-        LIST_JSON_GLOBAL_ARGS,
+        LIST_JSON_ARGS,
     )
 }

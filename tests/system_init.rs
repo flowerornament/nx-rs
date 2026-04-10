@@ -164,7 +164,7 @@ fn list_parity_with_manifest() -> Result<(), Box<dyn Error>> {
     copy_tree(&repo_base, tmp.path())?;
     let home_dir = TempDir::new()?;
 
-    let list_before = run_nx(&nx_bin, tmp.path(), home_dir.path(), &["--json", "list"]);
+    let list_before = run_nx(&nx_bin, tmp.path(), home_dir.path(), &["list", "--json"]);
     assert_eq!(
         list_before.status.code().unwrap_or(-1),
         0,
@@ -180,7 +180,7 @@ fn list_parity_with_manifest() -> Result<(), Box<dyn Error>> {
         String::from_utf8_lossy(&init_out.stderr)
     );
 
-    let list_after = run_nx(&nx_bin, tmp.path(), home_dir.path(), &["--json", "list"]);
+    let list_after = run_nx(&nx_bin, tmp.path(), home_dir.path(), &["list", "--json"]);
     assert_eq!(
         list_after.status.code().unwrap_or(-1),
         0,

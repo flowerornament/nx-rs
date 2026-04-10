@@ -17,6 +17,22 @@ pub struct CapturedCommand {
     pub stderr: String,
 }
 
+pub fn command_path(name: &str) -> Option<String> {
+    let output = Command::new("which")
+        .arg(name)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!path.is_empty()).then_some(path)
+}
+
 /// Returns `stderr.trim()` if non-empty, otherwise `stdout.trim()`.
 pub fn first_nonempty_output(output: &CapturedCommand) -> &str {
     let stderr = output.stderr.trim();

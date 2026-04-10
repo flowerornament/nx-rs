@@ -7,6 +7,8 @@ expression: value
   "installed": true,
   "location": "packages/nix/cli.nix:5",
   "sources": [],
+  "cache_hit": false,
+  "elapsed_ms": 0,
   "hm_module": null,
   "darwin_service": null,
   "flakehub": []

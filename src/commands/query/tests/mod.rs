@@ -4,6 +4,7 @@ use std::fs;
 
 use tempfile::TempDir;
 
+use crate::cli::{InfoOutputArgs, PackageSourceArgs};
 use crate::domain::source::PackageSource;
 
 mod cache;
@@ -12,10 +13,12 @@ mod formatting;
 
 fn info_args() -> InfoArgs {
     InfoArgs {
-        package: Some("ripgrep".to_string()),
-        json: true,
-        bleeding_edge: false,
-        verbose: false,
+        package: "ripgrep".to_string(),
+        source: PackageSourceArgs::default(),
+        output: InfoOutputArgs {
+            json: true,
+            verbose: false,
+        },
     }
 }
 
@@ -63,7 +66,5 @@ fn cache_fixture() -> (TempDir, Option<MultiSourceCache>) {
 }
 
 fn package_from_args(args: &InfoArgs) -> &str {
-    args.package
-        .as_deref()
-        .expect("info args in tests should include package")
+    args.package.as_str()
 }

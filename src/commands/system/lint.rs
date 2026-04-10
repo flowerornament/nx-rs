@@ -1,8 +1,40 @@
+use serde::Serialize;
+
+use crate::cli::LintArgs;
 use crate::commands::context::SystemContext;
 use crate::domain::routing::RoutingAudit;
 use crate::output::printer::Printer;
 
-pub fn cmd_lint(ctx: &SystemContext<'_>) -> i32 {
+#[derive(Debug, Serialize)]
+struct RoutingLintJson {
+    ok: bool,
+    issues: Vec<String>,
+}
+
+pub fn cmd_lint(args: &LintArgs, ctx: &SystemContext<'_>) -> i32 {
+    if args.json {
+        let audit = RoutingAudit::scan(ctx.repo_root);
+        let output = RoutingLintJson {
+            ok: audit.is_clean(),
+            issues: audit
+                .issues()
+                .iter()
+                .map(|issue| issue.summary(ctx.repo_root))
+                .collect(),
+        };
+        return match serde_json::to_string_pretty(&output) {
+            Ok(text) => {
+                println!("{text}");
+                i32::from(!output.ok)
+            }
+            Err(err) => {
+                ctx.printer
+                    .error(&format!("lint json rendering failed: {err}"));
+                1
+            }
+        };
+    }
+
     match run_routing_lint(
         ctx,
         "Linting nx routing metadata",

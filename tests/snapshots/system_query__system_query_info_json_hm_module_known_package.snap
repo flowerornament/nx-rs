@@ -7,6 +7,8 @@ expression: value
   "installed": false,
   "location": null,
   "sources": [],
+  "cache_hit": false,
+  "elapsed_ms": 0,
   "hm_module": {
     "path": "programs.git",
     "example": "programs.git.enable = true; programs.git.userName = \"...\";",

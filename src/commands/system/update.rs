@@ -1,4 +1,4 @@
-use crate::cli::PassthroughArgs;
+use crate::cli::UpdateArgs;
 use crate::commands::context::RepoContext;
 use crate::domain::upgrade::build_flake_update_args;
 use crate::infra::shell::run_indented_command;
@@ -6,7 +6,7 @@ use crate::output::printer::Printer;
 
 // ─── update ──────────────────────────────────────────────────────────────────
 
-pub fn cmd_update(args: &PassthroughArgs, ctx: &RepoContext<'_>) -> i32 {
+pub fn cmd_update(args: &UpdateArgs, ctx: &RepoContext<'_>) -> i32 {
     ctx.printer.action("Updating flake inputs");
 
     let raw_args = build_flake_update_args(&[], &args.passthrough);

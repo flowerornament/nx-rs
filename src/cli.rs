@@ -3,7 +3,10 @@ use std::ffi::OsString;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 const KNOWN_COMMANDS: &[&str] = &[
+    "version",
     "help",
+    "completion",
+    "doctor",
     "init",
     "install",
     "remove",
@@ -26,7 +29,25 @@ const KNOWN_COMMANDS: &[&str] = &[
     "generations",
 ];
 
-const ROOT_HELP: &str = "Run `nx help <topic>` for hierarchical help, or `nx <command> --help` for full command docs.\n\nExamples:\n  nx help install\n  nx help secret add\n  nx upgrade --dry-run\n  nx generations prune --dry-run";
+const ROOT_HELP: &str = "Run `nx help <topic>` for hierarchical help, or `nx <command> --help` for full command docs.\n\nExamples:\n  nx version\n  nx doctor\n  nx help install\n  nx upgrade --dry-run\n  nx completion zsh";
+const VERSION_HELP: &str = "Examples:\n  nx --version\n  nx -V\n  nx version\n  nx version --json";
+const COMPLETION_HELP: &str = "Examples:\n  nx completion zsh > ~/.zsh/completions/_nx\n  nx completion bash > /usr/local/etc/bash_completion.d/nx\n\nNotes:\n  - Completion scripts are written to stdout.\n  - Re-run this after upgrading nx if completions drift.";
+const DOCTOR_HELP: &str = "Examples:\n  nx doctor\n  nx doctor --verbose\n  nx doctor --json\n\nNotes:\n  - `doctor` is repo-scoped and expects to run inside a managed nix config repo.\n  - Use it when repo discovery, manifest health, routing, cache, or tool availability seem suspicious.";
+const INIT_HELP: &str = "Examples:\n  nx init\n  nx init --refresh\n\nNotes:\n  - `init` scans the repo and writes `.nx/manifest.toml`.\n  - `--refresh` re-scans and merges with the existing manifest when possible.";
+const INSTALL_HELP: &str = "Examples:\n  nx ripgrep\n  nx install ripgrep fd\n  nx install firefox --cask\n  nx install pyyaml --verbose\n\nNotes:\n  - Bare tokens like `nx ripgrep` are treated as `nx install ripgrep`.\n  - `--verbose` surfaces cache and query timing details during package resolution.";
+const REMOVE_HELP: &str = "Examples:\n  nx remove ripgrep\n  nx rm firefox --dry-run\n  nx uninstall ripgrep --yes\n\nNotes:\n  - `rm` and `uninstall` are aliases of `remove`.\n  - `--dry-run` previews file edits without writing them.";
+const SEARCH_HELP: &str = "Examples:\n  nx search ripgrep\n  nx search ripgrep --nur\n  nx search ripgrep --source homebrew --json\n  nx search ripgrep --verbose\n\nNotes:\n  - `search` never edits the repo.\n  - `--verbose` surfaces cache state, backend availability, and timing details.";
+const WHERE_HELP: &str = "Examples:\n  nx where ripgrep\n\nNotes:\n  - `where` shows the owning file and snippet for an installed declaration.";
+const LIST_HELP: &str = "Examples:\n  nx list\n  nx list nix --verbose\n  nx list homebrew --json\n\nNotes:\n  - Source filters are `nix`, `homebrew`, and `mas`.";
+const INFO_HELP: &str = "Examples:\n  nx info ripgrep\n  nx info ripgrep --nur\n  nx info ripgrep --source homebrew\n  nx info ripgrep --verbose\n\nNotes:\n  - `info` shares the package-query pipeline with `search` and install resolution.\n  - `--verbose` includes query diagnostics in addition to package metadata.";
+const STATUS_HELP: &str = "Examples:\n  nx status\n  nx status --json\n\nNotes:\n  - `status` is a read-only package distribution summary for the managed repo.";
+const INSTALLED_HELP: &str = "Examples:\n  nx installed ripgrep fd\n  nx installed ripgrep --show-location\n  nx installed ripgrep fd --json\n\nNotes:\n  - Exit status is success only when every requested package is installed.";
+const LINT_HELP: &str = "Examples:\n  nx lint\n  nx lint --json\n\nNotes:\n  - `lint` checks first-line `# nx:` routing metadata and routing keyword overlap.";
+const UNDO_HELP: &str = "Examples:\n  nx undo\n  nx undo --yes\n\nNotes:\n  - `undo` reverts modified tracked files via git checkout and prompts by default.";
+const UPDATE_HELP: &str = "Examples:\n  nx update\n  nx update -- --commit-lock-file\n  nx update -- --flake ./hosts/macbook\n\nNotes:\n  - Additional args after `--` are passed directly to `nix flake update`.";
+const TEST_HELP: &str =
+    "Examples:\n  nx test\n\nNotes:\n  - `test` runs the managed repo quality gate (`just ci`).";
+const REBUILD_HELP: &str = "Examples:\n  nx rebuild\n  nx rebuild --preflight\n  nx rebuild -- --show-trace\n\nNotes:\n  - `--preflight` stops after lint, git, and flake checks.\n  - Additional args after `--` are passed directly to `darwin-rebuild switch`.";
 const GENERATIONS_HELP: &str = "Examples:\n  nx generations status\n  nx generations plan\n  nx generations prune --dry-run\n  nx generations prune --keep 5 --kind darwin\n\nNotes:\n  - `nx generations` is host-scoped and works from any directory.\n  - Use `plan` or `prune --dry-run` to preview exact prune/GC commands.";
 const GENERATIONS_PRUNE_HELP: &str = "Examples:\n  nx generations prune --dry-run\n  nx generations prune --yes\n  nx generations prune --keep 5 --kind darwin\n  nx generations prune --kind home-manager --no-gc\n\nNotes:\n  - `--dry-run` renders the same plan as `nx generations plan`.\n  - By default, `prune` asks for confirmation before mutating the host.";
 const UPGRADE_HELP: &str = "Examples:\n  nx upgrade\n  nx upgrade --dry-run\n  nx upgrade nx-rs\n  nx upgrade nx-rs anneal -- --show-trace\n\nNotes:\n  - Without positional inputs, `upgrade` runs the full repo-wide flow: flake update, brew, rebuild, and commit.\n  - With positional inputs, `upgrade` updates only those flake inputs and skips the brew phase by default.";
@@ -44,6 +65,7 @@ Notes:
 #[command(
     name = "nx",
     about = "CLI for managing Nix config repos and host generations",
+    version,
     disable_help_subcommand = true,
     arg_required_else_help = true,
     after_long_help = ROOT_HELP
@@ -51,8 +73,6 @@ Notes:
 pub struct Cli {
     #[command(flatten)]
     pub style: GlobalStyleArgs,
-    #[command(flatten)]
-    pub output: GlobalOutputArgs,
     #[command(subcommand)]
     pub command: CommandKind,
 }
@@ -72,16 +92,6 @@ impl Cli {
     pub const fn minimal(&self) -> bool {
         self.style.minimal
     }
-
-    #[must_use]
-    pub const fn json(&self) -> bool {
-        self.output.json
-    }
-
-    #[must_use]
-    pub const fn verbose_requested(&self) -> bool {
-        self.output.verbose
-    }
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -94,18 +104,16 @@ pub struct GlobalStyleArgs {
     pub minimal: bool,
 }
 
-#[derive(Debug, Clone, Args, Default)]
-pub struct GlobalOutputArgs {
-    #[arg(long, short = 'v', global = true, help = "Verbose output")]
-    pub verbose: bool,
-    #[arg(long, global = true, help = "JSON output when supported")]
-    pub json: bool,
-}
-
 #[derive(Debug, Clone, Subcommand)]
 pub enum CommandKind {
+    #[command(about = "Show nx version information")]
+    Version(VersionArgs),
     #[command(about = "Show hierarchical help for commands and flags")]
     Help(HelpArgs),
+    #[command(about = "Generate shell completion scripts")]
+    Completion(CompletionArgs),
+    #[command(about = "Diagnose repo and host prerequisites")]
+    Doctor(DoctorArgs),
     #[command(about = "Scan repo and generate .nx/manifest.toml")]
     Init(InitArgs),
     #[command(about = "Install package(s) into nix config")]
@@ -125,17 +133,17 @@ pub enum CommandKind {
     #[command(about = "Show package metadata and source candidates")]
     Info(InfoArgs),
     #[command(about = "Show package distribution summary")]
-    Status,
+    Status(StatusArgs),
     #[command(about = "Check whether package(s) are installed")]
     Installed(InstalledArgs),
     #[command(about = "Check nx routing annotations and keyword conflicts")]
-    Lint,
+    Lint(LintArgs),
     #[command(about = "Revert modified tracked files via git checkout")]
     Undo(UndoArgs),
     #[command(about = "Run nix flake update")]
-    Update(PassthroughArgs),
+    Update(UpdateArgs),
     #[command(about = "Run repo quality checks")]
-    Test,
+    Test(TestArgs),
     #[command(about = "Run darwin-rebuild switch with preflight checks")]
     Rebuild(RebuildArgs),
     #[command(about = "Run repo-wide or targeted flake upgrade flows")]
@@ -145,8 +153,47 @@ pub enum CommandKind {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(after_long_help = VERSION_HELP)]
+pub struct VersionArgs {
+    #[arg(long, help = "Emit machine-readable JSON output")]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum CompletionShellArg {
+    Bash,
+    Elvish,
+    Fish,
+    #[value(name = "powershell")]
+    PowerShell,
+    Zsh,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(after_long_help = COMPLETION_HELP)]
+pub struct CompletionArgs {
+    #[arg(
+        value_enum,
+        value_name = "SHELL",
+        help = "Shell to generate completions for"
+    )]
+    pub shell: CompletionShellArg,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(after_long_help = DOCTOR_HELP)]
+pub struct DoctorArgs {
+    #[arg(long, help = "Emit machine-readable JSON output")]
+    pub json: bool,
+    #[arg(long, short = 'v', help = "Show additional diagnostic detail")]
+    pub verbose: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
 #[command(after_long_help = GENERATIONS_HELP)]
 pub struct GenerationsArgs {
+    #[arg(long, global = true, help = "Emit machine-readable JSON output")]
+    pub json: bool,
     #[command(subcommand)]
     pub command: GenerationsCommand,
 }
@@ -213,19 +260,27 @@ pub enum GenerationKindArg {
 }
 
 #[derive(Debug, Clone, Parser, Default)]
+#[command(after_long_help = INSTALL_HELP)]
 pub struct InstallArgs {
-    #[arg(value_name = "PACKAGES", help = "Package names/attributes to install")]
+    #[arg(
+        value_name = "PACKAGES",
+        required = true,
+        num_args = 1..,
+        help = "Package names/attributes to install"
+    )]
     pub packages: Vec<String>,
     #[command(flatten)]
     pub flow: InstallFlowArgs,
     #[command(flatten)]
     pub target: InstallTargetArgs,
     #[command(flatten)]
-    pub source: InstallSourceArgs,
+    pub source: PackageSourceArgs,
     #[arg(long, help = "Offer to scaffold a service definition after install")]
     pub service: bool,
     #[command(flatten)]
     pub ai: InstallAiArgs,
+    #[arg(long, short = 'v', help = "Show cache and query timing diagnostics")]
+    pub verbose: bool,
 }
 
 impl InstallArgs {
@@ -288,6 +343,11 @@ impl InstallArgs {
     pub fn model(&self) -> Option<&str> {
         self.ai.model.as_deref()
     }
+
+    #[must_use]
+    pub const fn verbose(&self) -> bool {
+        self.verbose
+    }
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -309,7 +369,7 @@ pub struct InstallTargetArgs {
 }
 
 #[derive(Debug, Clone, Args, Default)]
-pub struct InstallSourceArgs {
+pub struct PackageSourceArgs {
     #[arg(long, help = "Prefer unstable or latest package variants")]
     pub bleeding_edge: bool,
     #[arg(long, help = "Include NUR in source selection")]
@@ -331,22 +391,59 @@ pub struct InstallAiArgs {
     pub model: Option<String>,
 }
 
-#[derive(Debug, Clone, Parser)]
-pub struct SearchArgs {
-    #[arg(value_name = "PACKAGE", help = "Package name to search")]
-    pub package: String,
-    #[arg(long, help = "Prefer unstable or latest package variants")]
-    pub bleeding_edge: bool,
-    #[arg(long, help = "Include NUR in search results")]
-    pub nur: bool,
+#[derive(Debug, Clone, Args, Default)]
+pub struct SearchOutputArgs {
     #[arg(long, help = "Emit machine-readable JSON output")]
     pub json: bool,
+    #[arg(long, short = 'v', help = "Show cache and query timing diagnostics")]
+    pub verbose: bool,
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(after_long_help = SEARCH_HELP)]
+pub struct SearchArgs {
+    #[arg(value_name = "PACKAGE", help = "Package name to search")]
+    pub package: String,
+    #[command(flatten)]
+    pub source: PackageSourceArgs,
+    #[command(flatten)]
+    pub output: SearchOutputArgs,
+}
+
+impl SearchArgs {
+    #[must_use]
+    pub const fn bleeding_edge(&self) -> bool {
+        self.source.bleeding_edge
+    }
+
+    #[must_use]
+    pub const fn nur(&self) -> bool {
+        self.source.nur
+    }
+
+    #[must_use]
+    pub fn source(&self) -> Option<&str> {
+        self.source.source.as_deref()
+    }
+
+    #[must_use]
+    pub const fn json(&self) -> bool {
+        self.output.json
+    }
+
+    #[must_use]
+    pub const fn verbose(&self) -> bool {
+        self.output.verbose
+    }
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(after_long_help = REMOVE_HELP)]
 pub struct RemoveArgs {
     #[arg(
         value_name = "PACKAGES",
+        required = true,
+        num_args = 1..,
         help = "Installed package names/attributes to remove"
     )]
     pub packages: Vec<String>,
@@ -421,15 +518,18 @@ impl SecretAddArgs {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(after_long_help = WHERE_HELP)]
 pub struct WhereArgs {
     #[arg(
         value_name = "PACKAGE",
+        required = true,
         help = "Package name to locate in configuration"
     )]
-    pub package: Option<String>,
+    pub package: String,
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(after_long_help = LIST_HELP)]
 pub struct ListArgs {
     #[arg(
         value_name = "SOURCE",
@@ -444,21 +544,72 @@ pub struct ListArgs {
     pub plain: bool,
 }
 
-#[derive(Debug, Clone, Parser)]
-pub struct InfoArgs {
-    #[arg(value_name = "PACKAGE", help = "Package name to inspect")]
-    pub package: Option<String>,
+#[derive(Debug, Clone, Args, Default)]
+pub struct InfoOutputArgs {
     #[arg(long, help = "Emit machine-readable JSON output")]
     pub json: bool,
-    #[arg(long, help = "Prefer unstable or latest source variants")]
-    pub bleeding_edge: bool,
     #[arg(long, help = "Show additional source candidate details")]
     pub verbose: bool,
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(after_long_help = INFO_HELP)]
+pub struct InfoArgs {
+    #[arg(
+        value_name = "PACKAGE",
+        required = true,
+        help = "Package name to inspect"
+    )]
+    pub package: String,
+    #[command(flatten)]
+    pub source: PackageSourceArgs,
+    #[command(flatten)]
+    pub output: InfoOutputArgs,
+}
+
+impl InfoArgs {
+    #[must_use]
+    pub const fn bleeding_edge(&self) -> bool {
+        self.source.bleeding_edge
+    }
+
+    #[must_use]
+    pub const fn nur(&self) -> bool {
+        self.source.nur
+    }
+
+    #[must_use]
+    pub fn source(&self) -> Option<&str> {
+        self.source.source.as_deref()
+    }
+
+    #[must_use]
+    pub const fn json(&self) -> bool {
+        self.output.json
+    }
+
+    #[must_use]
+    pub const fn verbose(&self) -> bool {
+        self.output.verbose
+    }
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(after_long_help = STATUS_HELP)]
+pub struct StatusArgs {
+    #[arg(long, help = "Emit machine-readable JSON output")]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(after_long_help = INSTALLED_HELP)]
 pub struct InstalledArgs {
-    #[arg(value_name = "PACKAGES", help = "Package names to verify")]
+    #[arg(
+        value_name = "PACKAGES",
+        required = true,
+        num_args = 1..,
+        help = "Package names to verify"
+    )]
     pub packages: Vec<String>,
     #[arg(long, help = "Emit machine-readable JSON output")]
     pub json: bool,
@@ -467,21 +618,31 @@ pub struct InstalledArgs {
 }
 
 #[derive(Debug, Clone, Parser, Default)]
+#[command(after_long_help = LINT_HELP)]
+pub struct LintArgs {
+    #[arg(long, help = "Emit machine-readable JSON output")]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Parser, Default)]
+#[command(after_long_help = UNDO_HELP)]
 pub struct UndoArgs {
     #[arg(short, long, help = "Skip confirmation prompt")]
     pub yes: bool,
 }
 
 #[derive(Debug, Clone, Parser)]
-pub struct PassthroughArgs {
+#[command(after_long_help = UPDATE_HELP)]
+pub struct UpdateArgs {
     #[arg(
         last = true,
-        help = "Arguments passed through to the underlying system command"
+        help = "Arguments passed through to the underlying nix flake update command"
     )]
     pub passthrough: Vec<String>,
 }
 
 #[derive(Debug, Clone, Parser, Default)]
+#[command(after_long_help = REBUILD_HELP)]
 pub struct RebuildArgs {
     #[arg(
         long,
@@ -494,6 +655,10 @@ pub struct RebuildArgs {
     )]
     pub passthrough: Vec<String>,
 }
+
+#[derive(Debug, Clone, Parser)]
+#[command(after_long_help = TEST_HELP)]
+pub struct TestArgs {}
 
 #[derive(Debug, Clone, Parser)]
 #[command(after_long_help = UPGRADE_HELP)]
@@ -587,6 +752,7 @@ pub struct HelpArgs {
 }
 
 #[derive(Debug, Clone, Parser, Default)]
+#[command(after_long_help = INIT_HELP)]
 pub struct InitArgs {
     #[arg(long, help = "Re-scan and merge with existing manifest")]
     pub refresh: bool,
@@ -826,7 +992,7 @@ mod tests {
             .filter_map(|arg| arg.get_long().map(str::to_owned))
             .collect();
 
-        for inherited in ["help", "plain", "unicode", "minimal", "verbose", "json"] {
+        for inherited in ["help", "plain", "unicode", "minimal"] {
             flags.remove(inherited);
         }
 
@@ -951,17 +1117,17 @@ mod tests {
     }
 
     #[test]
-    fn root_help_lists_spec_globals_and_verbose_alias() {
+    fn root_help_lists_spec_global_style_flags() {
         let help = render_invocation_help(["nx", "--help"]);
         assert!(help.contains("Run `nx help <topic>` for hierarchical help"));
 
-        let expected_longs: BTreeSet<_> = ["plain", "unicode", "minimal", "verbose", "json"]
+        let expected_longs: BTreeSet<_> = ["plain", "unicode", "minimal"]
             .into_iter()
             .map(str::to_owned)
             .collect();
         assert_eq!(root_long_flags(), expected_longs);
 
-        let expected_shorts: BTreeSet<_> = ['v'].into_iter().collect();
+        let expected_shorts: BTreeSet<char> = BTreeSet::new();
         assert_eq!(root_short_flags(), expected_shorts);
     }
 
@@ -1049,17 +1215,16 @@ mod tests {
     }
 
     #[test]
-    fn global_json_and_unicode_flags_parse_at_root() {
-        let cli =
-            Cli::try_parse_from(["nx", "--json", "--unicode", "info", "ripgrep"]).expect("parse");
-        assert!(cli.json());
+    fn global_style_flags_parse_at_root() {
+        let cli = Cli::try_parse_from(["nx", "--unicode", "info", "ripgrep"]).expect("parse");
         assert!(cli.unicode());
     }
 
     #[test]
-    fn global_verbose_flag_parses_at_root() {
-        let cli = Cli::try_parse_from(["nx", "--verbose", "status"]).expect("parse");
-        assert!(cli.verbose_requested());
+    fn version_flag_parses_at_root() {
+        let err =
+            Cli::try_parse_from(["nx", "--version"]).expect_err("version should short-circuit");
+        assert_eq!(err.kind(), ErrorKind::DisplayVersion);
     }
 
     #[test]
@@ -1069,6 +1234,24 @@ mod tests {
             panic!("expected help command");
         };
         assert_eq!(args.topics, vec!["secret".to_string(), "add".to_string()]);
+    }
+
+    #[test]
+    fn version_subcommand_parses_json_option() {
+        let cli = Cli::try_parse_from(["nx", "version", "--json"]).expect("parse version");
+        let CommandKind::Version(args) = cli.command else {
+            panic!("expected version command");
+        };
+        assert!(args.json);
+    }
+
+    #[test]
+    fn completion_subcommand_parses_shell() {
+        let cli = Cli::try_parse_from(["nx", "completion", "zsh"]).expect("parse completion");
+        let CommandKind::Completion(args) = cli.command else {
+            panic!("expected completion command");
+        };
+        assert_eq!(args.shell, CompletionShellArg::Zsh);
     }
 
     #[test]
@@ -1088,6 +1271,7 @@ mod tests {
 
         let CommandKind::Generations(GenerationsArgs {
             command: GenerationsCommand::Prune(args),
+            ..
         }) = cli.command
         else {
             panic!("expected generations prune command");
@@ -1146,7 +1330,7 @@ mod tests {
         let CommandKind::Info(args) = cli.command else {
             panic!("expected info command");
         };
-        assert!(args.verbose);
+        assert!(args.verbose());
     }
 
     #[test]
@@ -1187,7 +1371,7 @@ mod tests {
 
     #[test]
     fn info_exposes_spec_options_and_globals_via_metadata() {
-        let expected_longs: BTreeSet<_> = ["verbose", "json", "bleeding-edge"]
+        let expected_longs: BTreeSet<_> = ["verbose", "json", "bleeding-edge", "nur", "source"]
             .into_iter()
             .map(str::to_owned)
             .collect();
@@ -1212,6 +1396,7 @@ mod tests {
             "explain",
             "engine",
             "model",
+            "verbose",
         ]
         .into_iter()
         .map(str::to_owned)
@@ -1221,7 +1406,7 @@ mod tests {
             expected_longs
         );
 
-        let expected_shorts: BTreeSet<_> = ['y', 'n'].into_iter().collect();
+        let expected_shorts: BTreeSet<_> = ['y', 'n', 'v'].into_iter().collect();
         assert_eq!(
             declared_short_flags_for_subcommand("install"),
             expected_shorts
@@ -1257,13 +1442,15 @@ mod tests {
     fn remaining_spec_subcommands_expose_expected_local_long_flags() {
         assert_subcommand_local_long_flags("remove", &["yes", "dry-run", "model"]);
         assert_subcommand_local_long_flags("where", &[]);
-        assert_subcommand_local_long_flags("installed", &["show-location"]);
-        assert_subcommand_local_long_flags("lint", &[]);
-        assert_subcommand_local_long_flags("status", &[]);
+        assert_subcommand_local_long_flags("installed", &["json", "show-location"]);
+        assert_subcommand_local_long_flags("lint", &["json"]);
+        assert_subcommand_local_long_flags("status", &["json"]);
         assert_subcommand_local_long_flags("undo", &["yes"]);
         assert_subcommand_local_long_flags("update", &[]);
         assert_subcommand_local_long_flags("test", &[]);
         assert_subcommand_local_long_flags("rebuild", &["preflight"]);
+        assert_subcommand_local_long_flags("version", &["json"]);
+        assert_subcommand_local_long_flags("doctor", &["json", "verbose"]);
     }
 
     #[test]

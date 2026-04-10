@@ -4,11 +4,9 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::cli::{InfoArgs, InstalledArgs, ListArgs, WhereArgs};
+use crate::cli::{InfoArgs, InstalledArgs, ListArgs, StatusArgs, WhereArgs};
 use crate::commands::context::QueryContext;
-use crate::commands::shared::{
-    SnippetMode, missing_argument_error, relative_location, show_snippet,
-};
+use crate::commands::shared::{SnippetMode, relative_location, show_snippet};
 use crate::domain::drift::{ManifestHealth, affects_routing, format_issue};
 use crate::domain::location::PackageLocation;
 use crate::domain::source::{
@@ -17,13 +15,14 @@ use crate::domain::source::{
 use crate::infra::cache::MultiSourceCache;
 use crate::infra::config_scan::{PackageBuckets, collect_nix_files, scan_packages};
 use crate::infra::finder::{PackageMatch, find_package, find_package_fuzzy};
+use crate::infra::package_query::query_package_quiet;
 use crate::infra::query_info::{
     ConfigOptionInfo, FlakeHubInfo, config_option_hints, search_flakehub,
 };
 use crate::infra::shell::run_json_command_quiet;
-use crate::infra::sources::{
-    SourceSearchOutcome, UnavailableSource, cached_search_all_sources_quiet,
-};
+#[cfg(test)]
+use crate::infra::sources::SourceSearchOutcome;
+use crate::infra::sources::UnavailableSource;
 use crate::output::json::to_string_compact;
 use crate::output::printer::Printer;
 
@@ -31,9 +30,7 @@ const VALID_SOURCES_TEXT: &str =
     "Valid sources: brew, brews, cask, casks, homebrew, mas, nix, nxs, service, services";
 
 pub fn cmd_where(args: &WhereArgs, ctx: &QueryContext<'_>) -> i32 {
-    let Some(package) = &args.package else {
-        return missing_argument_error("where", "PACKAGE");
-    };
+    let package = &args.package;
 
     match find_package(package, ctx.repo_root) {
         Ok(Some(location)) => {
@@ -79,7 +76,7 @@ pub fn cmd_list(args: &ListArgs, ctx: &QueryContext<'_>) -> i32 {
         None
     };
 
-    if ctx.wants_json(args.json) {
+    if args.json {
         return render_list_json(source, &buckets, ctx.printer);
     }
 
@@ -112,9 +109,7 @@ pub fn cmd_list(args: &ListArgs, ctx: &QueryContext<'_>) -> i32 {
 }
 
 pub fn cmd_info(args: &InfoArgs, ctx: &QueryContext<'_>) -> i32 {
-    let Some(package) = &args.package else {
-        return missing_argument_error("info", "PACKAGE");
-    };
+    let package = &args.package;
 
     let location = match find_package(package, ctx.repo_root) {
         Ok(location) => location,
@@ -126,21 +121,21 @@ pub fn cmd_info(args: &InfoArgs, ctx: &QueryContext<'_>) -> i32 {
 
     let mut cache = MultiSourceCache::load(ctx.repo_root).ok();
     let info_search = collect_info_sources(package, args, ctx.repo_root, &mut cache);
-    let info_sources = info_search.results.clone();
+    let info_sources = info_search.outcome.results.clone();
     let (hm_module, darwin_service) = config_option_hints(package, ctx.repo_root);
-    let flakehub = collect_info_flakehub(package, args.bleeding_edge, search_flakehub);
+    let flakehub = collect_info_flakehub(package, args.bleeding_edge(), search_flakehub);
     let unavailable_sources = if location.is_none()
         && info_sources.is_empty()
         && hm_module.is_none()
         && darwin_service.is_none()
         && flakehub.is_empty()
     {
-        info_search.unavailable_sources.clone()
+        info_search.outcome.unavailable_sources.clone()
     } else {
         Vec::new()
     };
 
-    if ctx.wants_json(args.json) {
+    if args.json() {
         let sources = info_sources
             .into_iter()
             .map(info_source_json_from_result)
@@ -152,6 +147,8 @@ pub fn cmd_info(args: &InfoArgs, ctx: &QueryContext<'_>) -> i32 {
             location: location.map(|value| value.to_string()),
             sources,
             unavailable_sources,
+            cache_hit: info_search.cache_hit,
+            elapsed_ms: info_search.elapsed.as_millis(),
             hm_module,
             darwin_service,
             flakehub,
@@ -190,12 +187,12 @@ pub fn cmd_info(args: &InfoArgs, ctx: &QueryContext<'_>) -> i32 {
     }
 
     if location.is_none() && info_sources.is_empty() && flakehub.is_empty() {
-        if info_search.unavailable_sources.is_empty() {
+        if info_search.outcome.unavailable_sources.is_empty() {
             ctx.printer.error(&format!("{package} not found"));
         } else {
             ctx.printer
                 .error(&format!("{package} not found in available sources"));
-            render_unavailable_sources(&info_search.unavailable_sources);
+            render_unavailable_sources(&info_search.outcome.unavailable_sources);
         }
         println!();
         Printer::detail(&format!("Try: nx {package}"));
@@ -207,12 +204,26 @@ pub fn cmd_info(args: &InfoArgs, ctx: &QueryContext<'_>) -> i32 {
     render_config_option_plain("nix-darwin service", "Service", darwin_service);
     render_flakehub_plain(&flakehub);
     render_install_hints_plain(package, &info_sources, location.is_some());
+    if args.verbose() {
+        println!();
+        Printer::detail(&format!(
+            "Query diagnostics: cache={}, elapsed={}ms, unavailable_backends={}",
+            if info_search.cache_hit { "hit" } else { "miss" },
+            info_search.elapsed.as_millis(),
+            info_search.outcome.unavailable_sources.len()
+        ));
+    }
 
     0
 }
 
-fn source_prefs_from_info_args(_args: &InfoArgs) -> SourcePreferences {
-    SourcePreferences::default()
+fn source_prefs_from_info_args(args: &InfoArgs) -> SourcePreferences {
+    SourcePreferences {
+        bleeding_edge: args.bleeding_edge(),
+        nur: args.nur(),
+        force_source: args.source().map(str::to_owned),
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]
@@ -241,9 +252,9 @@ fn collect_info_sources(
     args: &InfoArgs,
     repo_root: &Path,
     cache: &mut Option<MultiSourceCache>,
-) -> SourceSearchOutcome {
+) -> crate::infra::package_query::PackageQueryReport {
     let prefs = source_prefs_from_info_args(args);
-    cached_search_all_sources_quiet(package, &prefs, repo_root, cache)
+    query_package_quiet(package, &prefs, repo_root, cache)
 }
 
 fn collect_info_flakehub<F>(package: &str, include: bool, mut search: F) -> Vec<FlakeHubInfo>
@@ -534,7 +545,7 @@ fn install_hint_for_source(name: &str, source: PackageSource) -> String {
     }
 }
 
-pub fn cmd_status(ctx: &QueryContext<'_>) -> i32 {
+pub fn cmd_status(args: &StatusArgs, ctx: &QueryContext<'_>) -> i32 {
     let buckets = match scan_packages(ctx.repo_root) {
         Ok(buckets) => buckets,
         Err(err) => {
@@ -552,6 +563,31 @@ pub fn cmd_status(ctx: &QueryContext<'_>) -> i32 {
     ]
     .into_iter()
     .sum::<usize>();
+
+    if args.json {
+        let json = serde_json::json!({
+            "total": total,
+            "sources": {
+                "nxs": buckets.nxs,
+                "homebrew": buckets.brews,
+                "casks": buckets.casks,
+                "mas": buckets.mas,
+                "services": buckets.services,
+            },
+            "manifest_health": manifest_health_json(ctx.manifest_health),
+        });
+        match serde_json::to_string_pretty(&json) {
+            Ok(text) => {
+                println!("{text}");
+                return 0;
+            }
+            Err(err) => {
+                ctx.printer
+                    .error(&format!("status json rendering failed: {err}"));
+                return 1;
+            }
+        }
+    }
 
     Printer::heading(&format!("Package Status ({total} packages installed)"));
     Printer::body("Source       Count  Examples");
@@ -616,10 +652,6 @@ fn render_manifest_health(ctx: &QueryContext<'_>) {
 }
 
 pub fn cmd_installed(args: &InstalledArgs, ctx: &QueryContext<'_>) -> i32 {
-    if args.packages.is_empty() {
-        return missing_argument_error("installed", "PACKAGES...");
-    }
-
     let mut results = Vec::new();
     for query in &args.packages {
         match find_package_fuzzy(query, ctx.repo_root) {
@@ -635,7 +667,7 @@ pub fn cmd_installed(args: &InstalledArgs, ctx: &QueryContext<'_>) -> i32 {
         }
     }
 
-    if ctx.wants_json(args.json) {
+    if args.json {
         return render_installed_json(&results, ctx.printer);
     }
 
@@ -859,6 +891,8 @@ struct InfoJsonOutput {
     sources: Vec<InfoSourceJson>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     unavailable_sources: Vec<UnavailableSource>,
+    cache_hit: bool,
+    elapsed_ms: u128,
     hm_module: Option<ConfigOptionInfo>,
     darwin_service: Option<ConfigOptionInfo>,
     flakehub: Vec<FlakeHubInfo>,
@@ -1039,6 +1073,20 @@ struct BrewFormulaMetadata {
     build_dependencies: Option<Vec<String>>,
     caveats: Option<String>,
     head_available: bool,
+}
+
+fn manifest_health_json(health: &ManifestHealth) -> serde_json::Value {
+    match health {
+        ManifestHealth::Missing => serde_json::json!({"status": "missing"}),
+        ManifestHealth::Invalid { error } => {
+            serde_json::json!({"status": "invalid", "error": error})
+        }
+        ManifestHealth::InSync { .. } => serde_json::json!({"status": "in_sync"}),
+        ManifestHealth::Drifted { report, .. } => {
+            let issues: Vec<String> = report.issues.iter().map(format_issue).collect();
+            serde_json::json!({"status": "drifted", "issues": issues})
+        }
+    }
 }
 
 #[derive(Default)]

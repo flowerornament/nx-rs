@@ -7,6 +7,8 @@ expression: value
   "installed": false,
   "location": null,
   "sources": [],
+  "cache_hit": false,
+  "elapsed_ms": 0,
   "hm_module": null,
   "darwin_service": {
     "path": "services.yabai",

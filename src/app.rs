@@ -4,11 +4,14 @@ use std::path::{Path, PathBuf};
 use anyhow::bail;
 
 use crate::cli::{Cli, CommandKind};
-use crate::commands::context::{AppContext, GlobalFlags, HostContext};
+use crate::commands::completion::cmd_completion;
+use crate::commands::context::{AppContext, HostContext};
+use crate::commands::doctor::cmd_doctor;
 use crate::commands::help::cmd_help;
 use crate::commands::host::cmd_generations;
 use crate::commands::init::cmd_init;
 use crate::commands::install::cmd_install;
+use crate::commands::meta::cmd_version;
 use crate::commands::query::{cmd_info, cmd_installed, cmd_list, cmd_status, cmd_where};
 use crate::commands::remove::cmd_remove;
 use crate::commands::search::cmd_search;
@@ -24,17 +27,20 @@ use crate::output::style::OutputStyle;
 const NX_REPO_ROOT_ENV: &str = "NX_REPO_ROOT";
 
 pub fn execute(cli: Cli) -> i32 {
-    // Parsed for SPEC compatibility; currently does not alter behavior.
-    let _verbose_compat = cli.verbose_requested();
-    let global_flags = GlobalFlags { json: cli.json() };
     let style = OutputStyle::from_flags(cli.plain(), cli.unicode(), cli.minimal());
     let printer = Printer::new(style);
 
+    if let CommandKind::Version(args) = &cli.command {
+        return cmd_version(args);
+    }
     if let CommandKind::Help(args) = &cli.command {
         return cmd_help(args);
     }
+    if let CommandKind::Completion(args) = &cli.command {
+        return cmd_completion(args);
+    }
     if let Some(args) = host_generations_args(&cli.command) {
-        return cmd_generations(args, &HostContext::new(&printer, global_flags));
+        return cmd_generations(args, &HostContext::new(&printer));
     }
 
     let needs_refresh = matches!(
@@ -62,26 +68,28 @@ pub fn execute(cli: Cli) -> i32 {
         config_files,
         manifest_health,
         scanned_repo,
-        global_flags,
     );
 
     match cli.command {
+        CommandKind::Version(_) => unreachable!("version handled before repo setup"),
         CommandKind::Help(_) => unreachable!("help handled before repo setup"),
+        CommandKind::Completion(_) => unreachable!("completion handled before repo setup"),
         CommandKind::Generations(_) => unreachable!("host commands handled before repo setup"),
+        CommandKind::Doctor(args) => cmd_doctor(&args, &ctx),
         CommandKind::Init(args) => cmd_init(args.refresh, &ctx.init_context()),
         CommandKind::Install(args) => cmd_install(&args, &ctx),
         CommandKind::Remove(args) => cmd_remove(&args, &ctx),
         CommandKind::Secret(args) => cmd_secret(&args, &ctx),
-        CommandKind::Search(args) => cmd_search(&args, &ctx.json_context()),
+        CommandKind::Search(args) => cmd_search(&args, &ctx.query_context()),
         CommandKind::Where(args) => cmd_where(&args, &ctx.query_context()),
         CommandKind::List(args) => cmd_list(&args, &ctx.query_context()),
         CommandKind::Info(args) => cmd_info(&args, &ctx.query_context()),
-        CommandKind::Status => cmd_status(&ctx.query_context()),
+        CommandKind::Status(args) => cmd_status(&args, &ctx.query_context()),
         CommandKind::Installed(args) => cmd_installed(&args, &ctx.query_context()),
-        CommandKind::Lint => cmd_lint(&ctx.system_context()),
+        CommandKind::Lint(args) => cmd_lint(&args, &ctx.system_context()),
         CommandKind::Undo(args) => cmd_undo(&args, &ctx.repo_context()),
         CommandKind::Update(args) => cmd_update(&args, &ctx.repo_context()),
-        CommandKind::Test => cmd_test(&ctx.repo_context()),
+        CommandKind::Test(_) => cmd_test(&ctx.repo_context()),
         CommandKind::Rebuild(args) => cmd_rebuild(&args, &ctx.system_context()),
         CommandKind::Upgrade(args) => cmd_upgrade(&args, &ctx),
     }

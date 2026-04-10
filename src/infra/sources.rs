@@ -759,24 +759,6 @@ pub fn search_all_sources_quiet(
     search_all_sources_with_timeout_reporting(name, prefs, flake_lock_path, false)
 }
 
-pub fn cached_search_all_sources(
-    name: &str,
-    prefs: &SourcePreferences,
-    repo_root: &Path,
-    cache: &mut Option<MultiSourceCache>,
-) -> SourceSearchOutcome {
-    cached_search_with_status(name, prefs, repo_root, cache, search_all_sources).outcome
-}
-
-pub fn cached_search_all_sources_quiet(
-    name: &str,
-    prefs: &SourcePreferences,
-    repo_root: &Path,
-    cache: &mut Option<MultiSourceCache>,
-) -> SourceSearchOutcome {
-    cached_search_with_status(name, prefs, repo_root, cache, search_all_sources_quiet).outcome
-}
-
 #[derive(Debug, Clone)]
 pub struct CachedSearchOutcome {
     pub outcome: SourceSearchOutcome,

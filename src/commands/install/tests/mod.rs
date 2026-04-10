@@ -7,7 +7,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tempfile::TempDir;
 
-use crate::commands::context::GlobalFlags;
 use crate::domain::config::ConfigFiles;
 use crate::domain::drift::ManifestHealth;
 use crate::domain::manifest_scan::scan_repo;
@@ -73,7 +72,6 @@ fn test_context(root: &Path) -> AppContext {
         ConfigFiles::discover(root),
         ManifestHealth::Missing,
         scan_repo(root),
-        GlobalFlags::default(),
     )
 }
 

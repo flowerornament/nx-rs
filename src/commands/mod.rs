@@ -1,8 +1,11 @@
+pub mod completion;
 pub mod context;
+pub mod doctor;
 pub mod help;
 pub mod host;
 pub mod init;
 pub mod install;
+pub mod meta;
 pub mod query;
 pub mod remove;
 pub mod search;

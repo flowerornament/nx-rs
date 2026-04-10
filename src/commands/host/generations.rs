@@ -16,13 +16,13 @@ use crate::output::printer::Printer;
 
 pub fn cmd_generations(args: &GenerationsArgs, ctx: &HostContext<'_>) -> i32 {
     match &args.command {
-        GenerationsCommand::Status(args) => render_status(args, ctx),
-        GenerationsCommand::Plan(args) => render_plan(args, ctx),
-        GenerationsCommand::Prune(args) => render_prune(args, ctx),
+        GenerationsCommand::Status(status) => render_status(status, args.json, ctx),
+        GenerationsCommand::Plan(plan) => render_plan(plan, args.json, ctx),
+        GenerationsCommand::Prune(prune) => render_prune(prune, args.json, ctx),
     }
 }
 
-fn render_status(args: &GenerationsStatusArgs, ctx: &HostContext<'_>) -> i32 {
+fn render_status(args: &GenerationsStatusArgs, json: bool, ctx: &HostContext<'_>) -> i32 {
     let summary = match load_command_summary(
         "status",
         retention_policy(&args.policy, true),
@@ -34,7 +34,7 @@ fn render_status(args: &GenerationsStatusArgs, ctx: &HostContext<'_>) -> i32 {
         Err(code) => return code,
     };
 
-    if ctx.wants_json(false) {
+    if json {
         return render_json(&summary, 0, ctx.printer);
     }
 
@@ -50,7 +50,7 @@ fn render_status(args: &GenerationsStatusArgs, ctx: &HostContext<'_>) -> i32 {
     0
 }
 
-fn render_plan(args: &GenerationsPlanArgs, ctx: &HostContext<'_>) -> i32 {
+fn render_plan(args: &GenerationsPlanArgs, json: bool, ctx: &HostContext<'_>) -> i32 {
     let summary = match load_command_summary(
         "plan",
         retention_policy(&args.policy, !args.no_gc),
@@ -62,7 +62,7 @@ fn render_plan(args: &GenerationsPlanArgs, ctx: &HostContext<'_>) -> i32 {
         Err(code) => return code,
     };
 
-    if ctx.wants_json(false) {
+    if json {
         return render_json(&summary, 0, ctx.printer);
     }
 
@@ -73,13 +73,13 @@ fn render_plan(args: &GenerationsPlanArgs, ctx: &HostContext<'_>) -> i32 {
     0
 }
 
-fn render_prune(args: &GenerationsPruneArgs, ctx: &HostContext<'_>) -> i32 {
+fn render_prune(args: &GenerationsPruneArgs, json: bool, ctx: &HostContext<'_>) -> i32 {
     if args.dry_run {
         let plan_args = GenerationsPlanArgs {
             policy: args.policy.clone(),
             no_gc: args.no_gc,
         };
-        return render_plan(&plan_args, ctx);
+        return render_plan(&plan_args, json, ctx);
     }
 
     let summary = match load_command_summary(
@@ -102,7 +102,7 @@ fn render_prune(args: &GenerationsPruneArgs, ctx: &HostContext<'_>) -> i32 {
         snapshot_nix_disk_usage,
     );
 
-    if ctx.wants_json(false) {
+    if json {
         return render_json(
             &PruneJsonOutput {
                 summary: &summary,

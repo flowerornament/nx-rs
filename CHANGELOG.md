@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.2 - 2026-04-11
+
+- added first-class `nx --version` / `nx version`, `nx doctor`, and `nx completion <shell>` commands
+- made CLI output contracts more truthful by moving `--json` and `--verbose` to the commands that actually support them, tightening required package args, and expanding command-local help/examples
+- unified `search`, `info`, and install package lookups behind shared query plumbing, added cache/timing diagnostics, and stabilized result ordering and JSON output for query commands
+
 ## v1.5.1 - 2026-04-09
 
 - changed targeted `nx upgrade <input...>` to call the documented `nix flake update <input...>` syntax instead of deprecated `nix flake lock --update-input`

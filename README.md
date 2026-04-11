@@ -236,6 +236,8 @@ nx help <topic>
 nx <command> --help
 ```
 
+---
+
 #### `version`
 
 Shows the current `nx` version.
@@ -430,6 +432,8 @@ Host-scoped retention and garbage-collection commands. These work from any direc
 - `nx generations prune` executes that plan, prompting by default.
 - Important flags: `--keep`, `--kind`, `--no-gc`, `--yes`, `--dry-run`.
 - `nx generations prune --dry-run` renders the same plan as `nx generations plan`.
+
+---
 
 ### Behavior Notes
 

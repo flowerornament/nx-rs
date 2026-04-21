@@ -173,6 +173,7 @@ fn install_uses_live_routing_when_manifest_is_stale() -> Result<(), Box<dyn Erro
     );
     assert!(stderr.is_empty(), "stderr should be empty:\n{stderr}");
     assert!(stdout.contains("Installing demo-mcp"));
+    assert!(stdout.contains("Resolving source for demo-mcp"));
     assert!(stdout.contains("Added 'demo-mcp' to packages/nix/cli.nix"));
 
     let cli_nix = fs::read_to_string(tmp.path().join("packages/nix/cli.nix"))?;

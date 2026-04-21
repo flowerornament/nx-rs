@@ -727,7 +727,7 @@ fn search_for_package(
             );
         }
 
-        let report = query_package(package, &prefs, &ctx.repo_root, cache);
+        let report = query_install_package(package, &prefs, ctx, cache);
         if args.verbose() {
             Printer::detail(&format!(
                 "Query diagnostics: cache={}, elapsed={}ms, unavailable_backends={}",
@@ -750,7 +750,7 @@ fn search_for_package(
     let cached = if let Some(prefetched) = prefetched {
         prefetched
     } else {
-        live_lookup = query_package(package, &prefs, &ctx.repo_root, cache);
+        live_lookup = query_install_package(package, &prefs, ctx, cache);
         &live_lookup
     };
     let outcome = &cached.outcome;
@@ -1103,12 +1103,26 @@ fn prefetch_install_searches(
 
     if packages.len() >= 2 {
         let prefs = source_prefs_from_args(args);
+        Printer::detail(&format!(
+            "Resolving sources for {} packages...",
+            packages.len()
+        ));
         for (package, outcome) in query_packages(&packages, &prefs, &ctx.repo_root, cache) {
             by_package.insert(package, InstallPrefetchEntry::Search(outcome));
         }
     }
 
     InstallSearchPrefetch { by_package }
+}
+
+fn query_install_package(
+    package: &str,
+    prefs: &SourcePreferences,
+    ctx: &AppContext,
+    cache: &mut Option<MultiSourceCache>,
+) -> PackageQueryReport {
+    Printer::detail(&format!("Resolving source for {package}..."));
+    query_package(package, prefs, &ctx.repo_root, cache)
 }
 
 fn packages_needing_search_prefetch(

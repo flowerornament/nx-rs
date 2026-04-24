@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.4 - 2026-04-24
+
+- made Darwin rebuilds use the split `nix build` + profile compare + activation path by default, with `platform.split_rebuild = false` as the legacy opt-out
+- skipped profile updates and activation when the built system configuration already matches the current system profile, making warm no-op rebuilds substantially faster
+- expanded rebuild timing detail to expose split build/profile/activate phases while preserving nested nix-darwin and Home Manager activation markers
+
 ## v1.5.3 - 2026-04-24
 
 - added local rebuild timing telemetry with per-phase durations, git HEAD and `flake.lock` fingerprints, `NX_PROFILE_PATH`, `nx rebuild --timing`, and `nx profile`

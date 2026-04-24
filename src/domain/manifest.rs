@@ -147,7 +147,7 @@ impl Manifest {
             rebuild_command: "/run/current-system/sw/bin/darwin-rebuild".to_string(),
             sudo: true,
             flake_root: ".".to_string(),
-            split_rebuild: false,
+            split_rebuild: true,
         }
     }
 
@@ -280,7 +280,7 @@ fn parse_platform(table: &toml_edit::Table) -> Result<PlatformConfig> {
     let split_rebuild = table
         .get("split_rebuild")
         .and_then(toml_edit::Item::as_bool)
-        .unwrap_or(false);
+        .unwrap_or(matches!(kind, PlatformKind::Darwin));
 
     Ok(PlatformConfig {
         kind,
@@ -503,7 +503,7 @@ mod tests {
         assert_eq!(loaded.schema_version, manifest.schema_version);
         assert_eq!(loaded.platform.kind, PlatformKind::Darwin);
         assert!(loaded.platform.sudo);
-        assert!(!loaded.platform.split_rebuild);
+        assert!(loaded.platform.split_rebuild);
         assert_eq!(loaded.slots.len(), 3);
         assert_eq!(loaded.slots[0].kind, SlotKind::NixPackages);
         assert_eq!(loaded.slots[0].file, PathBuf::from("packages/nix/cli.nix"));
@@ -619,6 +619,7 @@ mod tests {
         let manifest = Manifest::load(tmp.path()).unwrap().unwrap();
         assert_eq!(manifest.schema_version, 1);
         assert_eq!(manifest.platform.kind, PlatformKind::Darwin);
+        assert!(manifest.platform.split_rebuild);
         assert!(manifest.slots.is_empty());
         assert!(manifest.aliases.is_empty());
     }

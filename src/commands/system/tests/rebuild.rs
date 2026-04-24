@@ -90,7 +90,7 @@ fn split_darwin_json_parser_rejects_missing_output() {
 }
 
 #[test]
-fn split_darwin_is_opt_in_and_darwin_only() {
+fn split_darwin_defaults_on_for_darwin_and_allows_opt_out() {
     use std::collections::HashMap;
 
     use crate::domain::manifest::{Manifest, PlatformConfig, PlatformKind};
@@ -107,7 +107,7 @@ fn split_darwin_is_opt_in_and_darwin_only() {
             rebuild_command: DARWIN_REBUILD.to_string(),
             sudo: true,
             flake_root: ".".to_string(),
-            split_rebuild: true,
+            split_rebuild: Manifest::default_darwin().split_rebuild,
         },
         slots: vec![],
         aliases: HashMap::default(),
@@ -115,6 +115,15 @@ fn split_darwin_is_opt_in_and_darwin_only() {
     };
 
     assert!(should_use_split_darwin(&args, Some(&manifest)));
+
+    let opted_out = Manifest {
+        platform: PlatformConfig {
+            split_rebuild: false,
+            ..manifest.platform.clone()
+        },
+        ..manifest.clone()
+    };
+    assert!(!should_use_split_darwin(&args, Some(&opted_out)));
 
     let passthrough = RebuildArgs {
         passthrough: vec!["--show-trace".to_string()],

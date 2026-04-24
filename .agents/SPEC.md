@@ -474,7 +474,8 @@ Then run the default rebuild path:
 
 Experimental split Darwin rebuild:
 
-- Enabled only by `platform.split_rebuild = true` or `NX_SPLIT_DARWIN=1`.
+- Enabled by default for Darwin manifests. Set `platform.split_rebuild = false` to opt out.
+- `NX_SPLIT_DARWIN=1` enables the split path for Darwin repos without a manifest.
 - Applies only to Darwin manifests using the default `darwin-rebuild` command and no passthrough args.
 - Falls back to the default rebuild path when the split path cannot confidently preserve behavior.
 - Runs `nix build --json --no-link <repo_root>#darwinConfigurations.<host>.system`.

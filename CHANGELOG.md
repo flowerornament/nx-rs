@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.5.3 - 2026-04-24
+
+- added local rebuild timing telemetry with per-phase durations, git HEAD and `flake.lock` fingerprints, `NX_PROFILE_PATH`, `nx rebuild --timing`, and `nx profile`
+- carried rebuild timing records through `nx upgrade` and `nx install --rebuild` with the originating command preserved in profile history
+- fixed the GitHub Actions-only manifest-drift install test failure by using deterministic system command stubs instead of depending on host `nix`
+- made `nx install` show source-resolution progress before slow package source lookups
+
 ## v1.5.2 - 2026-04-11
 
 - added first-class `nx --version` / `nx version`, `nx doctor`, and `nx completion <shell>` commands

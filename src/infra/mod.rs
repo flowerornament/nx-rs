@@ -1,3 +1,4 @@
+pub mod activation_profile;
 pub mod ai_engine;
 pub mod cache;
 pub mod config_scan;

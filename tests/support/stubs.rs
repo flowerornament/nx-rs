@@ -253,6 +253,11 @@ case "$program" in
       echo "stub darwin-rebuild failed" >&2
       exit 1
     fi
+    echo "setting up /etc..." >&2
+    echo "Homebrew bundle..." >&2
+    echo "Using ripgrep" >&2
+    echo "Activating home-manager configuration for test" >&2
+    echo "Activating linkGeneration" >&2
     echo "stub darwin-rebuild ok"
     exit 0
     ;;

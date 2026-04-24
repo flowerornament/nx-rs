@@ -2,11 +2,14 @@ use std::path::Path;
 
 use crate::cli::RebuildArgs;
 use crate::commands::context::SystemContext;
+use crate::infra::activation_profile::ActivationPhaseProfiler;
 use crate::infra::shell::{
-    first_nonempty_output, run_captured_command, run_indented_command_collecting,
+    StreamName, first_nonempty_output, run_captured_command,
+    run_indented_command_collecting_with_observer,
 };
 use crate::infra::timing::{
-    TimingCommand, TimingRecord, TimingSession, append_timing, timing_detail_lines, timings_path,
+    TimingCommand, TimingPhase, TimingRecord, TimingSession, append_timing, timing_detail_lines,
+    timings_path,
 };
 use crate::output::printer::Printer;
 
@@ -59,7 +62,7 @@ fn run_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>, timing: &mut TimingS
         return 0;
     }
 
-    timing.record_exit_phase("activation", || do_rebuild(args, ctx))
+    timing.record_exit_phase_with_children("activation", || do_rebuild(args, ctx))
 }
 
 fn finish_timing(args: &RebuildArgs, ctx: &SystemContext<'_>, record: &TimingRecord) {
@@ -225,11 +228,12 @@ fn check_flake(ctx: &SystemContext<'_>) -> Result<(), i32> {
     Ok(())
 }
 
-fn do_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> i32 {
+fn do_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> (i32, Vec<TimingPhase>) {
     let repo = ctx.repo_root.display().to_string();
     let manifest = ctx.config_files.manifest();
     let use_sudo = manifest.is_none_or(|m| m.platform.sudo);
     let mut retried_cache_corruption = false;
+    let mut profiler = ActivationPhaseProfiler::new();
 
     for attempt in 0..3 {
         if attempt == 0 {
@@ -251,20 +255,31 @@ fn do_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> i32 {
             (first.as_str(), rest.iter().map(String::as_str).collect())
         };
 
-        let (code, output) =
-            match run_indented_command_collecting(runner, &runner_args, None, ctx.printer, "  ") {
-                Ok(result) => result,
-                Err(err) => {
-                    ctx.printer.error("Rebuild failed");
-                    ctx.printer.error(&format!("{err:#}"));
-                    return 1;
+        let (code, output) = match run_indented_command_collecting_with_observer(
+            runner,
+            &runner_args,
+            None,
+            None,
+            ctx.printer,
+            "  ",
+            |stream, line| {
+                if stream == StreamName::Stderr {
+                    profiler.observe_stderr_line(line);
                 }
-            };
+            },
+        ) {
+            Ok(result) => result,
+            Err(err) => {
+                ctx.printer.error("Rebuild failed");
+                ctx.printer.error(&format!("{err:#}"));
+                return (1, profiler.finish());
+            }
+        };
 
         if code == 0 {
             println!();
             ctx.printer.success("System rebuilt");
-            return 0;
+            return (0, profiler.finish());
         }
 
         if attempt >= 2 {
@@ -290,7 +305,7 @@ fn do_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> i32 {
     }
 
     ctx.printer.error("Rebuild failed");
-    1
+    (1, profiler.finish())
 }
 
 /// Build sudo args for rebuild command (backward-compat wrapper for tests).

@@ -10,6 +10,7 @@ use serde_json::Value;
 use crate::output::printer::Printer;
 
 type CommandEnv<'a> = &'a [(&'a str, &'a str)];
+type StreamObserver<'a> = &'a mut dyn FnMut(StreamName, &str);
 
 pub struct CapturedCommand {
     pub code: i32,
@@ -46,6 +47,18 @@ pub fn first_nonempty_output(output: &CapturedCommand) -> &str {
 struct StreamedCommand {
     code: i32,
     collected: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamName {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Debug)]
+struct StreamedLine {
+    stream: StreamName,
+    line: String,
 }
 
 /// Run a command and parse stdout as JSON while suppressing stderr noise.
@@ -117,18 +130,7 @@ pub fn run_indented_command_with_env(
     _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<i32> {
-    Ok(run_streaming_command_with_env(program, args, cwd, env, indent, false)?.code)
-}
-
-/// Like `run_indented_command` but also returns collected output for error detection.
-pub fn run_indented_command_collecting(
-    program: &str,
-    args: &[&str],
-    cwd: Option<&Path>,
-    printer: &Printer,
-    indent: &str,
-) -> anyhow::Result<(i32, String)> {
-    run_indented_command_collecting_with_env(program, args, cwd, None, printer, indent)
+    Ok(run_streaming_command_with_env(program, args, cwd, env, indent, false, None)?.code)
 }
 
 pub fn run_indented_command_collecting_with_env(
@@ -139,7 +141,24 @@ pub fn run_indented_command_collecting_with_env(
     _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<(i32, String)> {
-    let streamed = run_streaming_command_with_env(program, args, cwd, env, indent, true)?;
+    let streamed = run_streaming_command_with_env(program, args, cwd, env, indent, true, None)?;
+    Ok((streamed.code, streamed.collected.unwrap_or_default()))
+}
+
+pub fn run_indented_command_collecting_with_observer<F>(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: Option<CommandEnv<'_>>,
+    _printer: &Printer,
+    indent: &str,
+    mut observer: F,
+) -> anyhow::Result<(i32, String)>
+where
+    F: FnMut(StreamName, &str),
+{
+    let streamed =
+        run_streaming_command_with_env(program, args, cwd, env, indent, true, Some(&mut observer))?;
     Ok((streamed.code, streamed.collected.unwrap_or_default()))
 }
 
@@ -150,6 +169,7 @@ fn run_streaming_command_with_env(
     env: Option<CommandEnv<'_>>,
     indent: &str,
     collect_output: bool,
+    mut observer: Option<StreamObserver<'_>>,
 ) -> anyhow::Result<StreamedCommand> {
     let mut command = Command::new(program);
     configure_command(&mut command, args, cwd, env);
@@ -159,7 +179,7 @@ fn run_streaming_command_with_env(
         .spawn()
         .with_context(|| format!("failed to spawn {program}"))?;
 
-    let (tx, rx) = mpsc::channel::<String>();
+    let (tx, rx) = mpsc::channel::<StreamedLine>();
 
     let stdout = child
         .stdout
@@ -169,12 +189,15 @@ fn run_streaming_command_with_env(
         .stderr
         .take()
         .context("failed to capture child stderr")?;
-    let stdout_handle = spawn_line_reader("stdout", stdout, tx.clone());
-    let stderr_handle = spawn_line_reader("stderr", stderr, tx);
+    let stdout_handle = spawn_line_reader("stdout", StreamName::Stdout, stdout, tx.clone());
+    let stderr_handle = spawn_line_reader("stderr", StreamName::Stderr, stderr, tx);
 
     let mut collected = collect_output.then(String::new);
-    for line in rx {
-        let trimmed = line.trim_end();
+    for event in rx {
+        let trimmed = event.line.trim_end();
+        if let Some(observer) = observer.as_deref_mut() {
+            observer(event.stream, trimmed);
+        }
         if let Some(collected) = collected.as_mut() {
             if !collected.is_empty() {
                 collected.push('\n');
@@ -215,13 +238,20 @@ fn configure_command(
 
 fn spawn_line_reader(
     stream_name: &'static str,
+    stream_kind: StreamName,
     stream: impl Read + Send + 'static,
-    tx: mpsc::Sender<String>,
+    tx: mpsc::Sender<StreamedLine>,
 ) -> thread::JoinHandle<anyhow::Result<()>> {
     thread::spawn(move || {
         for line in BufReader::new(stream).lines() {
             let line = line.with_context(|| format!("reading {stream_name} stream"))?;
-            if tx.send(line).is_err() {
+            if tx
+                .send(StreamedLine {
+                    stream: stream_kind,
+                    line,
+                })
+                .is_err()
+            {
                 break;
             }
         }
@@ -270,9 +300,9 @@ mod tests {
 
     #[test]
     fn join_reader_surfaces_stream_read_error() {
-        let (tx, rx) = mpsc::channel::<String>();
+        let (tx, rx) = mpsc::channel::<StreamedLine>();
         drop(rx);
-        let handle = spawn_line_reader("stderr", FailingReader, tx);
+        let handle = spawn_line_reader("stderr", StreamName::Stderr, FailingReader, tx);
 
         let err = join_reader("stderr", handle).expect_err("read error should be surfaced");
         assert!(err.to_string().contains("reading stderr stream"));
@@ -320,10 +350,35 @@ mod tests {
         let printer = Printer::new(OutputStyle::from_flags(true, false, false));
         let args = ["-c", "printf 'one\\n\\nthree\\n'"];
 
-        let (code, output) = run_indented_command_collecting("sh", &args, None, &printer, "  ")
-            .expect("shell command should run");
+        let (code, output) =
+            run_indented_command_collecting_with_env("sh", &args, None, None, &printer, "  ")
+                .expect("shell command should run");
 
         assert_eq!(code, 0);
         assert_eq!(output, "one\n\nthree");
+    }
+
+    #[test]
+    fn run_indented_command_observer_receives_stream_names() {
+        let printer = Printer::new(OutputStyle::from_flags(true, false, false));
+        let args = ["-c", "printf 'out\\n'; printf 'err\\n' >&2"];
+        let mut seen = Vec::new();
+
+        let (code, output) = run_indented_command_collecting_with_observer(
+            "sh",
+            &args,
+            None,
+            None,
+            &printer,
+            "  ",
+            |stream, line| seen.push((stream, line.to_string())),
+        )
+        .expect("shell command should run");
+
+        assert_eq!(code, 0);
+        assert!(output.contains("out"));
+        assert!(output.contains("err"));
+        assert!(seen.contains(&(StreamName::Stdout, "out".to_string())));
+        assert!(seen.contains(&(StreamName::Stderr, "err".to_string())));
     }
 }

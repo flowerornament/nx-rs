@@ -48,6 +48,8 @@ pub struct TimingPhase {
     pub name: String,
     pub duration_ms: u128,
     pub status: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<TimingPhase>,
 }
 
 #[derive(Debug)]
@@ -84,13 +86,13 @@ impl TimingSession {
         })
     }
 
-    pub fn record_exit_phase<F>(&mut self, name: &str, run: F) -> i32
+    pub fn record_exit_phase_with_children<F>(&mut self, name: &str, run: F) -> i32
     where
-        F: FnOnce() -> i32,
+        F: FnOnce() -> (i32, Vec<TimingPhase>),
     {
-        self.record_phase(name, || {
-            let code = run();
-            (code, exit_status(code))
+        self.record_phase_with_children(name, || {
+            let (code, children) = run();
+            (code, exit_status(code), children)
         })
     }
 
@@ -98,12 +100,23 @@ impl TimingSession {
     where
         F: FnOnce() -> (T, String),
     {
+        self.record_phase_with_children(name, || {
+            let (result, status) = run();
+            (result, status, Vec::new())
+        })
+    }
+
+    fn record_phase_with_children<T, F>(&mut self, name: &str, run: F) -> T
+    where
+        F: FnOnce() -> (T, String, Vec<TimingPhase>),
+    {
         let started = std::time::Instant::now();
-        let (result, status) = run();
+        let (result, status, children) = run();
         self.phases.push(TimingPhase {
             name: name.to_string(),
             duration_ms: duration_ms(started.elapsed()),
             status,
+            children,
         });
         result
     }
@@ -202,13 +215,21 @@ pub fn timing_detail_lines(record: &TimingRecord) -> Vec<String> {
     if let Some(hash) = &record.flake_lock_hash {
         lines.push(format!("flake.lock: {hash}"));
     }
-    lines.extend(
-        record
-            .phases
-            .iter()
-            .map(|phase| format!("{}: {}ms ({})", phase.name, phase.duration_ms, phase.status)),
-    );
+    for phase in &record.phases {
+        push_phase_detail(&mut lines, phase, 0);
+    }
     lines
+}
+
+fn push_phase_detail(lines: &mut Vec<String>, phase: &TimingPhase, depth: usize) {
+    let prefix = "  ".repeat(depth);
+    lines.push(format!(
+        "{prefix}{}: {}ms ({})",
+        phase.name, phase.duration_ms, phase.status
+    ));
+    for child in &phase.children {
+        push_phase_detail(lines, child, depth + 1);
+    }
 }
 
 fn now_ms() -> u128 {
@@ -271,7 +292,7 @@ mod tests {
     fn timing_session_records_phase_and_finish() {
         let tmp = TempDir::new().expect("temp dir should be created");
         let mut session = TimingSession::new(TimingCommand::Rebuild, tmp.path());
-        let value = session.record_exit_phase("flake-check", || 0);
+        let value = session.record_exit_phase_with_children("flake-check", || (0, Vec::new()));
         let record = session.finish(0);
 
         assert_eq!(value, 0);
@@ -280,6 +301,7 @@ mod tests {
         assert_eq!(record.phases.len(), 1);
         assert_eq!(record.phases[0].name, "flake-check");
         assert_eq!(record.phases[0].status, "ok");
+        assert!(record.phases[0].children.is_empty());
     }
 
     #[test]

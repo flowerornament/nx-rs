@@ -17,6 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use serde_json::Value;
 use tempfile::TempDir;
 
 use support_bin::resolve_nx_bin;
@@ -372,6 +373,9 @@ fn run_command_case(
             stderr
         );
     }
+    if case.id == "rebuild_success_passthrough" {
+        assert_activation_timing(home_dir.path(), case.id)?;
+    }
 
     assert_eq!(
         before, after,
@@ -392,4 +396,38 @@ fn case_stdin(case_id: &str) -> Option<&'static str> {
 
 fn should_ignore_snapshot_path(rel_path: &str) -> bool {
     rel_path == LOG_FILE_NAME || rel_path == STUB_DIR_NAME || rel_path.starts_with(".system-stubs/")
+}
+
+fn assert_activation_timing(home_dir: &Path, case_id: &str) -> Result<(), Box<dyn Error>> {
+    let path = home_dir.join(".local/state/nx/timings.jsonl");
+    let raw = fs::read_to_string(&path)?;
+    let record: Value = serde_json::from_str(raw.lines().last().unwrap_or_default())?;
+    let phases = record["phases"]
+        .as_array()
+        .ok_or("timing record phases should be an array")?;
+    let activation = phases
+        .iter()
+        .find(|phase| phase["name"] == "activation")
+        .ok_or("timing record should include activation phase")?;
+    let children = activation["children"]
+        .as_array()
+        .ok_or("activation phase should include children")?;
+    let names = children
+        .iter()
+        .filter_map(|child| child["name"].as_str())
+        .collect::<Vec<_>>();
+
+    for expected in [
+        "etc",
+        "homebrew-bundle",
+        "home-manager",
+        "hm.link-generation",
+    ] {
+        assert!(
+            names.contains(&expected),
+            "case {case_id}: activation child '{expected}' missing from {names:?}"
+        );
+    }
+
+    Ok(())
 }

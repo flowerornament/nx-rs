@@ -468,9 +468,19 @@ Preflight requirements:
 2. No untracked `.nix` files under `home/`, `packages/`, `system/`, `hosts/`.
 3. `nix flake check <repo_root>` must pass.
 
-Then run:
+Then run the default rebuild path:
 
 - `sudo /run/current-system/sw/bin/darwin-rebuild switch --flake <repo_root> [passthrough...]`
+
+Experimental split Darwin rebuild:
+
+- Enabled only by `platform.split_rebuild = true` or `NX_SPLIT_DARWIN=1`.
+- Applies only to Darwin manifests using the default `darwin-rebuild` command and no passthrough args.
+- Falls back to the default rebuild path when the split path cannot confidently preserve behavior.
+- Runs `nix build --json --no-link <repo_root>#darwinConfigurations.<host>.system`.
+- Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get LocalHostName`, then `hostname -s`.
+- If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
+- Otherwise runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
 
 Routing lint rules:
 

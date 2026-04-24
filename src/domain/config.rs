@@ -388,6 +388,7 @@ mod tests {
                 rebuild_command: "/run/current-system/sw/bin/darwin-rebuild".to_string(),
                 sudo: true,
                 flake_root: ".".to_string(),
+                split_rebuild: false,
             },
             slots: vec![
                 Slot {

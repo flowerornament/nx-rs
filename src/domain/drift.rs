@@ -338,6 +338,7 @@ mod tests {
                 rebuild_command: "darwin-rebuild".to_string(),
                 sudo: true,
                 flake_root: ".".to_string(),
+                split_rebuild: false,
             },
             ..manifest_with_slots(Vec::new())
         };

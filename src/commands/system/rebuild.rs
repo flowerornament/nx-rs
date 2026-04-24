@@ -1,10 +1,14 @@
+use std::fs;
 use std::path::Path;
+use std::time::Instant;
 
 use crate::cli::RebuildArgs;
 use crate::commands::context::SystemContext;
+use crate::domain::manifest::{Manifest, PlatformKind};
 use crate::infra::activation_profile::ActivationPhaseProfiler;
 use crate::infra::shell::{
     StreamName, first_nonempty_output, run_captured_command,
+    run_indented_command_collecting_stdout_with_observer,
     run_indented_command_collecting_with_observer,
 };
 use crate::infra::timing::{
@@ -13,9 +17,12 @@ use crate::infra::timing::{
 };
 use crate::output::printer::Printer;
 
-use crate::domain::manifest::Manifest;
-
 use super::{DARWIN_REBUILD, lint::run_routing_lint};
+
+const SPLIT_DARWIN_ENV: &str = "NX_SPLIT_DARWIN";
+const DARWIN_HOST_ENV: &str = "NX_DARWIN_HOST";
+const SYSTEM_PROFILE_PATH_ENV: &str = "NX_SYSTEM_PROFILE_PATH";
+const SYSTEM_PROFILE: &str = "/nix/var/nix/profiles/system";
 
 pub fn cmd_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> i32 {
     cmd_rebuild_with_command(args, ctx, TimingCommand::Rebuild)
@@ -243,43 +250,25 @@ fn do_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> (i32, Vec<TimingPh
         }
         println!();
 
-        let rebuild_cmd = build_rebuild_command_with_manifest(&repo, args, manifest);
-
-        let (runner, runner_args): (&str, Vec<&str>) = if use_sudo {
-            let arg_refs: Vec<&str> = rebuild_cmd.iter().map(String::as_str).collect();
-            ("sudo", arg_refs)
-        } else {
-            let (first, rest) = rebuild_cmd
-                .split_first()
-                .expect("non-empty rebuild command");
-            (first.as_str(), rest.iter().map(String::as_str).collect())
-        };
-
-        let (code, output) = match run_indented_command_collecting_with_observer(
-            runner,
-            &runner_args,
-            None,
-            None,
-            ctx.printer,
-            "  ",
-            |stream, line| {
-                if stream == StreamName::Stderr {
-                    profiler.observe_stderr_line(line);
+        let (code, output, split_phases, outcome) =
+            match do_rebuild_once(args, ctx, manifest, &repo, use_sudo, &mut profiler) {
+                Ok(result) => result,
+                Err(err) => {
+                    ctx.printer.error("Rebuild failed");
+                    ctx.printer.error(&format!("{err:#}"));
+                    let mut phases = profiler.finish();
+                    phases.push(failed_phase("rebuild-error"));
+                    return (1, phases);
                 }
-            },
-        ) {
-            Ok(result) => result,
-            Err(err) => {
-                ctx.printer.error("Rebuild failed");
-                ctx.printer.error(&format!("{err:#}"));
-                return (1, profiler.finish());
-            }
-        };
+            };
 
         if code == 0 {
             println!();
-            ctx.printer.success("System rebuilt");
-            return (0, profiler.finish());
+            match outcome {
+                RebuildOutcome::AlreadyCurrent => ctx.printer.success("System already current"),
+                RebuildOutcome::Rebuilt => ctx.printer.success("System rebuilt"),
+            }
+            return (0, split_phases_or_profile(split_phases, profiler.finish()));
         }
 
         if attempt >= 2 {
@@ -306,6 +295,352 @@ fn do_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> (i32, Vec<TimingPh
 
     ctx.printer.error("Rebuild failed");
     (1, profiler.finish())
+}
+
+fn do_rebuild_once(
+    args: &RebuildArgs,
+    ctx: &SystemContext<'_>,
+    manifest: Option<&Manifest>,
+    repo: &str,
+    use_sudo: bool,
+    profiler: &mut ActivationPhaseProfiler,
+) -> anyhow::Result<(i32, String, Vec<TimingPhase>, RebuildOutcome)> {
+    if should_use_split_darwin(args, manifest) {
+        match do_split_darwin_rebuild(ctx, repo, use_sudo) {
+            SplitDarwinResult::Handled(result) => return result,
+            SplitDarwinResult::Fallback => {
+                ctx.printer.warn("Falling back to darwin-rebuild switch");
+            }
+        }
+    }
+
+    let (code, output) = run_legacy_rebuild(args, ctx, manifest, repo, use_sudo, profiler)?;
+    Ok((code, output, Vec::new(), RebuildOutcome::Rebuilt))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RebuildOutcome {
+    Rebuilt,
+    AlreadyCurrent,
+}
+
+fn run_legacy_rebuild(
+    args: &RebuildArgs,
+    ctx: &SystemContext<'_>,
+    manifest: Option<&Manifest>,
+    repo: &str,
+    use_sudo: bool,
+    profiler: &mut ActivationPhaseProfiler,
+) -> anyhow::Result<(i32, String)> {
+    let rebuild_cmd = build_rebuild_command_with_manifest(repo, args, manifest);
+
+    let (runner, runner_args): (&str, Vec<&str>) = if use_sudo {
+        let arg_refs: Vec<&str> = rebuild_cmd.iter().map(String::as_str).collect();
+        ("sudo", arg_refs)
+    } else {
+        let (first, rest) = rebuild_cmd
+            .split_first()
+            .expect("non-empty rebuild command");
+        (first.as_str(), rest.iter().map(String::as_str).collect())
+    };
+
+    run_indented_command_collecting_with_observer(
+        runner,
+        &runner_args,
+        None,
+        None,
+        ctx.printer,
+        "  ",
+        |stream, line| {
+            if stream == StreamName::Stderr {
+                profiler.observe_stderr_line(line);
+            }
+        },
+    )
+}
+
+pub(super) fn should_use_split_darwin(args: &RebuildArgs, manifest: Option<&Manifest>) -> bool {
+    if !args.passthrough.is_empty() {
+        return false;
+    }
+
+    let Some(manifest) = manifest else {
+        return env_flag(SPLIT_DARWIN_ENV);
+    };
+
+    manifest.platform.kind == PlatformKind::Darwin
+        && manifest.platform.rebuild_command == DARWIN_REBUILD
+        && (manifest.platform.split_rebuild || env_flag(SPLIT_DARWIN_ENV))
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+}
+
+fn do_split_darwin_rebuild(
+    ctx: &SystemContext<'_>,
+    repo: &str,
+    use_sudo: bool,
+) -> SplitDarwinResult {
+    let Some(host) = darwin_host(ctx) else {
+        ctx.printer
+            .warn("Split darwin rebuild could not determine host; falling back");
+        return SplitDarwinResult::Fallback;
+    };
+
+    let attr = format!("{repo}#darwinConfigurations.{host}.system");
+    let mut phases = Vec::new();
+    let (build, mut build_phase) = match timed_phase("build", || {
+        ctx.printer.action("Building system configuration");
+        run_indented_command_collecting_stdout_with_observer(
+            "nix",
+            &["build", "--json", "--no-link", &attr],
+            None,
+            None,
+            ctx.printer,
+            "  ",
+            |_, _| {},
+        )
+    }) {
+        Ok(result) => result,
+        Err(err) => return SplitDarwinResult::Handled(Err(err)),
+    };
+    build_phase.status = exit_status(build.0);
+    phases.push(build_phase);
+    if build.0 != 0 {
+        return SplitDarwinResult::Handled(Ok((build.0, build.1, phases, RebuildOutcome::Rebuilt)));
+    }
+
+    let Some(system_config) = parse_system_config_path(&build.1) else {
+        ctx.printer
+            .warn("Split darwin rebuild could not parse nix build output; falling back");
+        return SplitDarwinResult::Fallback;
+    };
+
+    let (current_system, compare_phase) =
+        match timed_phase("profile-compare", || Ok(current_system_profile_target())) {
+            Ok(result) => result,
+            Err(err) => return SplitDarwinResult::Handled(Err(err)),
+        };
+    phases.push(compare_phase);
+
+    if current_system.as_deref() == Some(system_config.as_str()) {
+        phases.push(ok_phase("already-current", 0));
+        return SplitDarwinResult::Handled(Ok((
+            0,
+            String::new(),
+            phases,
+            RebuildOutcome::AlreadyCurrent,
+        )));
+    }
+
+    let (set_profile, mut set_profile_phase) = match timed_phase("profile-set", || {
+        ctx.printer.action("Updating system profile");
+        run_split_command(
+            use_sudo,
+            "nix-env",
+            &["-p", SYSTEM_PROFILE, "--set", &system_config],
+            ctx,
+        )
+    }) {
+        Ok(result) => result,
+        Err(err) => return SplitDarwinResult::Handled(Err(err)),
+    };
+    set_profile_phase.status = exit_status(set_profile.0);
+    phases.push(set_profile_phase);
+    if set_profile.0 != 0 {
+        return SplitDarwinResult::Handled(Ok((
+            set_profile.0,
+            set_profile.1,
+            phases,
+            RebuildOutcome::Rebuilt,
+        )));
+    }
+
+    let mut activation_profiler = ActivationPhaseProfiler::new();
+    let (activate, mut activate_phase) = match timed_phase("activate", || {
+        ctx.printer.action("Activating system");
+        run_split_command_with_observer(
+            use_sudo,
+            &format!("{system_config}/activate"),
+            &[],
+            ctx,
+            |stream, line| {
+                if stream == StreamName::Stderr {
+                    activation_profiler.observe_stderr_line(line);
+                }
+            },
+        )
+    }) {
+        Ok(result) => result,
+        Err(err) => return SplitDarwinResult::Handled(Err(err)),
+    };
+    activate_phase.status = exit_status(activate.0);
+    activate_phase.children = activation_profiler.finish();
+    phases.push(activate_phase);
+    SplitDarwinResult::Handled(Ok((
+        activate.0,
+        activate.1,
+        phases,
+        RebuildOutcome::Rebuilt,
+    )))
+}
+
+enum SplitDarwinResult {
+    Handled(anyhow::Result<(i32, String, Vec<TimingPhase>, RebuildOutcome)>),
+    Fallback,
+}
+
+fn run_split_command(
+    use_sudo: bool,
+    program: &str,
+    args: &[&str],
+    ctx: &SystemContext<'_>,
+) -> anyhow::Result<(i32, String)> {
+    run_split_command_with_observer(use_sudo, program, args, ctx, |_, _| {})
+}
+
+fn run_split_command_with_observer<F>(
+    use_sudo: bool,
+    program: &str,
+    args: &[&str],
+    ctx: &SystemContext<'_>,
+    mut observer: F,
+) -> anyhow::Result<(i32, String)>
+where
+    F: FnMut(StreamName, &str),
+{
+    if use_sudo {
+        let mut sudo_args = Vec::with_capacity(args.len() + 1);
+        sudo_args.push(program);
+        sudo_args.extend(args.iter().copied());
+        run_indented_command_collecting_with_observer(
+            "sudo",
+            &sudo_args,
+            None,
+            None,
+            ctx.printer,
+            "  ",
+            |stream, line| observer(stream, line),
+        )
+    } else {
+        run_indented_command_collecting_with_observer(
+            program,
+            args,
+            None,
+            None,
+            ctx.printer,
+            "  ",
+            |stream, line| observer(stream, line),
+        )
+    }
+}
+
+fn darwin_host(ctx: &SystemContext<'_>) -> Option<String> {
+    std::env::var(DARWIN_HOST_ENV)
+        .ok()
+        .filter(|host| !host.trim().is_empty())
+        .or_else(|| captured_trimmed("scutil", &["--get", "LocalHostName"], None))
+        .or_else(|| captured_trimmed("hostname", &["-s"], None))
+        .inspect(|host| Printer::detail(&format!("darwin host: {host}")))
+        .or_else(|| {
+            ctx.printer.warn("Unable to resolve darwin host");
+            None
+        })
+}
+
+fn current_system_profile_target() -> Option<String> {
+    let profile_path = std::env::var_os(SYSTEM_PROFILE_PATH_ENV).map_or_else(
+        || std::path::PathBuf::from(SYSTEM_PROFILE),
+        std::path::PathBuf::from,
+    );
+    fs::canonicalize(&profile_path)
+        .ok()
+        .map(|path| path.display().to_string())
+        .or_else(|| {
+            fs::read_link(&profile_path)
+                .ok()
+                .map(|path| path.display().to_string())
+        })
+        .or_else(|| {
+            profile_path
+                .to_str()
+                .and_then(|path| captured_trimmed("readlink", &[path], None))
+        })
+}
+
+fn captured_trimmed(program: &str, args: &[&str], cwd: Option<&Path>) -> Option<String> {
+    let output = run_captured_command(program, args, cwd).ok()?;
+    if output.code != 0 {
+        return None;
+    }
+    let trimmed = output.stdout.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+pub(super) fn parse_system_config_path(output: &str) -> Option<String> {
+    let parsed = serde_json::from_str::<serde_json::Value>(output).ok()?;
+    let items = parsed.as_array()?;
+    if items.len() != 1 {
+        return None;
+    }
+    let item = items.first()?;
+    item.get("outputs")?
+        .get("out")?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn timed_phase<T, F>(name: &str, run: F) -> anyhow::Result<(T, TimingPhase)>
+where
+    F: FnOnce() -> anyhow::Result<T>,
+{
+    let started = Instant::now();
+    let result = run()?;
+    let phase = TimingPhase {
+        name: name.to_string(),
+        duration_ms: started.elapsed().as_millis(),
+        status: "ok".to_string(),
+        children: Vec::new(),
+    };
+    Ok((result, phase))
+}
+
+fn exit_status(code: i32) -> String {
+    if code == 0 {
+        "ok".to_string()
+    } else {
+        format!("failed:{code}")
+    }
+}
+
+fn ok_phase(name: &str, duration_ms: u128) -> TimingPhase {
+    TimingPhase {
+        name: name.to_string(),
+        duration_ms,
+        status: "ok".to_string(),
+        children: Vec::new(),
+    }
+}
+
+fn failed_phase(name: &str) -> TimingPhase {
+    TimingPhase {
+        name: name.to_string(),
+        duration_ms: 0,
+        status: "failed".to_string(),
+        children: Vec::new(),
+    }
+}
+
+fn split_phases_or_profile(
+    split_phases: Vec<TimingPhase>,
+    profiled_phases: Vec<TimingPhase>,
+) -> Vec<TimingPhase> {
+    if split_phases.is_empty() {
+        profiled_phases
+    } else {
+        split_phases
+    }
 }
 
 /// Build sudo args for rebuild command (backward-compat wrapper for tests).

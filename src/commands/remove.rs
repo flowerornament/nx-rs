@@ -566,6 +566,7 @@ mod tests {
                 rebuild_command: "darwin-rebuild switch".to_string(),
                 sudo: false,
                 flake_root: ".".to_string(),
+                split_rebuild: false,
             },
             slots: vec![crate::domain::manifest::Slot {
                 kind: SlotKind::HomebrewList,

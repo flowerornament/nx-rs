@@ -28,6 +28,9 @@ pub fn install_stubs(stub_dir: &Path) -> Result<(), Box<dyn Error>> {
         "sudo",
         "darwin-rebuild",
         "home-manager",
+        "readlink",
+        "scutil",
+        "hostname",
         "df",
     ] {
         write_executable(&stub_dir.join(program), STUB_SCRIPT)?;
@@ -133,6 +136,20 @@ case "$program" in
       exit 0
     fi
 
+    if [ "${1:-}" = "build" ] && [ "${2:-}" = "--json" ]; then
+      if [ "$mode" = "split_build_fail" ]; then
+        echo "stub nix build failed" >&2
+        exit 1
+      fi
+      if [ "$mode" = "split_build_invalid_json" ]; then
+        echo "not-json"
+        exit 0
+      fi
+      output="${NX_SYSTEM_IT_DARWIN_BUILD_OUTPUT:-/nix/store/new-system}"
+      printf '[{"outputs":{"out":"%s"}}]\n' "$output"
+      exit 0
+    fi
+
     echo "stub nix unsupported: $*" >&2
     exit 1
     ;;
@@ -197,6 +214,30 @@ case "$program" in
       exit $?
     fi
 
+    if [ "${1:-}" = "nix-env" ]; then
+      if [ "$mode" = "split_profile_set_fail" ]; then
+        echo "stub nix-env failed" >&2
+        exit 1
+      fi
+      echo "stub nix-env ok"
+      exit 0
+    fi
+
+    case "${1:-}" in
+      /nix/store/*/activate)
+        if [ "$mode" = "split_activate_fail" ]; then
+          echo "stub activate failed" >&2
+          exit 1
+        fi
+        echo "setting up /etc..." >&2
+        echo "Homebrew bundle..." >&2
+        echo "Activating home-manager configuration for test" >&2
+        echo "Activating linkGeneration" >&2
+        echo "stub activate ok"
+        exit 0
+        ;;
+    esac
+
     echo "stub sudo $*"
     exit 0
     ;;
@@ -236,6 +277,30 @@ case "$program" in
     fi
 
     echo "stub home-manager unsupported: $*" >&2
+    exit 1
+    ;;
+  readlink)
+    if [ "${1:-}" = "/nix/var/nix/profiles/system" ]; then
+      printf '%s\n' "${NX_SYSTEM_IT_CURRENT_SYSTEM:-/nix/store/current-system}"
+      exit 0
+    fi
+    echo "stub readlink unsupported: $*" >&2
+    exit 1
+    ;;
+  scutil)
+    if [ "${1:-}" = "--get" ] && [ "${2:-}" = "LocalHostName" ]; then
+      printf '%s\n' "${NX_SYSTEM_IT_DARWIN_HOST:-test-host}"
+      exit 0
+    fi
+    echo "stub scutil unsupported: $*" >&2
+    exit 1
+    ;;
+  hostname)
+    if [ "${1:-}" = "-s" ]; then
+      printf '%s\n' "${NX_SYSTEM_IT_DARWIN_HOST:-test-host}"
+      exit 0
+    fi
+    echo "stub hostname unsupported: $*" >&2
     exit 1
     ;;
   df)

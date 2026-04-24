@@ -9,6 +9,7 @@ use crate::infra::shell::run_captured_command;
 
 use super::rebuild::{
     build_rebuild_command, build_rebuild_command_with_manifest, has_nix_extension,
+    parse_system_config_path, should_use_split_darwin,
 };
 use super::undo::{git_diff_stat, git_modified_files};
 use super::upgrade::{

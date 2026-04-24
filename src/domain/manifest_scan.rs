@@ -719,6 +719,7 @@ mod tests {
                 rebuild_command: "custom-rebuild".to_string(),
                 sudo: false,
                 flake_root: "hosts/workstation".to_string(),
+                split_rebuild: false,
             },
             slots: Vec::new(),
             aliases: HashMap::new(),

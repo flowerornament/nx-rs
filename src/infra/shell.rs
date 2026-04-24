@@ -50,6 +50,12 @@ struct StreamedCommand {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollectMode {
+    All,
+    Stdout,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamName {
     Stdout,
     Stderr,
@@ -130,7 +136,7 @@ pub fn run_indented_command_with_env(
     _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<i32> {
-    Ok(run_streaming_command_with_env(program, args, cwd, env, indent, false, None)?.code)
+    Ok(run_streaming_command_with_env(program, args, cwd, env, indent, None, None)?.code)
 }
 
 pub fn run_indented_command_collecting_with_env(
@@ -141,7 +147,15 @@ pub fn run_indented_command_collecting_with_env(
     _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<(i32, String)> {
-    let streamed = run_streaming_command_with_env(program, args, cwd, env, indent, true, None)?;
+    let streamed = run_streaming_command_with_env(
+        program,
+        args,
+        cwd,
+        env,
+        indent,
+        Some(CollectMode::All),
+        None,
+    )?;
     Ok((streamed.code, streamed.collected.unwrap_or_default()))
 }
 
@@ -157,8 +171,39 @@ pub fn run_indented_command_collecting_with_observer<F>(
 where
     F: FnMut(StreamName, &str),
 {
-    let streamed =
-        run_streaming_command_with_env(program, args, cwd, env, indent, true, Some(&mut observer))?;
+    let streamed = run_streaming_command_with_env(
+        program,
+        args,
+        cwd,
+        env,
+        indent,
+        Some(CollectMode::All),
+        Some(&mut observer),
+    )?;
+    Ok((streamed.code, streamed.collected.unwrap_or_default()))
+}
+
+pub fn run_indented_command_collecting_stdout_with_observer<F>(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: Option<CommandEnv<'_>>,
+    _printer: &Printer,
+    indent: &str,
+    mut observer: F,
+) -> anyhow::Result<(i32, String)>
+where
+    F: FnMut(StreamName, &str),
+{
+    let streamed = run_streaming_command_with_env(
+        program,
+        args,
+        cwd,
+        env,
+        indent,
+        Some(CollectMode::Stdout),
+        Some(&mut observer),
+    )?;
     Ok((streamed.code, streamed.collected.unwrap_or_default()))
 }
 
@@ -168,7 +213,7 @@ fn run_streaming_command_with_env(
     cwd: Option<&Path>,
     env: Option<CommandEnv<'_>>,
     indent: &str,
-    collect_output: bool,
+    collect_mode: Option<CollectMode>,
     mut observer: Option<StreamObserver<'_>>,
 ) -> anyhow::Result<StreamedCommand> {
     let mut command = Command::new(program);
@@ -192,13 +237,16 @@ fn run_streaming_command_with_env(
     let stdout_handle = spawn_line_reader("stdout", StreamName::Stdout, stdout, tx.clone());
     let stderr_handle = spawn_line_reader("stderr", StreamName::Stderr, stderr, tx);
 
-    let mut collected = collect_output.then(String::new);
+    let mut collected = collect_mode.map(|_| String::new());
     for event in rx {
         let trimmed = event.line.trim_end();
         if let Some(observer) = observer.as_deref_mut() {
             observer(event.stream, trimmed);
         }
-        if let Some(collected) = collected.as_mut() {
+        if let Some(collected) = collected.as_mut()
+            && collect_mode
+                .is_some_and(|mode| mode == CollectMode::All || event.stream == StreamName::Stdout)
+        {
             if !collected.is_empty() {
                 collected.push('\n');
             }
@@ -380,5 +428,25 @@ mod tests {
         assert!(output.contains("err"));
         assert!(seen.contains(&(StreamName::Stdout, "out".to_string())));
         assert!(seen.contains(&(StreamName::Stderr, "err".to_string())));
+    }
+
+    #[test]
+    fn run_indented_command_stdout_collector_excludes_stderr() {
+        let printer = Printer::new(OutputStyle::from_flags(true, false, false));
+        let args = ["-c", "printf 'json\\n'; printf 'warning\\n' >&2"];
+
+        let (code, output) = run_indented_command_collecting_stdout_with_observer(
+            "sh",
+            &args,
+            None,
+            None,
+            &printer,
+            "  ",
+            |_, _| {},
+        )
+        .expect("shell command should run");
+
+        assert_eq!(code, 0);
+        assert_eq!(output, "json");
     }
 }

@@ -14,6 +14,7 @@ mod support_tree;
 use std::env;
 use std::error::Error;
 use std::fs;
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -145,6 +146,64 @@ const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
         "darwin-rebuild",
         EXPECTED_CWD_REPO_ROOT,
         &["switch", "--flake", REPO_ROOT_TOKEN, "--show-trace", "foo"],
+    ),
+];
+
+const SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
+    ExpectedCall::new(
+        "scutil",
+        EXPECTED_CWD_REPO_ROOT,
+        &["--get", "LocalHostName"],
+    ),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "build",
+            "--json",
+            "--no-link",
+            "<REPO_ROOT>#darwinConfigurations.test-host.system",
+        ],
+    ),
+    ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "nix-env",
+            "-p",
+            "/nix/var/nix/profiles/system",
+            "--set",
+            "/nix/store/new-system",
+        ],
+    ),
+    ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &["/nix/store/new-system/activate"],
+    ),
+];
+
+const SPLIT_REBUILD_CURRENT_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
+    ExpectedCall::new(
+        "scutil",
+        EXPECTED_CWD_REPO_ROOT,
+        &["--get", "LocalHostName"],
+    ),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "build",
+            "--json",
+            "--no-link",
+            "<REPO_ROOT>#darwinConfigurations.test-host.system",
+        ],
     ),
 ];
 
@@ -314,6 +373,159 @@ fn system_command_flows() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+fn split_darwin_rebuild_runs_explicit_phases() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+
+    let RunResult {
+        home_dir,
+        stdout,
+        stderr,
+    } = run_split_rebuild(
+        &nx_bin,
+        &repo_base,
+        "split_rebuild_env",
+        "success",
+        &[("NX_SPLIT_DARWIN", "1")],
+        SPLIT_REBUILD_CALLS,
+    )?;
+
+    assert!(
+        stdout.contains("System rebuilt"),
+        "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert_timing_children(
+        home_dir.path(),
+        "split_rebuild_env",
+        &["build", "profile-compare", "profile-set", "activate"],
+    )?;
+    assert_activate_timing_children(
+        home_dir.path(),
+        "split_rebuild_env",
+        &[
+            "etc",
+            "homebrew-bundle",
+            "home-manager",
+            "hm.link-generation",
+        ],
+    )?;
+
+    Ok(())
+}
+
+#[test]
+fn split_darwin_rebuild_skips_activation_when_system_is_current() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+
+    let RunResult {
+        home_dir,
+        stdout,
+        stderr,
+    } = run_split_rebuild(
+        &nx_bin,
+        &repo_base,
+        "split_rebuild_current",
+        "success",
+        &[
+            ("NX_SPLIT_DARWIN", "1"),
+            (
+                "NX_SYSTEM_IT_DARWIN_BUILD_OUTPUT",
+                "/nix/store/current-system",
+            ),
+        ],
+        SPLIT_REBUILD_CURRENT_CALLS,
+    )?;
+
+    assert!(
+        stdout.contains("System already current"),
+        "stdout missing current-system success\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert_timing_children(
+        home_dir.path(),
+        "split_rebuild_current",
+        &["build", "profile-compare", "already-current"],
+    )?;
+
+    Ok(())
+}
+
+struct RunResult {
+    home_dir: TempDir,
+    stdout: String,
+    stderr: String,
+}
+
+fn run_split_rebuild(
+    nx_bin: &Path,
+    repo_base: &Path,
+    case_id: &str,
+    mode: &str,
+    extra_env: &[(&str, &str)],
+    expected_calls: &[ExpectedCall],
+) -> Result<RunResult, Box<dyn Error>> {
+    let repo_root = TempDir::new()?;
+    copy_tree(repo_base, repo_root.path())?;
+    ensure_test_layout(repo_root.path())?;
+
+    let stub_dir = repo_root.path().join(STUB_DIR_NAME);
+    fs::create_dir_all(&stub_dir)?;
+    install_stubs(&stub_dir)?;
+
+    let log_path = repo_root.path().join(LOG_FILE_NAME);
+    let before = snapshot_repo_files(repo_root.path(), &should_ignore_snapshot_path)?;
+
+    let home_dir = TempDir::new()?;
+    let profile_link = home_dir.path().join("system-profile");
+    symlink("/nix/store/current-system", &profile_link)?;
+    let mut command = Command::new(nx_bin);
+    command
+        .args(["--plain", "--minimal", "rebuild"])
+        .current_dir(repo_root.path())
+        .env("NX_REPO_ROOT", repo_root.path())
+        .env("HOME", home_dir.path())
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .env("NX_SYSTEM_PROFILE_PATH", &profile_link)
+        .env("NX_SYSTEM_IT_LOG", &log_path)
+        .env("NX_SYSTEM_IT_MODE", mode)
+        .env(
+            "NX_SYSTEM_IT_DARWIN_REBUILD",
+            stub_dir.join("darwin-rebuild"),
+        )
+        .env("PATH", prepend_path(&stub_dir));
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+
+    let output = run_command_with_optional_stdin(&mut command, None)?;
+    let after = snapshot_repo_files(repo_root.path(), &should_ignore_snapshot_path)?;
+    let invocations = read_invocations(&log_path)?;
+    let exit_code = output.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    assert_eq!(
+        exit_code, 0,
+        "case {case_id}: unexpected exit code\nstdout:\n{stdout}\nstderr:\n{stderr}",
+    );
+    assert_invocations(case_id, repo_root.path(), &invocations, expected_calls);
+    assert_eq!(
+        before, after,
+        "case {case_id} mutated repository files\nstdout:\n{stdout}\nstderr:\n{stderr}",
+    );
+
+    Ok(RunResult {
+        home_dir,
+        stdout,
+        stderr,
+    })
+}
+
 fn run_command_case(
     nx_bin: &Path,
     repo_base: &Path,
@@ -399,6 +611,26 @@ fn should_ignore_snapshot_path(rel_path: &str) -> bool {
 }
 
 fn assert_activation_timing(home_dir: &Path, case_id: &str) -> Result<(), Box<dyn Error>> {
+    assert_timing_children(
+        home_dir,
+        case_id,
+        &[
+            "build",
+            "nix-build",
+            "fetches",
+            "etc",
+            "homebrew-bundle",
+            "home-manager",
+            "hm.link-generation",
+        ],
+    )
+}
+
+fn assert_timing_children(
+    home_dir: &Path,
+    case_id: &str,
+    expected_children: &[&str],
+) -> Result<(), Box<dyn Error>> {
     let path = home_dir.join(".local/state/nx/timings.jsonl");
     let raw = fs::read_to_string(&path)?;
     let record: Value = serde_json::from_str(raw.lines().last().unwrap_or_default())?;
@@ -417,18 +649,50 @@ fn assert_activation_timing(home_dir: &Path, case_id: &str) -> Result<(), Box<dy
         .filter_map(|child| child["name"].as_str())
         .collect::<Vec<_>>();
 
-    for expected in [
-        "build",
-        "nix-build",
-        "fetches",
-        "etc",
-        "homebrew-bundle",
-        "home-manager",
-        "hm.link-generation",
-    ] {
+    for expected in expected_children {
         assert!(
-            names.contains(&expected),
+            names.contains(expected),
             "case {case_id}: activation child '{expected}' missing from {names:?}"
+        );
+    }
+
+    Ok(())
+}
+
+fn assert_activate_timing_children(
+    home_dir: &Path,
+    case_id: &str,
+    expected_children: &[&str],
+) -> Result<(), Box<dyn Error>> {
+    let path = home_dir.join(".local/state/nx/timings.jsonl");
+    let raw = fs::read_to_string(&path)?;
+    let record: Value = serde_json::from_str(raw.lines().last().unwrap_or_default())?;
+    let phases = record["phases"]
+        .as_array()
+        .ok_or("timing record phases should be an array")?;
+    let activation = phases
+        .iter()
+        .find(|phase| phase["name"] == "activation")
+        .ok_or("timing record should include activation phase")?;
+    let activation_children = activation["children"]
+        .as_array()
+        .ok_or("activation phase should include children")?;
+    let activate = activation_children
+        .iter()
+        .find(|phase| phase["name"] == "activate")
+        .ok_or("activation phase should include activate child")?;
+    let nested_children = activate["children"]
+        .as_array()
+        .ok_or("activate phase should include nested children")?;
+    let names = nested_children
+        .iter()
+        .filter_map(|child| child["name"].as_str())
+        .collect::<Vec<_>>();
+
+    for expected in expected_children {
+        assert!(
+            names.contains(expected),
+            "case {case_id}: activate child '{expected}' missing from {names:?}"
         );
     }
 

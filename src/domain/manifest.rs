@@ -23,6 +23,7 @@ pub struct PlatformConfig {
     pub rebuild_command: String,
     pub sudo: bool,
     pub flake_root: String,
+    pub split_rebuild: bool,
 }
 
 /// Supported Nix platform types.
@@ -146,6 +147,7 @@ impl Manifest {
             rebuild_command: "/run/current-system/sw/bin/darwin-rebuild".to_string(),
             sudo: true,
             flake_root: ".".to_string(),
+            split_rebuild: false,
         }
     }
 
@@ -156,6 +158,7 @@ impl Manifest {
             rebuild_command: "nixos-rebuild".to_string(),
             sudo: true,
             flake_root: ".".to_string(),
+            split_rebuild: false,
         }
     }
 
@@ -166,6 +169,7 @@ impl Manifest {
             rebuild_command: "home-manager".to_string(),
             sudo: false,
             flake_root: ".".to_string(),
+            split_rebuild: false,
         }
     }
 
@@ -273,11 +277,17 @@ fn parse_platform(table: &toml_edit::Table) -> Result<PlatformConfig> {
         .unwrap_or(".")
         .to_string();
 
+    let split_rebuild = table
+        .get("split_rebuild")
+        .and_then(toml_edit::Item::as_bool)
+        .unwrap_or(false);
+
     Ok(PlatformConfig {
         kind,
         rebuild_command,
         sudo,
         flake_root,
+        split_rebuild,
     })
 }
 
@@ -370,6 +380,10 @@ fn serialize_manifest(manifest: &Manifest) -> String {
     platform.insert(
         "flake_root",
         toml_edit::value(&manifest.platform.flake_root),
+    );
+    platform.insert(
+        "split_rebuild",
+        toml_edit::value(manifest.platform.split_rebuild),
     );
     doc.insert("platform", toml_edit::Item::Table(platform));
 
@@ -489,6 +503,7 @@ mod tests {
         assert_eq!(loaded.schema_version, manifest.schema_version);
         assert_eq!(loaded.platform.kind, PlatformKind::Darwin);
         assert!(loaded.platform.sudo);
+        assert!(!loaded.platform.split_rebuild);
         assert_eq!(loaded.slots.len(), 3);
         assert_eq!(loaded.slots[0].kind, SlotKind::NixPackages);
         assert_eq!(loaded.slots[0].file, PathBuf::from("packages/nix/cli.nix"));
@@ -684,6 +699,7 @@ kind = "nixos"
 rebuild_command = "nixos-rebuild"
 sudo = true
 flake_root = "/etc/nixos"
+split_rebuild = true
 
 [[slots]]
 kind = "nix-packages"
@@ -732,6 +748,7 @@ neovim = "neovim-nightly-overlay"
         assert_eq!(loaded.schema_version, 1);
         assert_eq!(loaded.platform.kind, PlatformKind::NixOS);
         assert_eq!(loaded.platform.flake_root, "/etc/nixos");
+        assert!(loaded.platform.split_rebuild);
         assert_eq!(loaded.slots.len(), 5);
         assert_eq!(loaded.aliases.len(), 2);
         assert_eq!(loaded.overlays.len(), 1);
@@ -748,6 +765,10 @@ neovim = "neovim-nightly-overlay"
         );
         assert_eq!(reloaded.platform.sudo, loaded.platform.sudo);
         assert_eq!(reloaded.platform.flake_root, loaded.platform.flake_root);
+        assert_eq!(
+            reloaded.platform.split_rebuild,
+            loaded.platform.split_rebuild
+        );
         assert_eq!(reloaded.slots.len(), loaded.slots.len());
         for (a, b) in reloaded.slots.iter().zip(loaded.slots.iter()) {
             assert_eq!(a.kind, b.kind);

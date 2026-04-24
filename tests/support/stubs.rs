@@ -253,6 +253,11 @@ case "$program" in
       echo "stub darwin-rebuild failed" >&2
       exit 1
     fi
+    echo "building the system configuration..." >&2
+    echo "these 2 derivations will be built:" >&2
+    echo "copying path '/nix/store/example-one' from 'https://cache.nixos.org'" >&2
+    echo "copying path '/nix/store/example-two' from 'https://cache.nixos.org'" >&2
+    echo "building /nix/store/example.drv" >&2
     echo "setting up /etc..." >&2
     echo "Homebrew bundle..." >&2
     echo "Using ripgrep" >&2

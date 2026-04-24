@@ -28,8 +28,8 @@ impl ActivationPhaseProfiler {
     }
 
     pub fn observe_stderr_line(&mut self, line: &str) {
-        if let Some(name) = activation_marker(line) {
-            self.open_phase(name, Instant::now());
+        if let Some(marker) = activation_marker(line) {
+            self.open_phase(marker.name, Instant::now());
         }
     }
 
@@ -44,12 +44,20 @@ impl ActivationPhaseProfiler {
     }
 
     fn open_phase(&mut self, name: String, now: Instant) {
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|active| active.name == name)
+        {
+            return;
+        }
+
         if self.saw_marker {
             self.close_active(now);
         } else {
             let duration_ms = duration_ms(now.duration_since(self.started));
             if duration_ms > 0 {
-                self.phases.push(phase("unattributed", duration_ms));
+                self.phases.push(phase("pre-activation", duration_ms));
             }
             self.saw_marker = true;
         }
@@ -67,6 +75,19 @@ impl ActivationPhaseProfiler {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActivationMarker {
+    name: String,
+}
+
+impl ActivationMarker {
+    fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+        }
+    }
+}
+
 fn phase(name: &str, duration_ms: u128) -> TimingPhase {
     TimingPhase {
         name: name.to_string(),
@@ -80,21 +101,49 @@ fn duration_ms(duration: std::time::Duration) -> u128 {
     duration.as_millis()
 }
 
-fn activation_marker(line: &str) -> Option<String> {
+fn activation_marker(line: &str) -> Option<ActivationMarker> {
     let line = line.trim();
     if line.is_empty() {
         return None;
     }
 
+    if let Some(marker) = pre_activation_marker(line) {
+        return Some(marker);
+    }
+
     if line.starts_with("Activating home-manager configuration for ") {
-        return Some("home-manager".to_string());
+        return Some(ActivationMarker::new("home-manager"));
     }
 
     if let Some(name) = line.strip_prefix("Activating ") {
-        return Some(format!("hm.{}", slug(name)));
+        return Some(ActivationMarker::new(&format!("hm.{}", slug(name))));
     }
 
-    nix_darwin_marker(line).map(str::to_string)
+    nix_darwin_marker(line).map(ActivationMarker::new)
+}
+
+fn pre_activation_marker(line: &str) -> Option<ActivationMarker> {
+    if line.starts_with("building the system configuration") {
+        return Some(ActivationMarker::new("build"));
+    }
+
+    if line.starts_with("these ") && line.contains(" derivations will be built") {
+        return Some(ActivationMarker::new("nix-build"));
+    }
+
+    if line.starts_with("this derivation will be built") {
+        return Some(ActivationMarker::new("nix-build"));
+    }
+
+    if line.starts_with("copying path ") {
+        return Some(ActivationMarker::new("fetches"));
+    }
+
+    if line.starts_with("building ") || line.starts_with("building path") {
+        return Some(ActivationMarker::new("nix-build"));
+    }
+
+    None
 }
 
 fn nix_darwin_marker(line: &str) -> Option<&'static str> {
@@ -157,18 +206,36 @@ mod tests {
     #[test]
     fn activation_markers_detect_nix_darwin_and_home_manager_steps() {
         assert_eq!(
-            activation_marker("Homebrew bundle...").as_deref(),
-            Some("homebrew-bundle")
+            activation_marker("Homebrew bundle...").map(|marker| marker.name),
+            Some("homebrew-bundle".to_string())
         );
         assert_eq!(
-            activation_marker("Activating home-manager configuration for morgan").as_deref(),
-            Some("home-manager")
+            activation_marker("Activating home-manager configuration for morgan")
+                .map(|marker| marker.name),
+            Some("home-manager".to_string())
         );
         assert_eq!(
-            activation_marker("Activating linkGeneration").as_deref(),
-            Some("hm.link-generation")
+            activation_marker("Activating linkGeneration").map(|marker| marker.name),
+            Some("hm.link-generation".to_string())
         );
-        assert_eq!(activation_marker("Using ripgrep").as_deref(), None);
+        assert_eq!(activation_marker("Using ripgrep"), None);
+    }
+
+    #[test]
+    fn activation_markers_detect_pre_activation_steps() {
+        assert_eq!(
+            activation_marker("building the system configuration...").map(|marker| marker.name),
+            Some("build".to_string())
+        );
+        assert_eq!(
+            activation_marker("these 4 derivations will be built:").map(|marker| marker.name),
+            Some("nix-build".to_string())
+        );
+        assert_eq!(
+            activation_marker("copying path '/nix/store/example' from 'https://cache.nixos.org'")
+                .map(|marker| marker.name),
+            Some("fetches".to_string())
+        );
     }
 
     #[test]
@@ -181,5 +248,20 @@ mod tests {
         assert_eq!(phases.len(), 2);
         assert_eq!(phases[0].name, "etc");
         assert_eq!(phases[1].name, "homebrew-bundle");
+    }
+
+    #[test]
+    fn profiler_deduplicates_repeated_markers() {
+        let mut profiler = ActivationPhaseProfiler::new();
+        profiler.observe_stderr_line("copying path '/nix/store/one'");
+        profiler.observe_stderr_line("copying path '/nix/store/two'");
+        profiler.observe_stderr_line("building /nix/store/example.drv");
+        let phases = profiler.finish();
+
+        let names = phases
+            .iter()
+            .map(|phase| phase.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["fetches", "nix-build"]);
     }
 }

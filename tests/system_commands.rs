@@ -418,6 +418,9 @@ fn assert_activation_timing(home_dir: &Path, case_id: &str) -> Result<(), Box<dy
         .collect::<Vec<_>>();
 
     for expected in [
+        "build",
+        "nix-build",
+        "fetches",
         "etc",
         "homebrew-bundle",
         "home-manager",

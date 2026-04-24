@@ -1,5 +1,6 @@
-use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::collections::VecDeque;
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -7,10 +8,28 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::app::dirs_home;
+use crate::infra::hash::short_hash;
 use crate::infra::shell::run_captured_command;
 
 const TIMING_PATH_ENV: &str = "NX_PROFILE_PATH";
 const DEFAULT_TIMING_RELATIVE_PATH: &str = ".local/state/nx/timings.jsonl";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimingCommand {
+    Rebuild,
+    Upgrade,
+    Install,
+}
+
+impl TimingCommand {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rebuild => "rebuild",
+            Self::Upgrade => "upgrade",
+            Self::Install => "install",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TimingRecord {
@@ -43,9 +62,9 @@ pub struct TimingSession {
 
 impl TimingSession {
     #[must_use]
-    pub fn new(command: &str, repo_root: &Path) -> Self {
+    pub fn new(command: TimingCommand, repo_root: &Path) -> Self {
         Self {
-            command: command.to_string(),
+            command: command.as_str().to_string(),
             repo_head: git_head(repo_root),
             flake_lock_hash: flake_lock_hash(repo_root),
             started_at_ms: now_ms(),
@@ -54,7 +73,28 @@ impl TimingSession {
         }
     }
 
-    pub fn record_phase<T, F>(&mut self, name: &str, run: F) -> T
+    pub fn record_result_phase<F>(&mut self, name: &str, run: F) -> Option<i32>
+    where
+        F: FnOnce() -> Result<(), i32>,
+    {
+        self.record_phase(name, || {
+            let result = run();
+            let code = result.err();
+            (code, phase_status(code))
+        })
+    }
+
+    pub fn record_exit_phase<F>(&mut self, name: &str, run: F) -> i32
+    where
+        F: FnOnce() -> i32,
+    {
+        self.record_phase(name, || {
+            let code = run();
+            (code, exit_status(code))
+        })
+    }
+
+    fn record_phase<T, F>(&mut self, name: &str, run: F) -> T
     where
         F: FnOnce() -> (T, String),
     {
@@ -85,6 +125,11 @@ impl TimingSession {
 
 pub fn append_timing(record: &TimingRecord) -> anyhow::Result<PathBuf> {
     let path = timings_path();
+    append_timing_to_path(record, &path)?;
+    Ok(path)
+}
+
+fn append_timing_to_path(record: &TimingRecord, path: &Path) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     }
@@ -92,36 +137,44 @@ pub fn append_timing(record: &TimingRecord) -> anyhow::Result<PathBuf> {
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path)
+        .open(path)
         .with_context(|| format!("opening {}", path.display()))?;
-    serde_json::to_writer(&mut file, record).context("serializing timing record")?;
-    writeln!(file).context("writing timing record newline")?;
-    Ok(path)
+    let mut line = serde_json::to_vec(record).context("serializing timing record")?;
+    line.push(b'\n');
+    file.write_all(&line).context("writing timing record")?;
+    Ok(())
 }
 
 pub fn read_recent_timings(limit: usize) -> anyhow::Result<Vec<TimingRecord>> {
     let path = timings_path();
-    if !path.exists() {
+    read_recent_timings_from_path(&path, limit)
+}
+
+fn read_recent_timings_from_path(path: &Path, limit: usize) -> anyhow::Result<Vec<TimingRecord>> {
+    if limit == 0 {
         return Ok(Vec::new());
     }
 
-    let file = OpenOptions::new()
-        .read(true)
-        .open(&path)
-        .with_context(|| format!("opening {}", path.display()))?;
+    let file = match OpenOptions::new().read(true).open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err).with_context(|| format!("opening {}", path.display())),
+    };
     let reader = BufReader::new(file);
-    let mut records = Vec::new();
-    for line in reader.lines() {
+    let mut records = VecDeque::with_capacity(limit);
+    for (index, line) in reader.lines().enumerate() {
         let line = line.context("reading timing record")?;
         if line.trim().is_empty() {
             continue;
         }
-        if let Ok(record) = serde_json::from_str::<TimingRecord>(&line) {
-            records.push(record);
+        let record = serde_json::from_str::<TimingRecord>(&line)
+            .with_context(|| format!("parsing timing record line {}", index + 1))?;
+        if records.len() == limit {
+            records.pop_front();
         }
+        records.push_back(record);
     }
-    let keep_from = records.len().saturating_sub(limit);
-    Ok(records.split_off(keep_from))
+    Ok(records.into_iter().collect())
 }
 
 #[must_use]
@@ -133,8 +186,29 @@ pub fn timings_path() -> PathBuf {
 }
 
 #[must_use]
-pub fn short_hash(hash: &str) -> &str {
-    hash.get(..12).unwrap_or(hash)
+pub fn timing_summary_line(record: &TimingRecord) -> String {
+    format!(
+        "{} {}ms ({})",
+        record.command, record.total_ms, record.status
+    )
+}
+
+#[must_use]
+pub fn timing_detail_lines(record: &TimingRecord) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(head) = &record.repo_head {
+        lines.push(format!("git: {}", short_hash(head)));
+    }
+    if let Some(hash) = &record.flake_lock_hash {
+        lines.push(format!("flake.lock: {hash}"));
+    }
+    lines.extend(
+        record
+            .phases
+            .iter()
+            .map(|phase| format!("{}: {}ms ({})", phase.name, phase.duration_ms, phase.status)),
+    );
+    lines
 }
 
 fn now_ms() -> u128 {
@@ -148,22 +222,42 @@ fn duration_ms(duration: Duration) -> u128 {
     duration.as_millis()
 }
 
+fn exit_status(code: i32) -> String {
+    if code == 0 {
+        "ok".to_string()
+    } else {
+        "failed".to_string()
+    }
+}
+
+fn phase_status(code: Option<i32>) -> String {
+    code.map_or_else(|| "ok".to_string(), |code| format!("failed:{code}"))
+}
+
 fn git_head(repo_root: &Path) -> Option<String> {
-    let repo = repo_root.to_str()?;
-    let output = run_captured_command("git", &["-C", repo, "rev-parse", "HEAD"], None).ok()?;
+    let output = run_captured_command("git", &["rev-parse", "HEAD"], Some(repo_root)).ok()?;
     (output.code == 0).then(|| output.stdout.trim().to_string())
 }
 
 fn flake_lock_hash(repo_root: &Path) -> Option<String> {
-    let bytes = fs::read(repo_root.join("flake.lock")).ok()?;
-    Some(format!("{:016x}", fnv1a64(&bytes)))
+    let mut file = File::open(repo_root.join("flake.lock")).ok()?;
+    let mut buffer = [0; 8192];
+    let mut hash = FNV_OFFSET;
+    loop {
+        let count = file.read(&mut buffer).ok()?;
+        if count == 0 {
+            break;
+        }
+        hash = fnv1a64_update(hash, &buffer[..count]);
+    }
+    Some(format!("{hash:016x}"))
 }
 
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
-    bytes.iter().fold(FNV_OFFSET, |hash, byte| {
+fn fnv1a64_update(hash: u64, bytes: &[u8]) -> u64 {
+    bytes.iter().fold(hash, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
     })
 }
@@ -176,11 +270,11 @@ mod tests {
     #[test]
     fn timing_session_records_phase_and_finish() {
         let tmp = TempDir::new().expect("temp dir should be created");
-        let mut session = TimingSession::new("rebuild", tmp.path());
-        let value = session.record_phase("flake-check", || (42, "ok".to_string()));
+        let mut session = TimingSession::new(TimingCommand::Rebuild, tmp.path());
+        let value = session.record_exit_phase("flake-check", || 0);
         let record = session.finish(0);
 
-        assert_eq!(value, 42);
+        assert_eq!(value, 0);
         assert_eq!(record.command, "rebuild");
         assert_eq!(record.status, "ok");
         assert_eq!(record.phases.len(), 1);
@@ -197,5 +291,25 @@ mod tests {
         let second = flake_lock_hash(tmp.path()).expect("hash");
 
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn timing_jsonl_roundtrip_keeps_recent_records() {
+        let tmp = TempDir::new().expect("temp dir should be created");
+        let path = tmp.path().join("timings.jsonl");
+
+        for command in [
+            TimingCommand::Install,
+            TimingCommand::Upgrade,
+            TimingCommand::Rebuild,
+        ] {
+            let record = TimingSession::new(command, tmp.path()).finish(0);
+            append_timing_to_path(&record, &path).expect("append timing");
+        }
+
+        let records = read_recent_timings_from_path(&path, 2).expect("read timings");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].command, "upgrade");
+        assert_eq!(records[1].command, "rebuild");
     }
 }

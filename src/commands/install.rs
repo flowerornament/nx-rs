@@ -27,6 +27,7 @@ use crate::infra::flake_input::{FlakeInputEdit, add_flake_input};
 use crate::infra::package_query::{PackageQueryReport, query_package, query_packages};
 use crate::infra::shell::git_diff;
 use crate::infra::sources::check_nix_available;
+use crate::infra::timing::TimingCommand;
 use crate::output::printer::Printer;
 
 pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
@@ -73,7 +74,7 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
     run_post_install_actions(success_count, args, ctx, || {
         let rebuild = RebuildArgs::default();
         let system_ctx = ctx.system_context();
-        cmd_rebuild_with_command(&rebuild, &system_ctx, "install")
+        cmd_rebuild_with_command(&rebuild, &system_ctx, TimingCommand::Install)
     });
 
     i32::from(success_count != args.packages.len())
@@ -727,7 +728,7 @@ fn search_for_package(
             );
         }
 
-        let report = query_install_package(package, &prefs, ctx, cache);
+        let report = query_install_package(package, &prefs, &ctx.repo_root, cache);
         if args.verbose() {
             Printer::detail(&format!(
                 "Query diagnostics: cache={}, elapsed={}ms, unavailable_backends={}",
@@ -750,7 +751,7 @@ fn search_for_package(
     let cached = if let Some(prefetched) = prefetched {
         prefetched
     } else {
-        live_lookup = query_install_package(package, &prefs, ctx, cache);
+        live_lookup = query_install_package(package, &prefs, &ctx.repo_root, cache);
         &live_lookup
     };
     let outcome = &cached.outcome;
@@ -1118,11 +1119,11 @@ fn prefetch_install_searches(
 fn query_install_package(
     package: &str,
     prefs: &SourcePreferences,
-    ctx: &AppContext,
+    repo_root: &Path,
     cache: &mut Option<MultiSourceCache>,
 ) -> PackageQueryReport {
     Printer::detail(&format!("Resolving source for {package}..."));
-    query_package(package, prefs, &ctx.repo_root, cache)
+    query_package(package, prefs, repo_root, cache)
 }
 
 fn packages_needing_search_prefetch(

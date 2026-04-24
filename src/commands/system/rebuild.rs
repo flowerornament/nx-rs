@@ -5,7 +5,9 @@ use crate::commands::context::SystemContext;
 use crate::infra::shell::{
     first_nonempty_output, run_captured_command, run_indented_command_collecting,
 };
-use crate::infra::timing::{TimingRecord, TimingSession, append_timing, short_hash, timings_path};
+use crate::infra::timing::{
+    TimingCommand, TimingRecord, TimingSession, append_timing, timing_detail_lines, timings_path,
+};
 use crate::output::printer::Printer;
 
 use crate::domain::manifest::Manifest;
@@ -13,10 +15,14 @@ use crate::domain::manifest::Manifest;
 use super::{DARWIN_REBUILD, lint::run_routing_lint};
 
 pub fn cmd_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> i32 {
-    cmd_rebuild_with_command(args, ctx, "rebuild")
+    cmd_rebuild_with_command(args, ctx, TimingCommand::Rebuild)
 }
 
-pub fn cmd_rebuild_with_command(args: &RebuildArgs, ctx: &SystemContext<'_>, command: &str) -> i32 {
+pub fn cmd_rebuild_with_command(
+    args: &RebuildArgs,
+    ctx: &SystemContext<'_>,
+    command: TimingCommand,
+) -> i32 {
     if let Err(code) = ctx.require_manifest_system_safe("rebuild") {
         return code;
     }
@@ -30,30 +36,19 @@ pub fn cmd_rebuild_with_command(args: &RebuildArgs, ctx: &SystemContext<'_>, com
 
 fn run_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>, timing: &mut TimingSession) -> i32 {
     if args.preflight {
-        let routing_code = timing.record_phase("routing-preflight", || {
-            let result = check_routing_preflight(ctx);
-            let status = phase_status(result.as_ref());
-            (result.err(), status)
-        });
+        let routing_code =
+            timing.record_result_phase("routing-preflight", || check_routing_preflight(ctx));
         if let Some(code) = routing_code {
             return code;
         }
     }
 
-    let git_code = timing.record_phase("git-preflight", || {
-        let result = check_git_preflight(ctx);
-        let status = phase_status(result.as_ref());
-        (result.err(), status)
-    });
+    let git_code = timing.record_result_phase("git-preflight", || check_git_preflight(ctx));
     if let Some(code) = git_code {
         return code;
     }
 
-    let flake_code = timing.record_phase("flake-check", || {
-        let result = check_flake(ctx);
-        let status = phase_status(result.as_ref());
-        (result.err(), status)
-    });
+    let flake_code = timing.record_result_phase("flake-check", || check_flake(ctx));
     if let Some(code) = flake_code {
         return code;
     }
@@ -64,15 +59,7 @@ fn run_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>, timing: &mut TimingS
         return 0;
     }
 
-    timing.record_phase("activation", || {
-        let code = do_rebuild(args, ctx);
-        let status = if code == 0 { "ok" } else { "failed" }.to_string();
-        (code, status)
-    })
-}
-
-fn phase_status(result: Result<&(), &i32>) -> String {
-    result.map_or_else(|code| format!("failed:{code}"), |()| "ok".to_string())
+    timing.record_exit_phase("activation", || do_rebuild(args, ctx))
 }
 
 fn finish_timing(args: &RebuildArgs, ctx: &SystemContext<'_>, record: &TimingRecord) {
@@ -93,17 +80,8 @@ fn print_timing(record: &TimingRecord, path: &std::path::Path) {
     println!();
     Printer::heading("Rebuild Timing");
     Printer::detail(&format!("total: {}ms ({})", record.total_ms, record.status));
-    if let Some(head) = &record.repo_head {
-        Printer::detail(&format!("git: {}", short_hash(head)));
-    }
-    if let Some(hash) = &record.flake_lock_hash {
-        Printer::detail(&format!("flake.lock: {hash}"));
-    }
-    for phase in &record.phases {
-        Printer::detail(&format!(
-            "{}: {}ms ({})",
-            phase.name, phase.duration_ms, phase.status
-        ));
+    for line in timing_detail_lines(record) {
+        Printer::detail(&line);
     }
     Printer::detail(&format!("recorded: {}", path.display()));
     Printer::detail(&format!(

@@ -44,7 +44,7 @@ const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
     "system",
     "hosts",
 ];
-const REBUILD_TIMING_HEAD_ARGS: &[&str] = &["-C", REPO_ROOT_TOKEN, "rev-parse", "HEAD"];
+const REBUILD_TIMING_HEAD_ARGS: &[&str] = &["rev-parse", "HEAD"];
 const REBUILD_FLAKE_ARGS: &[&str] = &["flake", "check", REPO_ROOT_TOKEN];
 
 const UPGRADE_COMMIT_ARGS: &[&str] = &["upgrade", "--skip-brew", "--skip-rebuild", "--no-ai"];

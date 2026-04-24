@@ -9,6 +9,7 @@ use crate::domain::source::{
     ALL_PACKAGE_SOURCES, PackageSource, SourcePreferences, SourceResult, normalize_name,
     sort_results,
 };
+use crate::infra::hash::short_hash;
 
 // Shared cache primitives used by query/install flows and cache unit coverage.
 const CACHE_SCHEMA_VERSION: u64 = 1;
@@ -252,7 +253,7 @@ fn load_entries(cache_path: &Path) -> HashMap<String, Value> {
 
 /// Truncate a revision hash to 12 characters (git short hash convention).
 fn truncate_rev(rev: &str) -> String {
-    rev[..rev.len().min(12)].to_string()
+    short_hash(rev).to_string()
 }
 
 fn dirs_cache() -> PathBuf {

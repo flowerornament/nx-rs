@@ -1,5 +1,7 @@
 use crate::cli::ProfileArgs;
-use crate::infra::timing::{read_recent_timings, short_hash, timings_path};
+use crate::infra::timing::{
+    read_recent_timings, timing_detail_lines, timing_summary_line, timings_path,
+};
 use crate::output::printer::Printer;
 
 pub fn cmd_profile(args: &ProfileArgs) -> i32 {
@@ -33,21 +35,9 @@ pub fn cmd_profile(args: &ProfileArgs) -> i32 {
     Printer::heading(&format!("Recent Rebuild Timings ({})", records.len()));
     for record in records.iter().rev() {
         println!();
-        Printer::body(&format!(
-            "{} {}ms ({})",
-            record.command, record.total_ms, record.status
-        ));
-        if let Some(head) = &record.repo_head {
-            Printer::sub_detail(&format!("git: {}", short_hash(head)));
-        }
-        if let Some(hash) = &record.flake_lock_hash {
-            Printer::sub_detail(&format!("flake.lock: {hash}"));
-        }
-        for phase in &record.phases {
-            Printer::sub_detail(&format!(
-                "{}: {}ms ({})",
-                phase.name, phase.duration_ms, phase.status
-            ));
+        Printer::body(&timing_summary_line(record));
+        for line in timing_detail_lines(record) {
+            Printer::sub_detail(&line);
         }
     }
 

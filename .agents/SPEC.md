@@ -49,6 +49,7 @@ Known commands:
 - `info`
 - `status`
 - `installed`
+- `profile`
 - `lint`
 - `undo`
 - `update`
@@ -104,6 +105,8 @@ Defined at root callback:
 - `installed`
   - args: `<packages...>`
   - options: `--json`, `--show-location`
+- `profile`
+  - options: `--limit`, `--json`
 - `lint`
   - options: `--json`
 - `undo`
@@ -113,7 +116,7 @@ Defined at root callback:
 - `test`
   - no args
 - `rebuild`
-  - options: `--preflight`
+  - options: `--preflight`, `--timing`
   - passthrough args accepted
 - `upgrade`
   - args: `[inputs...]`
@@ -148,6 +151,7 @@ Defined at root callback:
 - `info`: `0` (including not-found); clap usage errors exit `2`.
 - `status`: `0`.
 - `installed`: `0` only if all requested packages are installed; clap usage errors exit `2`.
+- `profile`: `0` when timing records render successfully; `1` on timing file read/render failure.
 - `lint`: `0` when routing metadata passes; otherwise `1`.
 - `undo`: `0`.
 - `update`: `0` on flake update success, else `1`.

@@ -159,6 +159,7 @@ Requirements:
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `NX_REPO_ROOT` | No | auto-detect from `cwd` / `flake.nix` | Absolute/relative path override for the target Nix configuration repository. |
+| `NX_PROFILE_PATH` | No | `~/.local/state/nx/timings.jsonl` | Override where rebuild/upgrade timing records are written and read. |
 | `NX_RS_SOPS_BIN` | No | `sops` | Override the `sops` executable used by `nx secret add`. |
 | `NX_RS_AUTO_REFRESH` | No | enabled | Controls auto-refresh of a local cargo-installed `nx` binary before `rebuild`/`upgrade`. Set to `0`, `false`, or `no` to disable. |
 | `NO_COLOR` | No | unset | Disables colored output when set. |
@@ -210,7 +211,9 @@ System and host maintenance:
 ```bash
 nx lint
 nx rebuild --preflight
+nx rebuild --timing
 nx rebuild
+nx profile --limit 20
 nx upgrade
 nx upgrade nx-rs
 nx generations status
@@ -396,7 +399,18 @@ Runs repo quality checks. This is the CLI entry point for validating the managed
 Runs `darwin-rebuild switch` for the managed repo.
 
 - Use `--preflight` to stop after lint, git, and flake checks without switching.
+- Use `--timing` to print phase timings after recording them locally.
 - Additional args after `--` pass through to the underlying `darwin-rebuild` command.
+
+---
+
+#### `profile`
+
+Shows recent local rebuild and upgrade timing records.
+
+- Defaults to `~/.local/state/nx/timings.jsonl`.
+- Set `NX_PROFILE_PATH` to read/write a different timing file.
+- Use `--json` for machine-readable records.
 
 ---
 

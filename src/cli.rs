@@ -20,6 +20,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "info",
     "status",
     "installed",
+    "profile",
     "lint",
     "undo",
     "update",
@@ -42,12 +43,13 @@ const LIST_HELP: &str = "Examples:\n  nx list\n  nx list nix --verbose\n  nx lis
 const INFO_HELP: &str = "Examples:\n  nx info ripgrep\n  nx info ripgrep --nur\n  nx info ripgrep --source homebrew\n  nx info ripgrep --verbose\n\nNotes:\n  - `info` shares the package-query pipeline with `search` and install resolution.\n  - `--verbose` includes query diagnostics in addition to package metadata.";
 const STATUS_HELP: &str = "Examples:\n  nx status\n  nx status --json\n\nNotes:\n  - `status` is a read-only package distribution summary for the managed repo.";
 const INSTALLED_HELP: &str = "Examples:\n  nx installed ripgrep fd\n  nx installed ripgrep --show-location\n  nx installed ripgrep fd --json\n\nNotes:\n  - Exit status is success only when every requested package is installed.";
+const PROFILE_HELP: &str = "Examples:\n  nx profile\n  nx profile --limit 20\n  nx profile --json\n\nNotes:\n  - `profile` reads local rebuild timing records from ~/.local/state/nx/timings.jsonl.\n  - Set NX_PROFILE_PATH to override the timing file location.";
 const LINT_HELP: &str = "Examples:\n  nx lint\n  nx lint --json\n\nNotes:\n  - `lint` checks first-line `# nx:` routing metadata and routing keyword overlap.";
 const UNDO_HELP: &str = "Examples:\n  nx undo\n  nx undo --yes\n\nNotes:\n  - `undo` reverts modified tracked files via git checkout and prompts by default.";
 const UPDATE_HELP: &str = "Examples:\n  nx update\n  nx update -- --commit-lock-file\n  nx update -- --flake ./hosts/macbook\n\nNotes:\n  - Additional args after `--` are passed directly to `nix flake update`.";
 const TEST_HELP: &str =
     "Examples:\n  nx test\n\nNotes:\n  - `test` runs the managed repo quality gate (`just ci`).";
-const REBUILD_HELP: &str = "Examples:\n  nx rebuild\n  nx rebuild --preflight\n  nx rebuild -- --show-trace\n\nNotes:\n  - `--preflight` stops after lint, git, and flake checks.\n  - Additional args after `--` are passed directly to `darwin-rebuild switch`.";
+const REBUILD_HELP: &str = "Examples:\n  nx rebuild\n  nx rebuild --preflight\n  nx rebuild --timing\n  nx rebuild -- --show-trace\n\nNotes:\n  - `--preflight` stops after lint, git, and flake checks.\n  - Rebuild timings are recorded locally and can be reviewed with `nx profile`.\n  - Additional args after `--` are passed directly to `darwin-rebuild switch`.";
 const GENERATIONS_HELP: &str = "Examples:\n  nx generations status\n  nx generations plan\n  nx generations prune --dry-run\n  nx generations prune --keep 5 --kind darwin\n\nNotes:\n  - `nx generations` is host-scoped and works from any directory.\n  - Use `plan` or `prune --dry-run` to preview exact prune/GC commands.";
 const GENERATIONS_PRUNE_HELP: &str = "Examples:\n  nx generations prune --dry-run\n  nx generations prune --yes\n  nx generations prune --keep 5 --kind darwin\n  nx generations prune --kind home-manager --no-gc\n\nNotes:\n  - `--dry-run` renders the same plan as `nx generations plan`.\n  - By default, `prune` asks for confirmation before mutating the host.";
 const UPGRADE_HELP: &str = "Examples:\n  nx upgrade\n  nx upgrade --dry-run\n  nx upgrade nx-rs\n  nx upgrade nx-rs anneal -- --show-trace\n\nNotes:\n  - Without positional inputs, `upgrade` runs the full repo-wide flow: flake update, brew, rebuild, and commit.\n  - With positional inputs, `upgrade` updates only those flake inputs and skips the brew phase by default.";
@@ -136,6 +138,8 @@ pub enum CommandKind {
     Status(StatusArgs),
     #[command(about = "Check whether package(s) are installed")]
     Installed(InstalledArgs),
+    #[command(about = "Show recent local rebuild timings")]
+    Profile(ProfileArgs),
     #[command(about = "Check nx routing annotations and keyword conflicts")]
     Lint(LintArgs),
     #[command(about = "Revert modified tracked files via git checkout")]
@@ -617,6 +621,19 @@ pub struct InstalledArgs {
     pub show_location: bool,
 }
 
+#[derive(Debug, Clone, Parser)]
+#[command(after_long_help = PROFILE_HELP)]
+pub struct ProfileArgs {
+    #[arg(
+        long,
+        default_value_t = 10,
+        help = "Number of recent timing records to show"
+    )]
+    pub limit: usize,
+    #[arg(long, help = "Emit machine-readable JSON output")]
+    pub json: bool,
+}
+
 #[derive(Debug, Clone, Parser, Default)]
 #[command(after_long_help = LINT_HELP)]
 pub struct LintArgs {
@@ -649,6 +666,8 @@ pub struct RebuildArgs {
         help = "Run lint, git, and flake preflight checks without rebuilding"
     )]
     pub preflight: bool,
+    #[arg(long, help = "Print rebuild phase timings after recording them")]
+    pub timing: bool,
     #[arg(
         last = true,
         help = "Arguments passed through to the underlying darwin-rebuild command"
@@ -1448,7 +1467,8 @@ mod tests {
         assert_subcommand_local_long_flags("undo", &["yes"]);
         assert_subcommand_local_long_flags("update", &[]);
         assert_subcommand_local_long_flags("test", &[]);
-        assert_subcommand_local_long_flags("rebuild", &["preflight"]);
+        assert_subcommand_local_long_flags("rebuild", &["preflight", "timing"]);
+        assert_subcommand_local_long_flags("profile", &["limit", "json"]);
         assert_subcommand_local_long_flags("version", &["json"]);
         assert_subcommand_local_long_flags("doctor", &["json", "verbose"]);
     }

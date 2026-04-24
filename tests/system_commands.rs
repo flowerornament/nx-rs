@@ -40,6 +40,7 @@ const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
     "system",
     "hosts",
 ];
+const REBUILD_TIMING_HEAD_ARGS: &[&str] = &["-C", REPO_ROOT_TOKEN, "rev-parse", "HEAD"];
 const REBUILD_FLAKE_ARGS: &[&str] = &["flake", "check", REPO_ROOT_TOKEN];
 const TEST_CI_ARGS: &[&str] = &["ci"];
 
@@ -79,6 +80,7 @@ const TEST_FAILURE_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
 const LINT_SUCCESS_CALLS: &[ExpectedCall] = &[];
 
 const REBUILD_SUCCESS_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
     ExpectedCall::new(
@@ -100,29 +102,30 @@ const REBUILD_SUCCESS_CALLS: &[ExpectedCall] = &[
     ),
 ];
 
-const REBUILD_GIT_FAIL_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
-    "git",
-    EXPECTED_CWD_REPO_ROOT,
-    REBUILD_PREFLIGHT_ARGS,
-)];
+const REBUILD_GIT_FAIL_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+];
 
-const REBUILD_UNTRACKED_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
-    "git",
-    EXPECTED_CWD_REPO_ROOT,
-    REBUILD_PREFLIGHT_ARGS,
-)];
+const REBUILD_UNTRACKED_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+];
 
 const REBUILD_FLAKE_FAIL_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
 ];
 
 const REBUILD_CHECK_ONLY_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
 ];
 
 const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
     ExpectedCall::new(

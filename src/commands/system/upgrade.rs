@@ -11,7 +11,7 @@ use crate::infra::shell::{
 };
 use crate::output::printer::Printer;
 
-use super::cmd_rebuild;
+use super::cmd_rebuild_with_command;
 
 // ─── upgrade ─────────────────────────────────────────────────────────────────
 
@@ -45,7 +45,7 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
         }
         let rebuild = RebuildArgs::default();
         let system_ctx = ctx.system_context();
-        if cmd_rebuild(&rebuild, &system_ctx) != 0 {
+        if cmd_rebuild_with_command(&rebuild, &system_ctx, "upgrade") != 0 {
             return 1;
         }
     }

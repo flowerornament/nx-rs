@@ -1,5 +1,7 @@
 #[path = "support/bin.rs"]
 mod support_bin;
+#[path = "support/stubs.rs"]
+mod support_stubs;
 #[path = "support/tree.rs"]
 mod support_tree;
 
@@ -11,6 +13,7 @@ use std::process::{Command, Stdio};
 use tempfile::TempDir;
 
 use support_bin::resolve_nx_bin;
+use support_stubs::{LOG_FILE_NAME, STUB_DIR_NAME, install_stubs, prepend_path};
 use support_tree::copy_tree;
 
 const STALE_MANIFEST: &str = r#"
@@ -120,6 +123,11 @@ fn run_nx_repo_base_with_stale_manifest(
     write_stale_manifest(tmp.path());
 
     let home_dir = TempDir::new()?;
+    let stub_dir = tmp.path().join(STUB_DIR_NAME);
+    fs::create_dir_all(&stub_dir)?;
+    install_stubs(&stub_dir)?;
+    let log_path = tmp.path().join(LOG_FILE_NAME);
+
     write_install_cache(home_dir.path());
     let output = Command::new(nx_bin)
         .args(["--plain", "--minimal"])
@@ -129,6 +137,8 @@ fn run_nx_repo_base_with_stale_manifest(
         .env("HOME", home_dir.path())
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
+        .env("NX_SYSTEM_IT_LOG", &log_path)
+        .env("PATH", prepend_path(&stub_dir))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

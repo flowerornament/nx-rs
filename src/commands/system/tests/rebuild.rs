@@ -4,6 +4,7 @@ use super::*;
 fn rebuild_command_includes_base_args() {
     let args = RebuildArgs {
         preflight: false,
+        timing: false,
         passthrough: Vec::new(),
     };
     let result = build_rebuild_command("/Users/test/.nix-config", &args);
@@ -17,6 +18,7 @@ fn rebuild_command_includes_base_args() {
 fn rebuild_command_includes_passthrough_args() {
     let args = RebuildArgs {
         preflight: false,
+        timing: false,
         passthrough: vec!["--show-trace".into()],
     };
     let result = build_rebuild_command("/test", &args);
@@ -53,6 +55,7 @@ fn rebuild_command_uses_manifest_rebuild_command() {
 
     let args = RebuildArgs {
         preflight: false,
+        timing: false,
         passthrough: Vec::new(),
     };
     let result = build_rebuild_command_with_manifest("/test", &args, Some(&manifest));

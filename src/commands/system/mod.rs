@@ -6,7 +6,7 @@ mod update;
 mod upgrade;
 
 pub use lint::cmd_lint;
-pub use rebuild::cmd_rebuild;
+pub use rebuild::{cmd_rebuild, cmd_rebuild_with_command};
 pub use test::cmd_test;
 pub use undo::cmd_undo;
 pub use update::cmd_update;

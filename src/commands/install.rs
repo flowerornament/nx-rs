@@ -8,7 +8,7 @@ use crate::commands::context::AppContext;
 use crate::commands::shared::{
     SnippetMode, missing_argument_error, relative_location, show_dry_run_preview, show_snippet,
 };
-use crate::commands::system::cmd_rebuild;
+use crate::commands::system::cmd_rebuild_with_command;
 use crate::domain::location::PackageLocation;
 use crate::domain::plan::{
     InsertionMode, InstallPlan, build_install_plan, nix_manifest_candidates,
@@ -73,7 +73,7 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
     run_post_install_actions(success_count, args, ctx, || {
         let rebuild = RebuildArgs::default();
         let system_ctx = ctx.system_context();
-        cmd_rebuild(&rebuild, &system_ctx)
+        cmd_rebuild_with_command(&rebuild, &system_ctx, "install")
     });
 
     i32::from(success_count != args.packages.len())

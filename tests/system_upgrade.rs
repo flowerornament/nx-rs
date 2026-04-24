@@ -44,6 +44,7 @@ const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
     "system",
     "hosts",
 ];
+const REBUILD_TIMING_HEAD_ARGS: &[&str] = &["-C", REPO_ROOT_TOKEN, "rev-parse", "HEAD"];
 const REBUILD_FLAKE_ARGS: &[&str] = &["flake", "check", REPO_ROOT_TOKEN];
 
 const UPGRADE_COMMIT_ARGS: &[&str] = &["upgrade", "--skip-brew", "--skip-rebuild", "--no-ai"];
@@ -230,6 +231,7 @@ const UPGRADE_BREW_NO_UPDATES_CALLS: &[ExpectedCall] = &[
 const UPGRADE_REBUILD_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
     ExpectedCall::new(
@@ -252,6 +254,7 @@ const UPGRADE_REBUILD_CALLS: &[ExpectedCall] = &[
 const UPGRADE_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
     ExpectedCall::new(

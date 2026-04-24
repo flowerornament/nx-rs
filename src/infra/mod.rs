@@ -10,3 +10,4 @@ pub mod query_info;
 pub mod self_refresh;
 pub mod shell;
 pub mod sources;
+pub mod timing;

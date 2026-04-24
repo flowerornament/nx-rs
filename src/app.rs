@@ -12,6 +12,7 @@ use crate::commands::host::cmd_generations;
 use crate::commands::init::cmd_init;
 use crate::commands::install::cmd_install;
 use crate::commands::meta::cmd_version;
+use crate::commands::profile::cmd_profile;
 use crate::commands::query::{cmd_info, cmd_installed, cmd_list, cmd_status, cmd_where};
 use crate::commands::remove::cmd_remove;
 use crate::commands::search::cmd_search;
@@ -41,6 +42,9 @@ pub fn execute(cli: Cli) -> i32 {
     }
     if let Some(args) = host_generations_args(&cli.command) {
         return cmd_generations(args, &HostContext::new(&printer));
+    }
+    if let CommandKind::Profile(args) = &cli.command {
+        return cmd_profile(args);
     }
 
     let needs_refresh = matches!(
@@ -86,6 +90,7 @@ pub fn execute(cli: Cli) -> i32 {
         CommandKind::Info(args) => cmd_info(&args, &ctx.query_context()),
         CommandKind::Status(args) => cmd_status(&args, &ctx.query_context()),
         CommandKind::Installed(args) => cmd_installed(&args, &ctx.query_context()),
+        CommandKind::Profile(_) => unreachable!("profile handled before repo setup"),
         CommandKind::Lint(args) => cmd_lint(&args, &ctx.system_context()),
         CommandKind::Undo(args) => cmd_undo(&args, &ctx.repo_context()),
         CommandKind::Update(args) => cmd_update(&args, &ctx.repo_context()),

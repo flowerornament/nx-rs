@@ -6,6 +6,7 @@ pub mod host;
 pub mod init;
 pub mod install;
 pub mod meta;
+pub mod profile;
 pub mod query;
 pub mod remove;
 pub mod search;

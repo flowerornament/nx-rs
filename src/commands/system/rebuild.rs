@@ -23,6 +23,7 @@ const SPLIT_DARWIN_ENV: &str = "NX_SPLIT_DARWIN";
 const DARWIN_HOST_ENV: &str = "NX_DARWIN_HOST";
 const SYSTEM_PROFILE_PATH_ENV: &str = "NX_SYSTEM_PROFILE_PATH";
 const SYSTEM_PROFILE: &str = "/nix/var/nix/profiles/system";
+const SUDO_SET_HOME_ARG: &str = "-H";
 const ROOT_HOME_ENV: &str = "HOME=/var/root";
 const NIX_REMOTE_DAEMON_ENV: &str = "NIX_REMOTE=daemon";
 const ROOT_ENV_WRAPPER: &[&str] = &["/usr/bin/env", ROOT_HOME_ENV, NIX_REMOTE_DAEMON_ENV];
@@ -519,7 +520,8 @@ where
     F: FnMut(StreamName, &str),
 {
     if use_sudo {
-        let mut sudo_args = Vec::with_capacity(args.len() + ROOT_ENV_WRAPPER.len() + 1);
+        let mut sudo_args = Vec::with_capacity(args.len() + ROOT_ENV_WRAPPER.len() + 2);
+        sudo_args.push(SUDO_SET_HOME_ARG);
         sudo_args.extend(ROOT_ENV_WRAPPER);
         sudo_args.push(program);
         sudo_args.extend(args.iter().copied());

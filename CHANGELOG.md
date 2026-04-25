@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.5.7 - 2026-04-25
+
+- added `sudo -H` to split Darwin profile updates and activation so sudo sets root's home before `nx` applies its root Nix environment wrapper, suppressing macOS `$HOME` ownership warnings during `nx rebuild` and `nx upgrade`
+
 ## v1.5.6 - 2026-04-25
 
 - made `nx upgrade` force-realize changed GitHub flake inputs with `nix flake prefetch --json` before flake check/rebuild so lazy Nix source-cache misses do not surface as rebuild failures

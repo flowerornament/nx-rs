@@ -54,6 +54,7 @@ const REBUILD_PASSTHROUGH_ARGS: &[&str] = &["rebuild", "--", "--show-trace", "fo
 const REBUILD_BASE_ARGS: &[&str] = &["rebuild"];
 const REBUILD_CHECK_ONLY_ARGS: &[&str] = &["rebuild", "--preflight"];
 const UNDO_BASE_ARGS: &[&str] = &["undo"];
+const SUDO_SET_HOME_ARG: &str = "-H";
 const ROOT_ENV_PROGRAM: &str = "/usr/bin/env";
 const ROOT_HOME_ENV_ARG: &str = "HOME=/var/root";
 const NIX_REMOTE_DAEMON_ENV_ARG: &str = "NIX_REMOTE=daemon";
@@ -176,6 +177,7 @@ const SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
         "sudo",
         EXPECTED_CWD_REPO_ROOT,
         &[
+            SUDO_SET_HOME_ARG,
             ROOT_ENV_PROGRAM,
             ROOT_HOME_ENV_ARG,
             NIX_REMOTE_DAEMON_ENV_ARG,
@@ -190,6 +192,7 @@ const SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
         "sudo",
         EXPECTED_CWD_REPO_ROOT,
         &[
+            SUDO_SET_HOME_ARG,
             ROOT_ENV_PROGRAM,
             ROOT_HOME_ENV_ARG,
             NIX_REMOTE_DAEMON_ENV_ARG,

@@ -508,6 +508,7 @@ High-level phases:
   - non-dry-run with no positional inputs: stream `nix flake update`
   - non-dry-run with positional inputs: stream `nix flake update <input...>`, preserving CLI order
   - load new lock and diff
+  - for changed GitHub-backed inputs, run `nix flake prefetch --json github:<owner>/<repo>/<rev>` to force-realize lazy flake sources before check/rebuild
   - fetch change info and summaries
 2. Brew phase:
   - repo-wide upgrades run brew unless `--skip-brew`
@@ -539,7 +540,12 @@ Dry-run behavior:
   - fetches `gh auth token` and passes it via `NIX_CONFIG=access-tokens = github.com=...` when available.
   - runs either `nix flake update` or `nix flake update <input...>` depending on whether targeted inputs were requested.
   - retries once if output indicates known fetcher-cache corruption.
-  - corruption retry clears `~/.cache/nix/fetcher-cache-v4.sqlite`.
+  - corruption retry clears `~/.cache/nix/gitv3` and `~/.cache/nix/fetcher-cache-v4.sqlite`.
+- Changed-input prefetch:
+  - runs only for changed inputs with a non-empty new revision.
+  - uses the same GitHub access token bridge as flake update.
+  - retries once after clearing the user nix git/fetcher cache if prefetch output reports lazy source object lookup failures.
+  - failure is warning-only; the later flake check/rebuild remains authoritative.
 - `parse_flake_lock`:
   - supports `github` and `tarball` inputs.
   - skips `file` type.

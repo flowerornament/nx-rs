@@ -131,10 +131,23 @@ case "$program" in
           exit 1
         fi
       fi
-      if [ "$mode" = "upgrade_flake_changed" ]; then
+      if [ "$mode" = "upgrade_flake_changed" ] || [ "$mode" = "upgrade_prefetch_cache_corruption" ]; then
         printf '%s' "${NX_SYSTEM_IT_UPGRADE_NEW_LOCK:?NX_SYSTEM_IT_UPGRADE_NEW_LOCK must be set}" > flake.lock
       fi
       echo "stub nix flake command ok"
+      exit 0
+    fi
+
+    if [ "${1:-}" = "flake" ] && [ "${2:-}" = "prefetch" ]; then
+      if [ "$mode" = "upgrade_prefetch_cache_corruption" ]; then
+        marker="${HOME}/.nx-system-it-prefetch-cache-corruption-once"
+        if [ ! -f "$marker" ]; then
+          : > "$marker"
+          echo "error: looking up file '«github:NixOS/nixpkgs/bbbbbbb»/README.md': object not found - no match for id (abc123)" >&2
+          exit 1
+        fi
+      fi
+      echo '{"storePath":"/nix/store/source","hash":"sha256-test"}'
       exit 0
     fi
 

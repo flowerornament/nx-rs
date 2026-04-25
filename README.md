@@ -429,6 +429,7 @@ Runs the upgrade flow for either the whole repo or named flake inputs.
 - Use `--dry-run` to preview without mutating files.
 - `nx upgrade` with no positional inputs runs the full repo-wide flow: flake update, Homebrew update/upgrade, rebuild, and git commit.
 - `nx upgrade <input...>` updates only the named flake inputs via `nix flake update <input...>`.
+- After changed GitHub-backed inputs are written to `flake.lock`, `nx upgrade` prefetches those exact revisions so Nix lazy source caches are warm before flake check and rebuild.
 - Targeted input upgrades skip the Homebrew phase by default.
 - Use `--skip-brew`, `--skip-rebuild`, or `--skip-commit` to trim the flow further.
 - Use `--no-ai` to disable AI-generated summaries and recovery prompts.

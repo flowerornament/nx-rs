@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.6 - 2026-04-25
+
+- made `nx upgrade` force-realize changed GitHub flake inputs with `nix flake prefetch --json` before flake check/rebuild so lazy Nix source-cache misses do not surface as rebuild failures
+- expanded Nix cache-corruption recovery to catch `object not found - no match for id` source lookup errors and clear both the user git source cache and fetcher cache before retrying
+
 ## v1.5.5 - 2026-04-24
 
 - added `nx clean-caches` for scanning and cleaning local development cache directories

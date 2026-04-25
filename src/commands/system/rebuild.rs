@@ -287,9 +287,10 @@ fn do_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> (i32, Vec<TimingPh
 
         if !retried_cache_corruption && super::upgrade::is_cache_corruption(&output) {
             retried_cache_corruption = true;
+            super::upgrade::clear_user_git_cache();
             ctx.printer
                 .warn("Nix git cache corruption detected, clearing cache and retrying");
-            clear_root_git_cache();
+            clear_root_git_cache_noninteractive();
             continue;
         }
 
@@ -700,9 +701,9 @@ fn clear_root_tarball_pack_cache() {
 ///
 /// Removes both the gitv3 object store (where corrupt git trees live)
 /// and the fetcher-cache sqlite (which indexes them).
-fn clear_root_git_cache() {
+fn clear_root_git_cache_noninteractive() {
     let gitv3_dir = "/var/root/.cache/nix/gitv3";
     let fetcher_db = "/var/root/.cache/nix/fetcher-cache-v4.sqlite";
-    let _ = run_captured_command("sudo", &["rm", "-rf", gitv3_dir], None);
-    let _ = run_captured_command("sudo", &["rm", "-f", fetcher_db], None);
+    let _ = run_captured_command("sudo", &["-n", "rm", "-rf", gitv3_dir], None);
+    let _ = run_captured_command("sudo", &["-n", "rm", "-f", fetcher_db], None);
 }

@@ -102,6 +102,12 @@ const UPGRADE_DRY_RUN_BREW_ARGS: &[&str] = &[
 ];
 const GH_AUTH_TOKEN_ARGS: &[&str] = &["auth", "token"];
 const GH_NIXPKGS_COMPARE_ARGS: &[&str] = &["api", "repos/NixOS/nixpkgs/compare/aaaaaaa...bbbbbbb"];
+const NIXPKGS_PREFETCH_ARGS: &[&str] = &[
+    "flake",
+    "prefetch",
+    "--json",
+    "github:NixOS/nixpkgs/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+];
 const UPGRADE_NIX_CONFIG: &str = "access-tokens = github.com=ghp_system_matrix_token";
 
 const UPGRADE_FLAKE_LOCK_OLD: &str = r#"{
@@ -157,6 +163,7 @@ struct UpgradeCase {
 const UPGRADE_COMMIT_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
     ExpectedCall::new(
         "git",
@@ -179,6 +186,7 @@ const UPGRADE_COMMIT_CALLS: &[ExpectedCall] = &[
 const UPGRADE_SKIP_COMMIT_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
 ];
 
@@ -215,6 +223,14 @@ const UPGRADE_CACHE_RETRY_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+];
+
+const UPGRADE_PREFETCH_CACHE_RETRY_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
 ];
 
 const UPGRADE_NO_CHANGE_NO_COMMIT_CALLS: &[ExpectedCall] = &[
@@ -391,6 +407,14 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
         ],
     },
     UpgradeCase {
+        id: "upgrade_prefetch_cache_corruption_retries_once",
+        cli_args: UPGRADE_SKIP_COMMIT_ARGS,
+        mode: "upgrade_prefetch_cache_corruption",
+        expected_exit: 0,
+        expected_calls: UPGRADE_PREFETCH_CACHE_RETRY_CALLS,
+        stdout_contains: &["Flake sources ready"],
+    },
+    UpgradeCase {
         id: "upgrade_brew_no_updates_short_circuit",
         cli_args: UPGRADE_BREW_ARGS,
         mode: "success",
@@ -495,14 +519,20 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &UpgradeCase) -> Result<(), B
 }
 
 fn seed_flake_lock_if_needed(repo_root: &Path, mode: &str) -> Result<(), Box<dyn Error>> {
-    if mode == "upgrade_flake_changed" {
+    if matches!(
+        mode,
+        "upgrade_flake_changed" | "upgrade_prefetch_cache_corruption"
+    ) {
         fs::write(repo_root.join("flake.lock"), UPGRADE_FLAKE_LOCK_OLD)?;
     }
     Ok(())
 }
 
 fn seed_home_state_if_needed(home_dir: &Path, mode: &str) -> Result<(), Box<dyn Error>> {
-    if mode == "upgrade_cache_corruption" {
+    if matches!(
+        mode,
+        "upgrade_cache_corruption" | "upgrade_prefetch_cache_corruption"
+    ) {
         let cache_path = fetcher_cache_path(home_dir);
         if let Some(parent) = cache_path.parent() {
             fs::create_dir_all(parent)?;
@@ -544,13 +574,17 @@ fn assert_repo_state(
 
 fn expected_mutated_paths(mode: &str) -> &'static [&'static str] {
     match mode {
-        "upgrade_flake_changed" => &["flake.lock"],
+        "upgrade_flake_changed" | "upgrade_prefetch_cache_corruption" => &["flake.lock"],
         _ => &[],
     }
 }
 
 fn assert_home_state(case: &UpgradeCase, home_dir: &Path, stdout: &str, stderr: &str) {
-    if case.id != "upgrade_flake_update_cache_corruption_retries_once" {
+    if !matches!(
+        case.id,
+        "upgrade_flake_update_cache_corruption_retries_once"
+            | "upgrade_prefetch_cache_corruption_retries_once"
+    ) {
         return;
     }
 

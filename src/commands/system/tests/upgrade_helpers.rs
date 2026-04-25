@@ -138,12 +138,36 @@ fn cache_corruption_detected() {
     assert!(is_cache_corruption(
         "error: adding a file to a tree builder during nix fetch"
     ));
+    assert!(is_cache_corruption(
+        "error: looking up file '«github:owner/repo/rev»/README.md': object not found - no match for id (abc123)"
+    ));
 }
 
 #[test]
 fn cache_corruption_not_detected_for_other_errors() {
     assert!(!is_cache_corruption("error: something unrelated"));
     assert!(!is_cache_corruption(""));
+}
+
+#[test]
+fn flake_prefetch_ref_uses_new_github_revision() {
+    let change = sample_input_change();
+    let prefetch = flake_prefetch_ref(&change).expect("prefetch ref");
+
+    assert_eq!(prefetch.name, "home-manager");
+    assert_eq!(prefetch.short_rev, "bbbbbbb");
+    assert_eq!(
+        prefetch.flake_ref,
+        "github:nix-community/home-manager/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    );
+}
+
+#[test]
+fn flake_prefetch_ref_skips_inputs_without_prefetch_ref() {
+    let mut change = sample_input_change();
+    change.prefetch_ref = None;
+
+    assert!(flake_prefetch_ref(&change).is_none());
 }
 
 #[test]

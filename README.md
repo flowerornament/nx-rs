@@ -85,6 +85,7 @@ Then include the module in your Home Manager configuration:
     enable = true;
     repoRoot = "/Users/alice/code/nix-config";
     autoRefresh = false;
+    cleanCaches.skip = [ "huggingface" ];
   };
 }
 ```
@@ -97,6 +98,9 @@ Available module options:
 - `programs.nx.autoRefresh`
 - `programs.nx.sops.package`
 - `programs.nx.sops.bin`
+- `programs.nx.cleanCaches.codeRoots`
+- `programs.nx.cleanCaches.scanDepth`
+- `programs.nx.cleanCaches.skip`
 
 The module only manages binary installation and environment variables. Repo
 structure, manifests, and command behavior still live in the target Nix config
@@ -162,6 +166,9 @@ Requirements:
 | `NX_PROFILE_PATH` | No | `~/.local/state/nx/timings.jsonl` | Override where rebuild/upgrade timing records are written and read. |
 | `NX_RS_SOPS_BIN` | No | `sops` | Override the `sops` executable used by `nx secret add`. |
 | `NX_RS_AUTO_REFRESH` | No | enabled | Controls auto-refresh of a local cargo-installed `nx` binary before `rebuild`/`upgrade`. Set to `0`, `false`, or `no` to disable. |
+| `NX_CODE_ROOTS` | No | `~/code` | Colon-separated roots scanned by `nx clean-caches`; set to an empty string to disable code-root scans. |
+| `NX_CLEAN_SCAN_DEPTH` | No | `3` | Maximum directory depth for `nx clean-caches` code-root scans; values above `8` are clamped. |
+| `NX_CLEAN_SKIP` | No | unset | Comma-separated cache names for `nx clean-caches` to skip. |
 | `NO_COLOR` | No | unset | Disables colored output when set. |
 | `TERM` | No | shell/default | If set to `dumb`, color output is disabled. |
 
@@ -219,6 +226,7 @@ nx upgrade nx-rs
 nx generations status
 nx generations plan
 nx generations prune --dry-run
+nx clean-caches --dry-run
 ```
 
 Secrets:
@@ -446,6 +454,17 @@ Host-scoped retention and garbage-collection commands. These work from any direc
 - `nx generations prune` executes that plan, prompting by default.
 - Important flags: `--keep`, `--kind`, `--no-gc`, `--yes`, `--dry-run`.
 - `nx generations prune --dry-run` renders the same plan as `nx generations plan`.
+
+---
+
+#### `clean-caches`
+
+Scans host cache directories and common build artifacts, reports sizes, and cleans them after confirmation.
+
+- Supports `--dry-run` and `--yes`.
+- Code-root scans default to `~/code` and depth `3`; scan depth is capped at `8`.
+- Set `NX_CODE_ROOTS`, `NX_CLEAN_SCAN_DEPTH`, and `NX_CLEAN_SKIP` directly, or configure them declaratively with `programs.nx.cleanCaches`.
+- Valid skip names: `cargo-registry`, `uv`, `npm`, `homebrew`, `huggingface`, `puppeteer`, `playwright`, `xcode-derived`, `core-simulator`, `codex-sessions`, `codex-logs`, `claude-telemetry`, `claude-file-history`, `nix-gc`, `rust-targets`, `elixir-builds`, `node-modules`.
 
 ---
 

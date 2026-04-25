@@ -7,8 +7,14 @@ let
   };
   cfg = config.programs.nx;
   sopsCfg = cfg.sops;
+  cleanCachesCfg = cfg.cleanCaches;
   sessionVariables =
-    lib.optionalAttrs (cfg.repoRoot != null) {
+    {
+      NX_CODE_ROOTS = lib.concatStringsSep ":" cleanCachesCfg.codeRoots;
+      NX_CLEAN_SCAN_DEPTH = toString cleanCachesCfg.scanDepth;
+      NX_CLEAN_SKIP = lib.concatStringsSep "," cleanCachesCfg.skip;
+    }
+    // lib.optionalAttrs (cfg.repoRoot != null) {
       NX_REPO_ROOT = cfg.repoRoot;
     }
     // lib.optionalAttrs (!cfg.autoRefresh) {
@@ -67,6 +73,44 @@ in
         description = ''
           Optional path exported as `NX_RS_SOPS_BIN` when `nx secret add`
           should use a specific `sops` binary.
+        '';
+      };
+    };
+
+    cleanCaches = {
+      codeRoots = lib.mkOption {
+        type = lib.types.listOf (
+          lib.types.addCheck lib.types.str (value: value != "" && !lib.hasInfix ":" value)
+        );
+        default = [ "${config.home.homeDirectory}/code" ];
+        example = [ "/Users/alice/code" "/Volumes/work/code" ];
+        description = ''
+          Code roots scanned by `nx clean-caches` for build artifacts. Exported
+          as colon-separated `NX_CODE_ROOTS`; set to an empty list to disable
+          code-root scanning.
+        '';
+      };
+
+      scanDepth = lib.mkOption {
+        type = lib.types.addCheck lib.types.int (value: value >= 0 && value <= 8);
+        default = 3;
+        example = 5;
+        description = ''
+          Maximum directory depth searched below each clean-caches code root,
+          from 0 to 8.
+          Exported as `NX_CLEAN_SCAN_DEPTH`.
+        '';
+      };
+
+      skip = lib.mkOption {
+        type = lib.types.listOf (
+          lib.types.addCheck lib.types.str (value: value != "" && !lib.hasInfix "," value)
+        );
+        default = [ ];
+        example = [ "huggingface" "nix-gc" ];
+        description = ''
+          Cache names that `nx clean-caches` should skip. Exported as
+          comma-separated `NX_CLEAN_SKIP`.
         '';
       };
     };

@@ -53,7 +53,19 @@ const TEST_HELP: &str =
 const REBUILD_HELP: &str = "Examples:\n  nx rebuild\n  nx rebuild --preflight\n  nx rebuild --timing\n  nx rebuild -- --show-trace\n\nNotes:\n  - `--preflight` stops after lint, git, and flake checks.\n  - Rebuild timings are recorded locally and can be reviewed with `nx profile`.\n  - Darwin repos use split rebuilds by default; set `platform.split_rebuild = false` to opt out.\n  - Additional args after `--` are passed directly to `darwin-rebuild switch`.";
 const GENERATIONS_HELP: &str = "Examples:\n  nx generations status\n  nx generations plan\n  nx generations prune --dry-run\n  nx generations prune --keep 5 --kind darwin\n\nNotes:\n  - `nx generations` is host-scoped and works from any directory.\n  - Use `plan` or `prune --dry-run` to preview exact prune/GC commands.";
 const GENERATIONS_PRUNE_HELP: &str = "Examples:\n  nx generations prune --dry-run\n  nx generations prune --yes\n  nx generations prune --keep 5 --kind darwin\n  nx generations prune --kind home-manager --no-gc\n\nNotes:\n  - `--dry-run` renders the same plan as `nx generations plan`.\n  - By default, `prune` asks for confirmation before mutating the host.";
-const CLEAN_CACHES_HELP: &str = "Examples:\n  nx clean-caches\n  nx clean-caches --dry-run\n  nx clean-caches --yes\n\nNotes:\n  - Scans known cache and build artifact directories, reports sizes, and cleans them.\n  - Covers: cargo, uv, npm, Homebrew, Xcode, nix GC, Rust targets, Elixir _build, node_modules, AI agent data.\n  - Host-scoped: works from any directory.";
+const CLEAN_CACHES_HELP: &str = concat!(
+    "Examples:\n",
+    "  nx clean-caches\n",
+    "  nx clean-caches --dry-run\n",
+    "  nx clean-caches --yes\n",
+    "\n",
+    "Notes:\n",
+    "  - Scans known cache and build artifact directories, reports sizes, and cleans them.\n",
+    "  - Covers: cargo, uv, npm, Homebrew, Xcode, nix GC, Rust targets, Elixir _build, node_modules, AI agent data.\n",
+    "  - Host-scoped: works from any directory.\n",
+    "  - Configure with NX_CODE_ROOTS, NX_CLEAN_SCAN_DEPTH, and NX_CLEAN_SKIP.\n",
+    "  - Valid NX_CLEAN_SKIP names: cargo-registry, uv, npm, homebrew, huggingface, puppeteer, playwright, xcode-derived, core-simulator, codex-sessions, codex-logs, claude-telemetry, claude-file-history, nix-gc, rust-targets, elixir-builds, node-modules.",
+);
 const UPGRADE_HELP: &str = "Examples:\n  nx upgrade\n  nx upgrade --dry-run\n  nx upgrade nx-rs\n  nx upgrade nx-rs anneal -- --show-trace\n\nNotes:\n  - Without positional inputs, `upgrade` runs the full repo-wide flow: flake update, brew, rebuild, and commit.\n  - With positional inputs, `upgrade` updates only those flake inputs and skips the brew phase by default.";
 const SECRET_HELP: &str = "Examples:\n  nx secret add example_secret_key --value '<token>'\n  printf '%s' '<token>' | nx secret add example_secret_key --value-stdin";
 const SECRET_ADD_HELP: &str = "Examples:

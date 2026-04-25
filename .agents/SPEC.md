@@ -523,6 +523,16 @@ Dry-run behavior:
 - Prints dry-run banner.
 - No file/system mutation.
 
+## 10.6 `clean-caches`
+
+- Host-scoped and does not require repository discovery.
+- Scans known cache directories plus code-root build artifacts and reports sizes before cleaning.
+- Prompts before mutation unless `--yes` is set.
+- `--dry-run` reports caches without mutation.
+- `NX_CODE_ROOTS` overrides code roots as a colon-separated list. Missing defaults to `~/code`; an empty value disables code-root scans.
+- `NX_CLEAN_SCAN_DEPTH` overrides code-root scan and removal depth. Missing or invalid values default to `3`; values above `8` clamp to `8`.
+- `NX_CLEAN_SKIP` skips comma-separated cache names and warns for unknown names.
+
 ## 11. Upgrade/Changelog Contracts
 
 - `stream_nix_update`:

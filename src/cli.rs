@@ -28,6 +28,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "rebuild",
     "upgrade",
     "generations",
+    "clean-caches",
 ];
 
 const ROOT_HELP: &str = "Run `nx help <topic>` for hierarchical help, or `nx <command> --help` for full command docs.\n\nExamples:\n  nx version\n  nx doctor\n  nx help install\n  nx upgrade --dry-run\n  nx completion zsh";
@@ -52,6 +53,7 @@ const TEST_HELP: &str =
 const REBUILD_HELP: &str = "Examples:\n  nx rebuild\n  nx rebuild --preflight\n  nx rebuild --timing\n  nx rebuild -- --show-trace\n\nNotes:\n  - `--preflight` stops after lint, git, and flake checks.\n  - Rebuild timings are recorded locally and can be reviewed with `nx profile`.\n  - Darwin repos use split rebuilds by default; set `platform.split_rebuild = false` to opt out.\n  - Additional args after `--` are passed directly to `darwin-rebuild switch`.";
 const GENERATIONS_HELP: &str = "Examples:\n  nx generations status\n  nx generations plan\n  nx generations prune --dry-run\n  nx generations prune --keep 5 --kind darwin\n\nNotes:\n  - `nx generations` is host-scoped and works from any directory.\n  - Use `plan` or `prune --dry-run` to preview exact prune/GC commands.";
 const GENERATIONS_PRUNE_HELP: &str = "Examples:\n  nx generations prune --dry-run\n  nx generations prune --yes\n  nx generations prune --keep 5 --kind darwin\n  nx generations prune --kind home-manager --no-gc\n\nNotes:\n  - `--dry-run` renders the same plan as `nx generations plan`.\n  - By default, `prune` asks for confirmation before mutating the host.";
+const CLEAN_CACHES_HELP: &str = "Examples:\n  nx clean-caches\n  nx clean-caches --dry-run\n  nx clean-caches --yes\n\nNotes:\n  - Scans known cache and build artifact directories, reports sizes, and cleans them.\n  - Covers: cargo, uv, npm, Homebrew, Xcode, nix GC, Rust targets, Elixir _build, node_modules, AI agent data.\n  - Host-scoped: works from any directory.";
 const UPGRADE_HELP: &str = "Examples:\n  nx upgrade\n  nx upgrade --dry-run\n  nx upgrade nx-rs\n  nx upgrade nx-rs anneal -- --show-trace\n\nNotes:\n  - Without positional inputs, `upgrade` runs the full repo-wide flow: flake update, brew, rebuild, and commit.\n  - With positional inputs, `upgrade` updates only those flake inputs and skips the brew phase by default.";
 const SECRET_HELP: &str = "Examples:\n  nx secret add example_secret_key --value '<token>'\n  printf '%s' '<token>' | nx secret add example_secret_key --value-stdin";
 const SECRET_ADD_HELP: &str = "Examples:
@@ -154,6 +156,11 @@ pub enum CommandKind {
     Upgrade(UpgradeArgs),
     #[command(about = "Inspect and manage host Nix generations")]
     Generations(GenerationsArgs),
+    #[command(
+        name = "clean-caches",
+        about = "Scan and clean cache and build artifact directories"
+    )]
+    CleanCaches(CleanCachesArgs),
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -775,6 +782,15 @@ pub struct HelpArgs {
 pub struct InitArgs {
     #[arg(long, help = "Re-scan and merge with existing manifest")]
     pub refresh: bool,
+}
+
+#[derive(Debug, Clone, Parser, Default)]
+#[command(after_long_help = CLEAN_CACHES_HELP)]
+pub struct CleanCachesArgs {
+    #[arg(long, short = 'n', help = "Preview cache sizes without deleting")]
+    pub dry_run: bool,
+    #[arg(short, long, help = "Skip confirmation prompt")]
+    pub yes: bool,
 }
 
 pub fn preprocess_args<I, T>(args: I) -> Vec<OsString>

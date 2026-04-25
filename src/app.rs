@@ -8,7 +8,7 @@ use crate::commands::completion::cmd_completion;
 use crate::commands::context::{AppContext, HostContext};
 use crate::commands::doctor::cmd_doctor;
 use crate::commands::help::cmd_help;
-use crate::commands::host::cmd_generations;
+use crate::commands::host::{cmd_clean_caches, cmd_generations};
 use crate::commands::init::cmd_init;
 use crate::commands::install::cmd_install;
 use crate::commands::meta::cmd_version;
@@ -42,6 +42,9 @@ pub fn execute(cli: Cli) -> i32 {
     }
     if let Some(args) = host_generations_args(&cli.command) {
         return cmd_generations(args, &HostContext::new(&printer));
+    }
+    if let CommandKind::CleanCaches(args) = &cli.command {
+        return cmd_clean_caches(args, &HostContext::new(&printer));
     }
     if let CommandKind::Profile(args) = &cli.command {
         return cmd_profile(args);
@@ -79,6 +82,7 @@ pub fn execute(cli: Cli) -> i32 {
         CommandKind::Help(_) => unreachable!("help handled before repo setup"),
         CommandKind::Completion(_) => unreachable!("completion handled before repo setup"),
         CommandKind::Generations(_) => unreachable!("host commands handled before repo setup"),
+        CommandKind::CleanCaches(_) => unreachable!("host commands handled before repo setup"),
         CommandKind::Doctor(args) => cmd_doctor(&args, &ctx),
         CommandKind::Init(args) => cmd_init(args.refresh, &ctx.init_context()),
         CommandKind::Install(args) => cmd_install(&args, &ctx),

@@ -57,6 +57,7 @@ Known commands:
 - `rebuild`
 - `upgrade`
 - `generations`
+- `clean-caches`
 
 ## 2.2 Global Options
 
@@ -131,6 +132,8 @@ Defined at root callback:
   - options: `--keep`, `--kind`, `--no-gc`
 - `generations prune`
   - options: `--keep`, `--kind`, `--no-gc`, `--yes/-y`, `--dry-run/-n`
+- `clean-caches`
+  - options: `--dry-run/-n`, `--yes/-y`
 
 ## 2.4 Exit Code Contract
 

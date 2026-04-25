@@ -53,6 +53,17 @@ program="$(basename "$0")"
 log_path="${NX_SYSTEM_IT_LOG:?NX_SYSTEM_IT_LOG must be set}"
 mode="${NX_SYSTEM_IT_MODE:-success}"
 
+assert_root_nix_env() {
+  if [ "${HOME:-}" != "/var/root" ]; then
+    echo "stub sudo HOME was not root: ${HOME:-}" >&2
+    exit 1
+  fi
+  if [ "${NIX_REMOTE:-}" != "daemon" ]; then
+    echo "stub sudo NIX_REMOTE was not daemon: ${NIX_REMOTE:-}" >&2
+    exit 1
+  fi
+}
+
 line="${program}	${PWD}"
 if [ "${NIX_CONFIG:-}" != "" ]; then
   line="${line}	ENV:NIX_CONFIG=${NIX_CONFIG}"
@@ -200,6 +211,14 @@ case "$program" in
       exit 1
     fi
 
+    if [ "${1:-}" = "-n" ] && [ "${2:-}" = "true" ]; then
+      if [ "$mode" = "split_sudo_prompt" ]; then
+        echo "sudo: a password is required" >&2
+        exit 1
+      fi
+      exit 0
+    fi
+
     # Handle bash -lc wrapper (ulimit + exec darwin-rebuild)
     if [ "${1:-}" = "bash" ] && [ "${2:-}" = "-lc" ]; then
       cmd="${3:-}"
@@ -214,7 +233,23 @@ case "$program" in
       exit $?
     fi
 
+    if [ "${1:-}" = "/usr/bin/env" ]; then
+      shift
+      while [ $# -gt 0 ]; do
+        case "${1:-}" in
+          *=*)
+            export "$1"
+            shift
+            ;;
+          *)
+            break
+            ;;
+        esac
+      done
+    fi
+
     if [ "${1:-}" = "nix-env" ]; then
+      assert_root_nix_env
       if [ "$mode" = "split_profile_set_fail" ]; then
         echo "stub nix-env failed" >&2
         exit 1
@@ -225,6 +260,7 @@ case "$program" in
 
     case "${1:-}" in
       /nix/store/*/activate)
+        assert_root_nix_env
         if [ "$mode" = "split_activate_fail" ]; then
           echo "stub activate failed" >&2
           exit 1

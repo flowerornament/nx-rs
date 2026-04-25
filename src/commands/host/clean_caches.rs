@@ -16,6 +16,19 @@ struct CacheEntry {
     clean: CleanMethod,
 }
 
+struct CacheCandidate {
+    name: &'static str,
+    location: CacheLocation,
+    clean: CleanMethod,
+}
+
+#[derive(Clone, Copy)]
+enum CacheLocation {
+    HomeRelative(&'static str),
+    NixStoreGc,
+}
+
+#[derive(Clone, Copy)]
 enum CleanMethod {
     /// Remove entire directory contents.
     RemoveContents,
@@ -27,6 +40,53 @@ enum CleanMethod {
     ElixirBuilds,
     /// Remove only `node_modules/` directories under a code root.
     NodeModules,
+}
+
+const CACHE_CANDIDATES: &[CacheCandidate] = &[
+    cache_dir("cargo-registry", ".cargo/registry"),
+    cache_command("uv", ".cache/uv", "uv", &["cache", "clean"]),
+    cache_dir("npm", ".cache/npm"),
+    cache_command(
+        "homebrew",
+        "Library/Caches/Homebrew",
+        "brew",
+        &["cleanup", "--prune=0"],
+    ),
+    cache_dir("huggingface", ".cache/huggingface"),
+    cache_dir("puppeteer", ".cache/puppeteer"),
+    cache_dir("playwright", "Library/Caches/ms-playwright"),
+    cache_dir("xcode-derived", "Library/Developer/Xcode/DerivedData"),
+    cache_dir("core-simulator", "Library/Developer/CoreSimulator"),
+    cache_dir("codex-sessions", ".codex/sessions"),
+    cache_dir("codex-logs", ".codex/log"),
+    cache_dir("claude-telemetry", ".claude/telemetry"),
+    cache_dir("claude-file-history", ".claude/file-history"),
+    CacheCandidate {
+        name: "nix-gc",
+        location: CacheLocation::NixStoreGc,
+        clean: CleanMethod::Command("nix-collect-garbage", &[]),
+    },
+];
+
+const fn cache_dir(name: &'static str, rel_path: &'static str) -> CacheCandidate {
+    CacheCandidate {
+        name,
+        location: CacheLocation::HomeRelative(rel_path),
+        clean: CleanMethod::RemoveContents,
+    }
+}
+
+const fn cache_command(
+    name: &'static str,
+    rel_path: &'static str,
+    program: &'static str,
+    args: &'static [&'static str],
+) -> CacheCandidate {
+    CacheCandidate {
+        name,
+        location: CacheLocation::HomeRelative(rel_path),
+        clean: CleanMethod::Command(program, args),
+    }
 }
 
 pub fn cmd_clean_caches(args: &CleanCachesArgs, ctx: &HostContext<'_>) -> i32 {
@@ -116,135 +176,84 @@ pub fn cmd_clean_caches(args: &CleanCachesArgs, ctx: &HostContext<'_>) -> i32 {
 }
 
 fn scan_caches(home: &Path) -> Vec<CacheEntry> {
-    let code_dir = home.join("code");
-    let mut entries = Vec::new();
+    let mut entries = static_cache_entries(home);
+    entries.extend(code_cache_entries(&home.join("code")));
 
-    // Static cache directories.
-    let candidates: &[(&str, &str, CleanMethod)] = &[
-        (
-            "cargo-registry",
-            ".cargo/registry",
-            CleanMethod::RemoveContents,
-        ),
-        (
-            "uv",
-            ".cache/uv",
-            CleanMethod::Command("uv", &["cache", "clean"]),
-        ),
-        ("npm", ".cache/npm", CleanMethod::RemoveContents),
-        (
-            "homebrew",
-            "Library/Caches/Homebrew",
-            CleanMethod::Command("brew", &["cleanup", "--prune=0"]),
-        ),
-        (
-            "huggingface",
-            ".cache/huggingface",
-            CleanMethod::RemoveContents,
-        ),
-        ("puppeteer", ".cache/puppeteer", CleanMethod::RemoveContents),
-        (
-            "playwright",
-            "Library/Caches/ms-playwright",
-            CleanMethod::RemoveContents,
-        ),
-        (
-            "xcode-derived",
-            "Library/Developer/Xcode/DerivedData",
-            CleanMethod::RemoveContents,
-        ),
-        (
-            "core-simulator",
-            "Library/Developer/CoreSimulator",
-            CleanMethod::RemoveContents,
-        ),
-        (
-            "codex-sessions",
-            ".codex/sessions",
-            CleanMethod::RemoveContents,
-        ),
-        ("codex-logs", ".codex/log", CleanMethod::RemoveContents),
-        (
-            "claude-telemetry",
-            ".claude/telemetry",
-            CleanMethod::RemoveContents,
-        ),
-        (
-            "claude-file-history",
-            ".claude/file-history",
-            CleanMethod::RemoveContents,
-        ),
-        (
-            "nix-gc",
-            "",
-            CleanMethod::Command("nix-collect-garbage", &[]),
-        ),
-    ];
-
-    for (name, rel_path, method) in candidates {
-        let path = if rel_path.is_empty() {
-            PathBuf::from("/nix/store")
-        } else {
-            home.join(rel_path)
-        };
-
-        // For nix-gc, estimate dead store paths.
-        let size = if *name == "nix-gc" {
-            nix_dead_size()
-        } else {
-            dir_size(&path)
-        };
-
-        entries.push(CacheEntry {
-            name,
-            path,
-            size_bytes: size,
-            clean: match method {
-                CleanMethod::Command(prog, args) => CleanMethod::Command(prog, args),
-                CleanMethod::RemoveContents => CleanMethod::RemoveContents,
-                CleanMethod::RustTargets => CleanMethod::RustTargets,
-                CleanMethod::ElixirBuilds => CleanMethod::ElixirBuilds,
-                CleanMethod::NodeModules => CleanMethod::NodeModules,
-            },
-        });
-    }
-
-    // Aggregate build artifact directories under ~/code.
-    if code_dir.is_dir() {
-        let rust_size = find_dirs_size(&code_dir, "target", 3);
-        if rust_size > 0 {
-            entries.push(CacheEntry {
-                name: "rust-targets",
-                path: code_dir.clone(),
-                size_bytes: rust_size,
-                clean: CleanMethod::RustTargets,
-            });
-        }
-
-        let elixir_size = find_dirs_size(&code_dir, "_build", 3);
-        if elixir_size > 0 {
-            entries.push(CacheEntry {
-                name: "elixir-builds",
-                path: code_dir.clone(),
-                size_bytes: elixir_size,
-                clean: CleanMethod::ElixirBuilds,
-            });
-        }
-
-        let node_size = find_dirs_size(&code_dir, "node_modules", 3);
-        if node_size > 0 {
-            entries.push(CacheEntry {
-                name: "node-modules",
-                path: code_dir,
-                size_bytes: node_size,
-                clean: CleanMethod::NodeModules,
-            });
-        }
-    }
-
-    // Sort by size descending.
     entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
     entries
+}
+
+fn static_cache_entries(home: &Path) -> Vec<CacheEntry> {
+    CACHE_CANDIDATES
+        .iter()
+        .map(|candidate| {
+            let path = match candidate.location {
+                CacheLocation::HomeRelative(rel_path) => home.join(rel_path),
+                CacheLocation::NixStoreGc => PathBuf::from("/nix/store"),
+            };
+            let size_bytes = match candidate.location {
+                CacheLocation::HomeRelative(_) => dir_size(&path),
+                CacheLocation::NixStoreGc => nix_dead_size(),
+            };
+
+            CacheEntry {
+                name: candidate.name,
+                path,
+                size_bytes,
+                clean: candidate.clean,
+            }
+        })
+        .collect()
+}
+
+fn code_cache_entries(code_dir: &Path) -> Vec<CacheEntry> {
+    if !code_dir.is_dir() {
+        return Vec::new();
+    }
+
+    let mut sizes = CodeCacheSizes::default();
+    walk_code_cache_dirs(code_dir, 3, 0, &mut sizes);
+    sizes.entries(code_dir)
+}
+
+#[derive(Default)]
+struct CodeCacheSizes {
+    rust_targets: u64,
+    elixir_builds: u64,
+    node_modules: u64,
+}
+
+impl CodeCacheSizes {
+    fn add(&mut self, dirname: &str, path: &Path) -> bool {
+        match dirname {
+            "target" => self.rust_targets += dir_size(path),
+            "_build" => self.elixir_builds += dir_size(path),
+            "node_modules" => self.node_modules += dir_size(path),
+            _ => return false,
+        }
+        true
+    }
+
+    fn entries(&self, code_dir: &Path) -> Vec<CacheEntry> {
+        [
+            ("rust-targets", self.rust_targets, CleanMethod::RustTargets),
+            (
+                "elixir-builds",
+                self.elixir_builds,
+                CleanMethod::ElixirBuilds,
+            ),
+            ("node-modules", self.node_modules, CleanMethod::NodeModules),
+        ]
+        .into_iter()
+        .filter(|&(_, size_bytes, _)| size_bytes > 0)
+        .map(|(name, size_bytes, clean)| CacheEntry {
+            name,
+            path: code_dir.to_path_buf(),
+            size_bytes,
+            clean,
+        })
+        .collect()
+    }
 }
 
 fn clean_entry(entry: &CacheEntry) -> Result<(), String> {
@@ -297,22 +306,16 @@ fn nix_dead_size() -> u64 {
         .output();
     match output {
         Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-            let paths: Vec<&str> = stdout
-                .lines()
-                .filter(|l| !l.is_empty())
-                .map(|l| l.trim())
-                .collect();
+            let stdout = String::from_utf8_lossy(&out.stdout);
             let mut total = 0u64;
-            for p in &paths {
+            for p in stdout.lines().map(str::trim).filter(|l| !l.is_empty()) {
                 let sz = Command::new("nix-store").args(["-q", "--size", p]).output();
-                if let Ok(sz_out) = sz {
-                    if let Ok(n) = String::from_utf8_lossy(&sz_out.stdout)
+                if let Ok(sz_out) = sz
+                    && let Ok(n) = String::from_utf8_lossy(&sz_out.stdout)
                         .trim()
                         .parse::<u64>()
-                    {
-                        total += n;
-                    }
+                {
+                    total += n;
                 }
             }
             total
@@ -321,11 +324,29 @@ fn nix_dead_size() -> u64 {
     }
 }
 
-fn find_dirs_size(root: &Path, dirname: &str, max_depth: u32) -> u64 {
-    find_named_dirs(root, dirname, max_depth)
-        .iter()
-        .map(|p| dir_size(p))
-        .sum()
+fn walk_code_cache_dirs(dir: &Path, max_depth: u32, depth: u32, sizes: &mut CodeCacheSizes) {
+    if depth > max_depth {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if sizes.add(&name, &path) {
+            continue;
+        }
+
+        if !name.starts_with('.') {
+            walk_code_cache_dirs(&path, max_depth, depth + 1, sizes);
+        }
+    }
 }
 
 fn find_named_dirs(root: &Path, dirname: &str, max_depth: u32) -> Vec<PathBuf> {
@@ -338,9 +359,8 @@ fn walk_for_dirs(dir: &Path, target: &str, max_depth: u32, depth: u32, out: &mut
     if depth > max_depth {
         return;
     }
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -386,7 +406,8 @@ fn format_size(bytes: u64) -> String {
     const GB: u64 = 1024 * MB;
 
     if bytes >= GB {
-        format!("{:.1}G", bytes as f64 / GB as f64)
+        let tenths = (u128::from(bytes) * 10) / u128::from(GB);
+        format!("{}.{}G", tenths / 10, tenths % 10)
     } else if bytes >= MB {
         format!("{}M", bytes / MB)
     } else if bytes >= KB {

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.5 - 2026-04-24
+
+- added `nx clean-caches` for scanning and cleaning local development cache directories
+- fixed split Darwin rebuild profile updates and activation to run with root `HOME` and `NIX_REMOTE=daemon`, matching `darwin-rebuild` and avoiding root-owned Nix warnings
+- made split Darwin rebuilds fall back to legacy `darwin-rebuild switch` when direct split activation would require an interactive sudo prompt
+
 ## v1.5.4 - 2026-04-24
 
 - made Darwin rebuilds use the split `nix build` + profile compare + activation path by default, with `platform.split_rebuild = false` as the legacy opt-out

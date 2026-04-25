@@ -23,6 +23,9 @@ const SPLIT_DARWIN_ENV: &str = "NX_SPLIT_DARWIN";
 const DARWIN_HOST_ENV: &str = "NX_DARWIN_HOST";
 const SYSTEM_PROFILE_PATH_ENV: &str = "NX_SYSTEM_PROFILE_PATH";
 const SYSTEM_PROFILE: &str = "/nix/var/nix/profiles/system";
+const ROOT_HOME_ENV: &str = "HOME=/var/root";
+const NIX_REMOTE_DAEMON_ENV: &str = "NIX_REMOTE=daemon";
+const ROOT_ENV_WRAPPER: &[&str] = &["/usr/bin/env", ROOT_HOME_ENV, NIX_REMOTE_DAEMON_ENV];
 
 pub fn cmd_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> i32 {
     cmd_rebuild_with_command(args, ctx, TimingCommand::Rebuild)
@@ -434,6 +437,10 @@ fn do_split_darwin_rebuild(
         )));
     }
 
+    if split_sudo_would_prompt(ctx, use_sudo) {
+        return SplitDarwinResult::Fallback;
+    }
+
     let (set_profile, mut set_profile_phase) = match timed_phase("profile-set", || {
         ctx.printer.action("Updating system profile");
         run_split_command(
@@ -511,7 +518,8 @@ where
     F: FnMut(StreamName, &str),
 {
     if use_sudo {
-        let mut sudo_args = Vec::with_capacity(args.len() + 1);
+        let mut sudo_args = Vec::with_capacity(args.len() + ROOT_ENV_WRAPPER.len() + 1);
+        sudo_args.extend(ROOT_ENV_WRAPPER);
         sudo_args.push(program);
         sudo_args.extend(args.iter().copied());
         run_indented_command_collecting_with_observer(
@@ -534,6 +542,21 @@ where
             |stream, line| observer(stream, line),
         )
     }
+}
+
+fn sudo_noninteractive_available() -> bool {
+    run_captured_command("sudo", &["-n", "true"], None).is_ok_and(|output| output.code == 0)
+}
+
+fn split_sudo_would_prompt(ctx: &SystemContext<'_>, use_sudo: bool) -> bool {
+    if !use_sudo || sudo_noninteractive_available() {
+        return false;
+    }
+
+    ctx.printer.warn(
+        "Split darwin rebuild needs sudo; falling back to darwin-rebuild to preserve prompt behavior",
+    );
+    true
 }
 
 fn darwin_host(ctx: &SystemContext<'_>) -> Option<String> {

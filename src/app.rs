@@ -81,8 +81,9 @@ pub fn execute(cli: Cli) -> i32 {
         CommandKind::Version(_) => unreachable!("version handled before repo setup"),
         CommandKind::Help(_) => unreachable!("help handled before repo setup"),
         CommandKind::Completion(_) => unreachable!("completion handled before repo setup"),
-        CommandKind::Generations(_) => unreachable!("host commands handled before repo setup"),
-        CommandKind::CleanCaches(_) => unreachable!("host commands handled before repo setup"),
+        CommandKind::Generations(_) | CommandKind::CleanCaches(_) => {
+            unreachable!("host commands handled before repo setup")
+        }
         CommandKind::Doctor(args) => cmd_doctor(&args, &ctx),
         CommandKind::Init(args) => cmd_init(args.refresh, &ctx.init_context()),
         CommandKind::Install(args) => cmd_install(&args, &ctx),

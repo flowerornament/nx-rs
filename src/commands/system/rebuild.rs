@@ -8,7 +8,7 @@ use crate::domain::manifest::{Manifest, PlatformKind};
 use crate::infra::activation_profile::ActivationPhaseProfiler;
 use crate::infra::shell::{
     StreamName, first_nonempty_output, run_captured_command,
-    run_indented_command_collecting_stdout_with_observer,
+    run_indented_command_collecting_stdout_with_observer, run_indented_command_collecting_with_env,
     run_indented_command_collecting_with_observer,
 };
 use crate::infra::timing::{
@@ -252,7 +252,6 @@ fn do_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> (i32, Vec<TimingPh
         } else {
             ctx.printer.action("Retrying rebuild");
         }
-        println!();
 
         let (code, output, split_phases, outcome) =
             match do_rebuild_once(args, ctx, manifest, &repo, use_sudo, &mut profiler) {
@@ -439,23 +438,21 @@ fn do_split_darwin_rebuild(
         )));
     }
 
-    if split_sudo_would_prompt(ctx, use_sudo) {
-        return SplitDarwinResult::Fallback;
-    }
-
-    let (set_profile, mut set_profile_phase) = match timed_phase("profile-set", || {
-        ctx.printer.action("Updating system profile");
-        run_split_command(
-            use_sudo,
-            "nix-env",
-            &["-p", SYSTEM_PROFILE, "--set", &system_config],
-            ctx,
-        )
-    }) {
+    let sudo_auth = match authorize_split_sudo(ctx, use_sudo) {
         Ok(result) => result,
         Err(err) => return SplitDarwinResult::Handled(Err(err)),
     };
-    set_profile_phase.status = exit_status(set_profile.0);
+    if let Some(((code, output), phase)) = sudo_auth {
+        phases.push(phase);
+        if code != 0 {
+            return SplitDarwinResult::Handled(Ok((code, output, phases, RebuildOutcome::Rebuilt)));
+        }
+    }
+
+    let (set_profile, set_profile_phase) = match set_system_profile(ctx, use_sudo, &system_config) {
+        Ok(result) => result,
+        Err(err) => return SplitDarwinResult::Handled(Err(err)),
+    };
     phases.push(set_profile_phase);
     if set_profile.0 != 0 {
         return SplitDarwinResult::Handled(Ok((
@@ -466,26 +463,10 @@ fn do_split_darwin_rebuild(
         )));
     }
 
-    let mut activation_profiler = ActivationPhaseProfiler::new();
-    let (activate, mut activate_phase) = match timed_phase("activate", || {
-        ctx.printer.action("Activating system");
-        run_split_command_with_observer(
-            use_sudo,
-            &format!("{system_config}/activate"),
-            &[],
-            ctx,
-            |stream, line| {
-                if stream == StreamName::Stderr {
-                    activation_profiler.observe_stderr_line(line);
-                }
-            },
-        )
-    }) {
+    let (activate, activate_phase) = match activate_system(ctx, use_sudo, &system_config) {
         Ok(result) => result,
         Err(err) => return SplitDarwinResult::Handled(Err(err)),
     };
-    activate_phase.status = exit_status(activate.0);
-    activate_phase.children = activation_profiler.finish();
     phases.push(activate_phase);
     SplitDarwinResult::Handled(Ok((
         activate.0,
@@ -498,6 +479,49 @@ fn do_split_darwin_rebuild(
 enum SplitDarwinResult {
     Handled(anyhow::Result<(i32, String, Vec<TimingPhase>, RebuildOutcome)>),
     Fallback,
+}
+
+fn set_system_profile(
+    ctx: &SystemContext<'_>,
+    use_sudo: bool,
+    system_config: &str,
+) -> anyhow::Result<((i32, String), TimingPhase)> {
+    let (output, mut phase) = timed_phase("profile-set", || {
+        ctx.printer.action("Updating system profile");
+        run_split_command(
+            use_sudo,
+            "nix-env",
+            &["-p", SYSTEM_PROFILE, "--set", system_config],
+            ctx,
+        )
+    })?;
+    phase.status = exit_status(output.0);
+    Ok((output, phase))
+}
+
+fn activate_system(
+    ctx: &SystemContext<'_>,
+    use_sudo: bool,
+    system_config: &str,
+) -> anyhow::Result<((i32, String), TimingPhase)> {
+    let mut profiler = ActivationPhaseProfiler::new();
+    let (output, mut phase) = timed_phase("activate", || {
+        ctx.printer.action("Activating system");
+        run_split_command_with_observer(
+            use_sudo,
+            &format!("{system_config}/activate"),
+            &[],
+            ctx,
+            |stream, line| {
+                if stream == StreamName::Stderr {
+                    profiler.observe_stderr_line(line);
+                }
+            },
+        )
+    })?;
+    phase.status = exit_status(output.0);
+    phase.children = profiler.finish();
+    Ok((output, phase))
 }
 
 fn run_split_command(
@@ -551,15 +575,27 @@ fn sudo_noninteractive_available() -> bool {
     run_captured_command("sudo", &["-n", "true"], None).is_ok_and(|output| output.code == 0)
 }
 
-fn split_sudo_would_prompt(ctx: &SystemContext<'_>, use_sudo: bool) -> bool {
+fn authorize_split_sudo(
+    ctx: &SystemContext<'_>,
+    use_sudo: bool,
+) -> anyhow::Result<Option<((i32, String), TimingPhase)>> {
     if !use_sudo || sudo_noninteractive_available() {
-        return false;
+        return Ok(None);
     }
 
-    ctx.printer.warn(
-        "Split darwin rebuild needs sudo; falling back to darwin-rebuild to preserve prompt behavior",
-    );
-    true
+    let (output, mut phase) = timed_phase("sudo-auth", || {
+        ctx.printer.action("Authorizing sudo");
+        run_indented_command_collecting_with_env(
+            "sudo",
+            &[SUDO_SET_HOME_ARG, "-v"],
+            None,
+            None,
+            ctx.printer,
+            "  ",
+        )
+    })?;
+    phase.status = exit_status(output.0);
+    Ok(Some((output, phase)))
 }
 
 fn darwin_host(ctx: &SystemContext<'_>) -> Option<String> {

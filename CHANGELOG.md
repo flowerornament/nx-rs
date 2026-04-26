@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.8 - 2026-04-25
+
+- removed the extra blank line between the `Rebuilding system` header and the resolved Darwin host line
+- changed split Darwin rebuilds to authorize sudo and continue the split activation path instead of falling back to `darwin-rebuild` after a successful build when no sudo timestamp is cached
+
 ## v1.5.7 - 2026-04-25
 
 - added `sudo -H` to split Darwin profile updates and activation so sudo sets root's home before `nx` applies its root Nix environment wrapper, suppressing macOS `$HOME` ownership warnings during `nx rebuild` and `nx upgrade`

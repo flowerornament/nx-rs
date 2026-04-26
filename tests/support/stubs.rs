@@ -229,6 +229,10 @@ case "$program" in
       export HOME="/var/root"
     fi
 
+    if [ "${1:-}" = "-v" ]; then
+      exit 0
+    fi
+
     if [ "${1:-}" = "-n" ] && [ "${2:-}" = "true" ]; then
       if [ "$mode" = "split_sudo_prompt" ]; then
         echo "sudo: a password is required" >&2

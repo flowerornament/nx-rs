@@ -153,7 +153,7 @@ const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
     ),
 ];
 
-const SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
+const SPLIT_REBUILD_BUILD_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
@@ -170,94 +170,55 @@ const SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
             "--json",
             "--no-link",
             "<REPO_ROOT>#darwinConfigurations.test-host.system",
-        ],
-    ),
-    ExpectedCall::new("sudo", EXPECTED_CWD_REPO_ROOT, &["-n", "true"]),
-    ExpectedCall::new(
-        "sudo",
-        EXPECTED_CWD_REPO_ROOT,
-        &[
-            SUDO_SET_HOME_ARG,
-            ROOT_ENV_PROGRAM,
-            ROOT_HOME_ENV_ARG,
-            NIX_REMOTE_DAEMON_ENV_ARG,
-            "nix-env",
-            "-p",
-            "/nix/var/nix/profiles/system",
-            "--set",
-            "/nix/store/new-system",
-        ],
-    ),
-    ExpectedCall::new(
-        "sudo",
-        EXPECTED_CWD_REPO_ROOT,
-        &[
-            SUDO_SET_HOME_ARG,
-            ROOT_ENV_PROGRAM,
-            ROOT_HOME_ENV_ARG,
-            NIX_REMOTE_DAEMON_ENV_ARG,
-            "/nix/store/new-system/activate",
         ],
     ),
 ];
 
-const SPLIT_REBUILD_PROMPT_FALLBACK_CALLS: &[ExpectedCall] = &[
-    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
-    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
-    ExpectedCall::new(
-        "scutil",
-        EXPECTED_CWD_REPO_ROOT,
-        &["--get", "LocalHostName"],
-    ),
-    ExpectedCall::new(
-        "nix",
-        EXPECTED_CWD_REPO_ROOT,
-        &[
-            "build",
-            "--json",
-            "--no-link",
-            "<REPO_ROOT>#darwinConfigurations.test-host.system",
-        ],
-    ),
-    ExpectedCall::new("sudo", EXPECTED_CWD_REPO_ROOT, &["-n", "true"]),
-    ExpectedCall::new(
-        "sudo",
-        EXPECTED_CWD_REPO_ROOT,
-        &[
-            "/run/current-system/sw/bin/darwin-rebuild",
-            "switch",
-            "--flake",
-            REPO_ROOT_TOKEN,
-        ],
-    ),
-    ExpectedCall::new(
-        "darwin-rebuild",
-        EXPECTED_CWD_REPO_ROOT,
-        &["switch", "--flake", REPO_ROOT_TOKEN],
-    ),
-];
+const SPLIT_REBUILD_SUDO_CHECK_CALL: ExpectedCall =
+    ExpectedCall::new("sudo", EXPECTED_CWD_REPO_ROOT, &["-n", "true"]);
 
-const SPLIT_REBUILD_CURRENT_CALLS: &[ExpectedCall] = &[
-    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
-    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
-    ExpectedCall::new(
-        "scutil",
-        EXPECTED_CWD_REPO_ROOT,
-        &["--get", "LocalHostName"],
-    ),
-    ExpectedCall::new(
-        "nix",
-        EXPECTED_CWD_REPO_ROOT,
-        &[
-            "build",
-            "--json",
-            "--no-link",
-            "<REPO_ROOT>#darwinConfigurations.test-host.system",
-        ],
-    ),
-];
+const SPLIT_REBUILD_SUDO_AUTH_CALL: ExpectedCall =
+    ExpectedCall::new("sudo", EXPECTED_CWD_REPO_ROOT, &[SUDO_SET_HOME_ARG, "-v"]);
+
+const SPLIT_REBUILD_PROFILE_SET_CALL: ExpectedCall = ExpectedCall::new(
+    "sudo",
+    EXPECTED_CWD_REPO_ROOT,
+    &[
+        SUDO_SET_HOME_ARG,
+        ROOT_ENV_PROGRAM,
+        ROOT_HOME_ENV_ARG,
+        NIX_REMOTE_DAEMON_ENV_ARG,
+        "nix-env",
+        "-p",
+        "/nix/var/nix/profiles/system",
+        "--set",
+        "/nix/store/new-system",
+    ],
+);
+
+const SPLIT_REBUILD_ACTIVATE_CALL: ExpectedCall = ExpectedCall::new(
+    "sudo",
+    EXPECTED_CWD_REPO_ROOT,
+    &[
+        SUDO_SET_HOME_ARG,
+        ROOT_ENV_PROGRAM,
+        ROOT_HOME_ENV_ARG,
+        NIX_REMOTE_DAEMON_ENV_ARG,
+        "/nix/store/new-system/activate",
+    ],
+);
+
+fn split_rebuild_calls(authorizes_sudo: bool) -> Vec<ExpectedCall> {
+    let mut calls = Vec::with_capacity(SPLIT_REBUILD_BUILD_CALLS.len() + 4);
+    calls.extend_from_slice(SPLIT_REBUILD_BUILD_CALLS);
+    calls.push(SPLIT_REBUILD_SUDO_CHECK_CALL);
+    if authorizes_sudo {
+        calls.push(SPLIT_REBUILD_SUDO_AUTH_CALL);
+    }
+    calls.push(SPLIT_REBUILD_PROFILE_SET_CALL);
+    calls.push(SPLIT_REBUILD_ACTIVATE_CALL);
+    calls
+}
 
 const UNDO_CLEAN_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
     "git",
@@ -430,6 +391,7 @@ fn split_darwin_rebuild_runs_explicit_phases() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
     let nx_bin = resolve_nx_bin(&workspace_root)?;
+    let expected_calls = split_rebuild_calls(false);
 
     let RunResult {
         home_dir,
@@ -441,7 +403,7 @@ fn split_darwin_rebuild_runs_explicit_phases() -> Result<(), Box<dyn Error>> {
         "split_rebuild_env",
         "success",
         &[("NX_SPLIT_DARWIN", "1")],
-        SPLIT_REBUILD_CALLS,
+        &expected_calls,
     )?;
 
     assert!(
@@ -489,7 +451,7 @@ fn split_darwin_rebuild_skips_activation_when_system_is_current() -> Result<(), 
                 "/nix/store/current-system",
             ),
         ],
-        SPLIT_REBUILD_CURRENT_CALLS,
+        SPLIT_REBUILD_BUILD_CALLS,
     )?;
 
     assert!(
@@ -506,10 +468,11 @@ fn split_darwin_rebuild_skips_activation_when_system_is_current() -> Result<(), 
 }
 
 #[test]
-fn split_darwin_rebuild_falls_back_when_sudo_would_prompt() -> Result<(), Box<dyn Error>> {
+fn split_darwin_rebuild_authorizes_sudo_when_prompt_is_needed() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
     let nx_bin = resolve_nx_bin(&workspace_root)?;
+    let expected_calls = split_rebuild_calls(true);
 
     let RunResult { stdout, stderr, .. } = run_split_rebuild(
         &nx_bin,
@@ -517,7 +480,7 @@ fn split_darwin_rebuild_falls_back_when_sudo_would_prompt() -> Result<(), Box<dy
         "split_rebuild_sudo_prompt",
         "split_sudo_prompt",
         &[("NX_SPLIT_DARWIN", "1")],
-        SPLIT_REBUILD_PROMPT_FALLBACK_CALLS,
+        &expected_calls,
     )?;
 
     assert!(
@@ -525,8 +488,12 @@ fn split_darwin_rebuild_falls_back_when_sudo_would_prompt() -> Result<(), Box<dy
         "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
-        stdout.contains("Falling back to darwin-rebuild switch"),
-        "stdout missing fallback warning\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        stdout.contains("Authorizing sudo"),
+        "stdout missing sudo authorization phase\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        !stdout.contains("Falling back to darwin-rebuild switch"),
+        "stdout should not fall back after sudo authorization\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
 
     Ok(())

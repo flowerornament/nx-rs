@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.9 - 2026-04-27
+
+- added live per-bucket progress while `nx clean-caches` scans slow cache roots, including the currently scanned code-root cache type and delayed Nix GC sizing
+- added targeted cache cleanup with `nx clean-caches <cache-name...>` and `nx clean-caches --only <cache-name,...>`, plus directory counts for grouped code-root caches
+- made split Darwin rebuilds retry source-cache object lookup failures surfaced by the build step, matching the existing lazy-source recovery used by `nx upgrade`
+
 ## v1.5.8 - 2026-04-25
 
 - removed the extra blank line between the `Rebuilding system` header and the resolved Darwin host line

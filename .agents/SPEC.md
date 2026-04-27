@@ -133,7 +133,8 @@ Defined at root callback:
 - `generations prune`
   - options: `--keep`, `--kind`, `--no-gc`, `--yes/-y`, `--dry-run/-n`
 - `clean-caches`
-  - options: `--dry-run/-n`, `--yes/-y`
+  - args: `[caches...]`
+  - options: `--only`, `--dry-run/-n`, `--yes/-y`
 
 ## 2.4 Exit Code Contract
 
@@ -529,7 +530,10 @@ Dry-run behavior:
 
 - Host-scoped and does not require repository discovery.
 - Scans known cache directories plus code-root build artifacts and reports sizes before cleaning.
-- Shows live loading feedback during cache sizing; Nix GC and large code roots may take minutes.
+- Optional positional cache names or `--only <names>` limit the scan and clean plan to selected cache names.
+- Shows live per-bucket loading feedback during cache sizing; Nix GC and large code roots may take minutes.
+- Scans Nix GC last because dead-store estimation may be slower than normal cache directory sizing.
+- Reports code-root cache directory counts for grouped build artifact entries.
 - Prompts before mutation unless `--yes` is set.
 - `--dry-run` reports caches without mutation.
 - `NX_CODE_ROOTS` overrides code roots as a colon-separated list. Missing defaults to `~/code`; an empty value disables code-root scans.

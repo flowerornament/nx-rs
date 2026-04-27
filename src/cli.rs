@@ -56,13 +56,18 @@ const GENERATIONS_PRUNE_HELP: &str = "Examples:\n  nx generations prune --dry-ru
 const CLEAN_CACHES_HELP: &str = concat!(
     "Examples:\n",
     "  nx clean-caches\n",
+    "  nx clean-caches rust-targets node-modules\n",
+    "  nx clean-caches --only nix-gc,codex-sessions\n",
     "  nx clean-caches --dry-run\n",
     "  nx clean-caches --yes\n",
     "\n",
     "Notes:\n",
     "  - Scans known cache and build artifact directories, reports sizes, and cleans them.\n",
     "  - Covers: cargo, uv, npm, Homebrew, Xcode, nix GC, Rust targets, Elixir _build, node_modules, AI agent data.\n",
-    "  - Large Nix GC and code-root scans show a live loading indicator while sizes are computed.\n",
+    "  - Large Nix GC and code-root scans show live per-bucket loading feedback while sizes are computed.\n",
+    "  - Positional cache names or --only limit the scan and clean plan to selected caches.\n",
+    "  - Code-root build artifacts report how many directories were discovered.\n",
+    "  - Nix GC sizing runs last because dead-store estimation can be slower than normal cache directory sizing.\n",
     "  - Host-scoped: works from any directory.\n",
     "  - Configure with NX_CODE_ROOTS, NX_CLEAN_SCAN_DEPTH, and NX_CLEAN_SKIP.\n",
     "  - Valid NX_CLEAN_SKIP names: cargo-registry, uv, npm, homebrew, huggingface, puppeteer, playwright, xcode-derived, core-simulator, codex-sessions, codex-logs, claude-telemetry, claude-file-history, nix-gc, rust-targets, elixir-builds, node-modules.",
@@ -800,6 +805,18 @@ pub struct InitArgs {
 #[derive(Debug, Clone, Parser, Default)]
 #[command(after_long_help = CLEAN_CACHES_HELP)]
 pub struct CleanCachesArgs {
+    #[arg(
+        value_name = "CACHE",
+        help = "Only scan and clean selected cache names"
+    )]
+    pub caches: Vec<String>,
+    #[arg(
+        long,
+        value_name = "CACHE",
+        value_delimiter = ',',
+        help = "Only scan and clean comma-separated cache names"
+    )]
+    pub only: Vec<String>,
     #[arg(long, short = 'n', help = "Preview cache sizes without deleting")]
     pub dry_run: bool,
     #[arg(short, long, help = "Skip confirmation prompt")]
@@ -1327,6 +1344,33 @@ mod tests {
         assert_eq!(args.policy.keep, 25);
         assert_eq!(args.policy.kind, GenerationKindArg::HomeManager);
         assert!(args.no_gc);
+        assert!(args.dry_run);
+    }
+
+    #[test]
+    fn clean_caches_parses_targets_and_only_filter() {
+        let cli = Cli::try_parse_from([
+            "nx",
+            "clean-caches",
+            "rust-targets",
+            "node-modules",
+            "--only",
+            "nix-gc,codex-sessions",
+            "--dry-run",
+        ])
+        .expect("parse clean-caches targets");
+
+        let CommandKind::CleanCaches(args) = cli.command else {
+            panic!("expected clean-caches command");
+        };
+        assert_eq!(
+            args.caches,
+            vec!["rust-targets".to_string(), "node-modules".to_string()]
+        );
+        assert_eq!(
+            args.only,
+            vec!["nix-gc".to_string(), "codex-sessions".to_string()]
+        );
         assert!(args.dry_run);
     }
 

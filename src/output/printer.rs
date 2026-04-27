@@ -1,5 +1,6 @@
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -28,6 +29,7 @@ pub struct Printer {
 }
 
 pub(crate) struct LoadingIndicator {
+    text: Option<Arc<Mutex<String>>>,
     stop: Option<Sender<()>>,
     handle: Option<JoinHandle<()>>,
 }
@@ -95,13 +97,18 @@ impl Printer {
         }
 
         let (stop, stopped) = mpsc::channel();
-        let text = text.to_string();
+        let text = Arc::new(Mutex::new(text.to_string()));
+        let thread_text = Arc::clone(&text);
         let frames = loading_frames(self.style.icon_set);
         let color = self.style.color;
         let handle = thread::spawn(move || {
             let mut index = 0usize;
             loop {
                 let frame = frames[index % frames.len()];
+                let text = thread_text
+                    .lock()
+                    .map(|text| text.clone())
+                    .unwrap_or_default();
                 if color {
                     eprint!("\r\x1b[2K\x1b[35m  {frame} {text}\x1b[0m");
                 } else {
@@ -119,6 +126,7 @@ impl Printer {
         });
 
         LoadingIndicator {
+            text: Some(text),
             stop: Some(stop),
             handle: Some(handle),
         }
@@ -220,8 +228,18 @@ impl Printer {
 impl LoadingIndicator {
     fn disabled() -> Self {
         Self {
+            text: None,
             stop: None,
             handle: None,
+        }
+    }
+
+    pub(crate) fn set_text(&self, text: &str) {
+        if let Some(shared) = &self.text
+            && let Ok(mut current) = shared.lock()
+        {
+            current.clear();
+            current.push_str(text);
         }
     }
 

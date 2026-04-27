@@ -13,6 +13,7 @@ struct CacheEntry {
     name: &'static str,
     path: PathBuf,
     size_bytes: u64,
+    item_count: Option<usize>,
     clean: CleanMethod,
 }
 
@@ -42,6 +43,7 @@ struct CleanCachesConfig {
     code_roots: Vec<PathBuf>,
     scan_depth: u32,
     skip: Vec<String>,
+    only: Vec<String>,
 }
 
 struct CodeCacheTarget {
@@ -124,11 +126,12 @@ const fn cache_command(
 }
 
 impl CleanCachesConfig {
-    fn from_env(home: &Path) -> Self {
+    fn from_env_and_args(home: &Path, args: &CleanCachesArgs) -> Self {
         Self {
             code_roots: parse_code_roots(home, env::var(CODE_ROOTS_ENV).ok().as_deref()),
             scan_depth: parse_scan_depth(env::var(CLEAN_SCAN_DEPTH_ENV).ok().as_deref()),
             skip: parse_skip_names(env::var(CLEAN_SKIP_ENV).ok().as_deref()),
+            only: parse_selected_names(&args.caches, &args.only),
         }
     }
 
@@ -136,23 +139,40 @@ impl CleanCachesConfig {
         self.skip.iter().any(|skip| skip == name)
     }
 
+    fn selected(&self, name: &str) -> bool {
+        !self.skips(name) && (self.only.is_empty() || self.only.iter().any(|only| only == name))
+    }
+
     fn unknown_skip_names(&self) -> Vec<&str> {
-        self.skip
-            .iter()
-            .map(String::as_str)
-            .filter(|name| !clean_cache_skip_names().any(|valid| valid == *name))
-            .collect()
+        unknown_cache_names(&self.skip)
+    }
+
+    fn unknown_selected_names(&self) -> Vec<&str> {
+        unknown_cache_names(&self.only)
     }
 }
 
 pub fn cmd_clean_caches(args: &CleanCachesArgs, ctx: &HostContext<'_>) -> i32 {
+    let home = dirs_home();
+    let config = CleanCachesConfig::from_env_and_args(&home, args);
+    let unknown_selected = config.unknown_selected_names();
+    if !unknown_selected.is_empty() {
+        ctx.printer.error(&format!(
+            "unknown cache name: {}",
+            unknown_selected.join(", ")
+        ));
+        Printer::detail(&format!(
+            "Valid names: {}",
+            clean_cache_skip_names().collect::<Vec<_>>().join(", ")
+        ));
+        return 1;
+    }
+
     if args.dry_run {
         ctx.printer.dry_run_banner();
     }
 
     ctx.printer.action("Scanning cache directories");
-    let home = dirs_home();
-    let config = CleanCachesConfig::from_env(&home);
     for name in config.unknown_skip_names() {
         ctx.printer
             .warn(&format!("unknown {CLEAN_SKIP_ENV} entry: {name}"));
@@ -160,7 +180,7 @@ pub fn cmd_clean_caches(args: &CleanCachesArgs, ctx: &HostContext<'_>) -> i32 {
     let loading = ctx
         .printer
         .loading("Sizing caches; Nix GC and large code roots can take a while");
-    let entries = scan_caches(&home, &config);
+    let entries = scan_caches(&home, &config, |message| loading.set_text(message));
     loading.finish();
 
     if entries.is_empty() {
@@ -186,7 +206,7 @@ pub fn cmd_clean_caches(args: &CleanCachesArgs, ctx: &HostContext<'_>) -> i32 {
             entry.name,
             format_size(entry.size_bytes)
         ));
-        Printer::sub_detail(&entry.path.display().to_string());
+        Printer::sub_detail(&cache_entry_detail(entry));
     }
 
     let nonzero: Vec<&CacheEntry> = entries.iter().filter(|e| e.size_bytes > 0).collect();
@@ -240,51 +260,73 @@ pub fn cmd_clean_caches(args: &CleanCachesArgs, ctx: &HostContext<'_>) -> i32 {
     0
 }
 
-fn scan_caches(home: &Path, config: &CleanCachesConfig) -> Vec<CacheEntry> {
-    let mut entries = static_cache_entries(home, config);
+fn scan_caches(
+    home: &Path,
+    config: &CleanCachesConfig,
+    mut progress: impl FnMut(&str),
+) -> Vec<CacheEntry> {
+    let mut entries = static_cache_entries(home, config, false, &mut progress);
     for code_root in &config.code_roots {
-        entries.extend(code_cache_entries(code_root, config));
+        entries.extend(code_cache_entries(code_root, config, &mut progress));
     }
+    entries.extend(static_cache_entries(home, config, true, &mut progress));
 
     entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
     entries
 }
 
-fn static_cache_entries(home: &Path, config: &CleanCachesConfig) -> Vec<CacheEntry> {
-    CACHE_CANDIDATES
-        .iter()
-        .filter(|candidate| !config.skips(candidate.name))
-        .map(|candidate| {
-            let path = match candidate.location {
-                CacheLocation::HomeRelative(rel_path) => home.join(rel_path),
-                CacheLocation::NixStoreGc => PathBuf::from("/nix/store"),
-            };
-            let size_bytes = match candidate.location {
-                CacheLocation::HomeRelative(_) => dir_size(&path),
-                CacheLocation::NixStoreGc => nix_dead_size(),
-            };
+fn static_cache_entries(
+    home: &Path,
+    config: &CleanCachesConfig,
+    nix_gc: bool,
+    progress: &mut impl FnMut(&str),
+) -> Vec<CacheEntry> {
+    let mut entries = Vec::new();
+    for candidate in CACHE_CANDIDATES.iter().filter(|candidate| {
+        matches!(candidate.location, CacheLocation::NixStoreGc) == nix_gc
+            && config.selected(candidate.name)
+    }) {
+        let path = match candidate.location {
+            CacheLocation::HomeRelative(rel_path) => home.join(rel_path),
+            CacheLocation::NixStoreGc => PathBuf::from("/nix/store"),
+        };
+        progress(&scan_progress_label(
+            candidate.name,
+            &path,
+            candidate.location,
+        ));
+        let size_bytes = match candidate.location {
+            CacheLocation::HomeRelative(_) => dir_size(&path),
+            CacheLocation::NixStoreGc => nix_dead_size(),
+        };
 
-            CacheEntry {
-                name: candidate.name,
-                path,
-                size_bytes,
-                clean: candidate.clean.clone(),
-            }
-        })
-        .collect()
+        entries.push(CacheEntry {
+            name: candidate.name,
+            path,
+            size_bytes,
+            item_count: None,
+            clean: candidate.clean.clone(),
+        });
+    }
+    entries
 }
 
-fn code_cache_entries(code_dir: &Path, config: &CleanCachesConfig) -> Vec<CacheEntry> {
+fn code_cache_entries(
+    code_dir: &Path,
+    config: &CleanCachesConfig,
+    progress: &mut impl FnMut(&str),
+) -> Vec<CacheEntry> {
     if !code_dir.is_dir()
         || CODE_CACHE_TARGETS
             .iter()
-            .all(|target| config.skips(target.name))
+            .all(|target| !config.selected(target.name))
     {
         return Vec::new();
     }
 
+    progress(&format!("Scanning code root {}", code_dir.display()));
     let mut sizes = CodeCacheSizes::default();
-    walk_code_cache_dirs(code_dir, config.scan_depth, 0, config, &mut sizes);
+    walk_code_cache_dirs(code_dir, config.scan_depth, 0, config, &mut sizes, progress);
     sizes.entries(code_dir)
 }
 
@@ -305,6 +347,7 @@ impl CodeCacheSizes {
         dirname: &str,
         path: &Path,
         config: &CleanCachesConfig,
+        progress: &mut impl FnMut(&str),
     ) -> CodeCacheMatch {
         let Some(target) = CODE_CACHE_TARGETS
             .iter()
@@ -313,10 +356,11 @@ impl CodeCacheSizes {
             return CodeCacheMatch::NotMatched;
         };
 
-        if config.skips(target.name) {
+        if !config.selected(target.name) {
             return CodeCacheMatch::Skipped;
         }
 
+        progress(&format!("Sizing {} at {}", target.name, path.display()));
         let size_bytes = dir_size(path);
         if let Some(entry) = self
             .entries
@@ -344,6 +388,7 @@ impl CodeCacheSizes {
                 name: entry.target.name,
                 path: code_dir.to_path_buf(),
                 size_bytes: entry.size_bytes,
+                item_count: Some(entry.paths.len()),
                 clean: CleanMethod::RemovePaths(entry.paths.clone()),
             })
             .collect()
@@ -370,8 +415,21 @@ fn parse_scan_depth(value: Option<&str>) -> u32 {
 }
 
 fn parse_skip_names(value: Option<&str>) -> Vec<String> {
+    parse_cache_name_list(value)
+}
+
+fn parse_selected_names(caches: &[String], only: &[String]) -> Vec<String> {
+    parse_cache_name_list(
+        caches
+            .iter()
+            .map(String::as_str)
+            .chain(only.iter().map(String::as_str)),
+    )
+}
+
+fn parse_cache_name_list<'a>(values: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     let mut names = Vec::new();
-    for name in value
+    for name in values
         .into_iter()
         .flat_map(|raw| raw.split(','))
         .map(str::trim)
@@ -389,6 +447,14 @@ pub(crate) fn clean_cache_skip_names() -> impl Iterator<Item = &'static str> {
         .iter()
         .map(|candidate| candidate.name)
         .chain(CODE_CACHE_TARGETS.iter().map(|target| target.name))
+}
+
+fn unknown_cache_names(names: &[String]) -> Vec<&str> {
+    names
+        .iter()
+        .map(String::as_str)
+        .filter(|name| !clean_cache_skip_names().any(|valid| valid == *name))
+        .collect()
 }
 
 fn prune_code_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -519,6 +585,7 @@ fn walk_code_cache_dirs(
     depth: u32,
     config: &CleanCachesConfig,
     sizes: &mut CodeCacheSizes,
+    progress: &mut impl FnMut(&str),
 ) {
     if depth > max_depth {
         return;
@@ -537,12 +604,27 @@ fn walk_code_cache_dirs(
         let name = entry.file_name();
         let name = name.to_string_lossy();
         let path = entry.path();
-        match sizes.record_target(&name, &path, config) {
+        match sizes.record_target(&name, &path, config, progress) {
             CodeCacheMatch::NotMatched if !name.starts_with('.') => {
-                walk_code_cache_dirs(&path, max_depth, depth + 1, config, sizes);
+                walk_code_cache_dirs(&path, max_depth, depth + 1, config, sizes, progress);
             }
             CodeCacheMatch::Recorded | CodeCacheMatch::Skipped | CodeCacheMatch::NotMatched => {}
         }
+    }
+}
+
+fn scan_progress_label(name: &str, path: &Path, location: CacheLocation) -> String {
+    match location {
+        CacheLocation::HomeRelative(_) => format!("Sizing {name} at {}", path.display()),
+        CacheLocation::NixStoreGc => "Sizing nix-gc dead store paths".to_string(),
+    }
+}
+
+fn cache_entry_detail(entry: &CacheEntry) -> String {
+    match entry.item_count {
+        Some(1) => format!("{} (1 directory)", entry.path.display()),
+        Some(count) => format!("{} ({count} directories)", entry.path.display()),
+        None => entry.path.display().to_string(),
     }
 }
 
@@ -654,12 +736,46 @@ mod tests {
             code_roots: Vec::new(),
             scan_depth: DEFAULT_SCAN_DEPTH,
             skip: vec!["huggingface".to_string(), "rust-targets".to_string()],
+            only: Vec::new(),
         };
 
         assert!(config.skips("huggingface"));
         assert!(config.skips("rust-targets"));
+        assert!(!config.selected("huggingface"));
+        assert!(!config.selected("rust-targets"));
+        assert!(config.selected("node-modules"));
         assert!(!config.skips("node-modules"));
         assert!(config.unknown_skip_names().is_empty());
+    }
+
+    #[test]
+    fn selected_names_trim_split_and_deduplicate() {
+        assert_eq!(
+            parse_selected_names(
+                &["rust-targets,node-modules".to_string()],
+                &["nix-gc".to_string(), "rust-targets".to_string()]
+            ),
+            vec![
+                "rust-targets".to_string(),
+                "node-modules".to_string(),
+                "nix-gc".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn only_filter_limits_selected_caches() {
+        let config = CleanCachesConfig {
+            code_roots: Vec::new(),
+            scan_depth: DEFAULT_SCAN_DEPTH,
+            skip: vec!["nix-gc".to_string()],
+            only: vec!["rust-targets".to_string(), "nix-gc".to_string()],
+        };
+
+        assert!(config.selected("rust-targets"));
+        assert!(!config.selected("node-modules"));
+        assert!(!config.selected("nix-gc"));
+        assert!(config.unknown_selected_names().is_empty());
     }
 
     #[test]
@@ -668,9 +784,38 @@ mod tests {
             code_roots: Vec::new(),
             scan_depth: DEFAULT_SCAN_DEPTH,
             skip: vec!["huggingface".to_string(), "mystery-cache".to_string()],
+            only: Vec::new(),
         };
 
         assert_eq!(config.unknown_skip_names(), vec!["mystery-cache"]);
+    }
+
+    #[test]
+    fn unknown_selected_names_are_reportable() {
+        let config = CleanCachesConfig {
+            code_roots: Vec::new(),
+            scan_depth: DEFAULT_SCAN_DEPTH,
+            skip: Vec::new(),
+            only: vec!["mystery-cache".to_string()],
+        };
+
+        assert_eq!(config.unknown_selected_names(), vec!["mystery-cache"]);
+    }
+
+    #[test]
+    fn cache_entry_detail_reports_directory_count() {
+        let entry = CacheEntry {
+            name: "rust-targets",
+            path: PathBuf::from("/Users/tester/code"),
+            size_bytes: 1024,
+            item_count: Some(3),
+            clean: CleanMethod::RemovePaths(Vec::new()),
+        };
+
+        assert_eq!(
+            cache_entry_detail(&entry),
+            "/Users/tester/code (3 directories)"
+        );
     }
 
     #[test]

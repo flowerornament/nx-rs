@@ -227,6 +227,8 @@ nx generations status
 nx generations plan
 nx generations prune --dry-run
 nx clean-caches --dry-run
+nx clean-caches rust-targets node-modules
+nx clean-caches --only nix-gc,codex-sessions
 ```
 
 Secrets:
@@ -464,7 +466,10 @@ Scans host cache directories and common build artifacts, reports sizes, and clea
 
 - Supports `--dry-run` and `--yes`.
 - Code-root scans default to `~/code` and depth `3`; scan depth is capped at `8`.
-- Large Nix GC and code-root scans show a live loading indicator while sizes are computed.
+- Large Nix GC and code-root scans show live per-bucket loading feedback while sizes are computed.
+- Positional cache names or `--only` limit the scan and clean plan to selected caches.
+- Code-root build artifacts report how many directories were discovered.
+- Nix GC sizing runs last because dead-store estimation can be slower than normal cache directory sizing.
 - Set `NX_CODE_ROOTS`, `NX_CLEAN_SCAN_DEPTH`, and `NX_CLEAN_SKIP` directly, or configure them declaratively with `programs.nx.cleanCaches`.
 - Valid skip names: `cargo-registry`, `uv`, `npm`, `homebrew`, `huggingface`, `puppeteer`, `playwright`, `xcode-derived`, `core-simulator`, `codex-sessions`, `codex-logs`, `claude-telemetry`, `claude-file-history`, `nix-gc`, `rust-targets`, `elixir-builds`, `node-modules`.
 

@@ -53,6 +53,7 @@ const UPGRADE_DRY_RUN_SKIP_BREW_ARGS: &[&str] = &["upgrade", "--dry-run", "--ski
 const UPGRADE_REBUILD_ARGS: &[&str] = &["upgrade", "--skip-brew", "--skip-commit", "--no-ai"];
 const UPGRADE_REBUILD_FAILURE_ARGS: &[&str] =
     &["upgrade", "--skip-brew", "--skip-commit", "--no-ai"];
+const UPGRADE_HASH_REPAIR_ARGS: &[&str] = &["upgrade", "--skip-brew", "--no-ai"];
 const UPGRADE_SKIP_COMMIT_ARGS: &[&str] = &[
     "upgrade",
     "--skip-brew",
@@ -168,7 +169,7 @@ const UPGRADE_COMMIT_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new(
         "git",
         EXPECTED_CWD_REPO_ROOT,
-        &["-C", REPO_ROOT_TOKEN, "add", "flake.lock"],
+        &["-C", REPO_ROOT_TOKEN, "add", "--", "flake.lock"],
     ),
     ExpectedCall::new(
         "git",
@@ -290,6 +291,75 @@ const UPGRADE_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
     ),
 ];
 
+const UPGRADE_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
+    ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "/run/current-system/sw/bin/darwin-rebuild",
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+        ],
+    ),
+    ExpectedCall::new(
+        "darwin-rebuild",
+        EXPECTED_CWD_REPO_ROOT,
+        &["switch", "--flake", REPO_ROOT_TOKEN],
+    ),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, &["ls-files", "--", "*.nix"]),
+    ExpectedCall::new(
+        "git",
+        EXPECTED_CWD_REPO_ROOT,
+        &["status", "--porcelain=v1", "--", "home/agent-sync.nix"],
+    ),
+    ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "/run/current-system/sw/bin/darwin-rebuild",
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+        ],
+    ),
+    ExpectedCall::new(
+        "darwin-rebuild",
+        EXPECTED_CWD_REPO_ROOT,
+        &["switch", "--flake", REPO_ROOT_TOKEN],
+    ),
+    ExpectedCall::new(
+        "git",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "-C",
+            REPO_ROOT_TOKEN,
+            "add",
+            "--",
+            "flake.lock",
+            "home/agent-sync.nix",
+        ],
+    ),
+    ExpectedCall::new(
+        "git",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "-C",
+            REPO_ROOT_TOKEN,
+            "commit",
+            "-m",
+            "Update flake (nixpkgs) + fix FOD hash drift in home/agent-sync.nix",
+        ],
+    ),
+];
+
 const UPGRADE_BREW_WITH_UPDATES_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
@@ -346,6 +416,18 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
         expected_exit: 1,
         expected_calls: UPGRADE_REBUILD_FAILURE_CALLS,
         stdout_contains: &[],
+    },
+    UpgradeCase {
+        id: "upgrade_rebuild_hash_mismatch_repairs_and_retries",
+        cli_args: UPGRADE_HASH_REPAIR_ARGS,
+        mode: "upgrade_hash_repair",
+        expected_exit: 0,
+        expected_calls: UPGRADE_HASH_REPAIR_CALLS,
+        stdout_contains: &[
+            "Auto-updated home/agent-sync.nix:4: hash sha256-old -> sha256-new (FOD content drift); retrying",
+            "System rebuilt",
+            "Committed: Update flake (nixpkgs) + fix FOD hash drift in home/agent-sync.nix",
+        ],
     },
     UpgradeCase {
         id: "upgrade_flake_changed_commits_lockfile",
@@ -521,9 +603,15 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &UpgradeCase) -> Result<(), B
 fn seed_flake_lock_if_needed(repo_root: &Path, mode: &str) -> Result<(), Box<dyn Error>> {
     if matches!(
         mode,
-        "upgrade_flake_changed" | "upgrade_prefetch_cache_corruption"
+        "upgrade_flake_changed" | "upgrade_prefetch_cache_corruption" | "upgrade_hash_repair"
     ) {
         fs::write(repo_root.join("flake.lock"), UPGRADE_FLAKE_LOCK_OLD)?;
+    }
+    if mode == "upgrade_hash_repair" {
+        fs::write(
+            repo_root.join("home/agent-sync.nix"),
+            "# nx: agent sync\n{ ... }:\n{\n  npmDepsHash = \"sha256-old\";\n}\n",
+        )?;
     }
     Ok(())
 }
@@ -570,11 +658,19 @@ fn assert_repo_state(
         "case {} mutated unexpected repository files\nstdout:\n{}\nstderr:\n{}",
         case.id, stdout, stderr
     );
+
+    if case.mode == "upgrade_hash_repair" {
+        let content = after
+            .get("home/agent-sync.nix")
+            .expect("hash repair fixture should be snapshotted");
+        assert!(content.contains("npmDepsHash = \"sha256-new\";"));
+    }
 }
 
 fn expected_mutated_paths(mode: &str) -> &'static [&'static str] {
     match mode {
         "upgrade_flake_changed" | "upgrade_prefetch_cache_corruption" => &["flake.lock"],
+        "upgrade_hash_repair" => &["flake.lock", "home/agent-sync.nix"],
         _ => &[],
     }
 }

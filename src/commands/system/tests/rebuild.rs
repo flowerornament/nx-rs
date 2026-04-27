@@ -131,3 +131,91 @@ fn split_darwin_defaults_on_for_darwin_and_allows_opt_out() {
     };
     assert!(!should_use_split_darwin(&passthrough, Some(&manifest)));
 }
+
+#[test]
+fn fixed_output_hash_parser_extracts_specified_and_got_hashes() {
+    let output = "\
+error: hash mismatch in fixed-output derivation '/nix/store/example-npm-deps.drv':
+         specified: sha256-D6HjBFzg2HxHZNjm8XMSHCuhMqXdJWKpEtfUc5rkYxo=
+            got:    sha256-oNLh9Oc29XvLzMqMMmIbkTNz88zdrvyrANaNOFucmts=
+";
+
+    assert_eq!(
+        parse_fixed_output_hash_mismatch(output),
+        Some(FixedOutputHashMismatch {
+            specified: "sha256-D6HjBFzg2HxHZNjm8XMSHCuhMqXdJWKpEtfUc5rkYxo=".to_string(),
+            got: "sha256-oNLh9Oc29XvLzMqMMmIbkTNz88zdrvyrANaNOFucmts=".to_string(),
+        })
+    );
+}
+
+#[test]
+fn fixed_output_hash_repair_updates_unique_clean_tracked_nix_file() {
+    let tmp = init_git_repo();
+    let root = tmp.path();
+    let rel_path = std::path::Path::new("home/agent-sync.nix");
+    let full_path = root.join(rel_path);
+    fs::create_dir_all(full_path.parent().unwrap()).unwrap();
+    fs::write(
+        &full_path,
+        "# nx: agent sync\n  npmDepsHash = \"sha256-old\";\n",
+    )
+    .unwrap();
+    run_captured_command("git", &["add", "home/agent-sync.nix"], Some(root)).unwrap();
+    run_captured_command("git", &["commit", "-m", "add agent sync"], Some(root)).unwrap();
+
+    let targets = find_fixed_output_hash_targets(root, "sha256-old").unwrap();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].path, rel_path);
+    assert_eq!(targets[0].line_number, 2);
+    assert_eq!(targets[0].column_number, 18);
+    assert!(path_is_clean(root, rel_path));
+
+    apply_fixed_output_hash_repair(
+        root,
+        &targets[0],
+        &FixedOutputHashMismatch {
+            specified: "sha256-old".to_string(),
+            got: "sha256-new".to_string(),
+        },
+    )
+    .unwrap();
+
+    let updated = fs::read_to_string(full_path).unwrap();
+    assert!(updated.contains("npmDepsHash = \"sha256-new\";"));
+    assert!(!updated.contains("sha256-old"));
+    assert!(!path_is_clean(root, rel_path));
+}
+
+#[test]
+fn fixed_output_hash_target_allows_plain_sha256_assignment() {
+    let tmp = init_git_repo();
+    let root = tmp.path();
+    fs::write(root.join("pkg.nix"), "sha256 = \"sha256-old\";\n").unwrap();
+    run_captured_command("git", &["add", "pkg.nix"], Some(root)).unwrap();
+    run_captured_command("git", &["commit", "-m", "add package"], Some(root)).unwrap();
+
+    let targets = find_fixed_output_hash_targets(root, "sha256-old").unwrap();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].path, std::path::Path::new("pkg.nix"));
+    assert_eq!(targets[0].line_number, 1);
+    assert_eq!(targets[0].column_number, 11);
+}
+
+#[test]
+fn fixed_output_hash_target_counts_each_exact_occurrence() {
+    let tmp = init_git_repo();
+    let root = tmp.path();
+    fs::write(
+        root.join("pkg.nix"),
+        "# old hash sha256-old\nsha256 = \"sha256-old\";\n",
+    )
+    .unwrap();
+    run_captured_command("git", &["add", "pkg.nix"], Some(root)).unwrap();
+    run_captured_command("git", &["commit", "-m", "add package"], Some(root)).unwrap();
+
+    let targets = find_fixed_output_hash_targets(root, "sha256-old").unwrap();
+    assert_eq!(targets.len(), 2);
+    assert_eq!(targets[0].line_number, 1);
+    assert_eq!(targets[1].line_number, 2);
+}

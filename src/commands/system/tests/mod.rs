@@ -7,6 +7,10 @@ use crate::cli::{RebuildArgs, UpgradeArgs, UpgradeFlowArgs, UpgradeSkipArgs};
 use crate::domain::upgrade::{InputChange, github_owner_repo};
 use crate::infra::shell::run_captured_command;
 
+use super::fixed_output_hash::{
+    FixedOutputHashMismatch, apply_fixed_output_hash_repair, find_fixed_output_hash_targets,
+    parse_fixed_output_hash_mismatch, path_is_clean,
+};
 use super::rebuild::{
     build_rebuild_command, build_rebuild_command_with_manifest, has_nix_extension,
     parse_system_config_path, should_use_split_darwin,

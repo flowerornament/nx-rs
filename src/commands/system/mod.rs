@@ -1,3 +1,4 @@
+mod fixed_output_hash;
 mod lint;
 mod rebuild;
 mod test;

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.11 - 2026-04-27
+
+- made `nx upgrade` recover from safe Nix fixed-output hash drift by updating exactly one clean tracked `.nix` hash occurrence, retrying the rebuild, and committing the repaired file with `flake.lock`
+- added clear fixed-output hash repair output, manual next-step hints for unsafe cases, a three-repair safety cap, and `NX_NO_AUTO_HASH_FIX=1` as an opt-out
+- kept `nx rebuild` non-mutating for fixed-output hash mismatches while surfacing the specified/got hashes and matching file hints
+
 ## v1.5.10 - 2026-04-27
 
 - treated likely typos of guarded command names, such as `nx rebulid`, as command errors instead of rewriting them to `nx install`, preserving clap's command suggestions

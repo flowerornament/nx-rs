@@ -85,8 +85,12 @@ case "$program" in
         echo "stub git ls-files failed" >&2
         exit 1
       fi
-      if [ "$mode" = "preflight_untracked" ]; then
+      if [ "${2:-}" = "--others" ] && [ "$mode" = "preflight_untracked" ]; then
         echo "home/untracked-from-stub.nix"
+        exit 0
+      fi
+      if [ "${2:-}" != "--others" ]; then
+        find home packages system hosts -type f -name '*.nix' 2>/dev/null | sort
         exit 0
       fi
       exit 0
@@ -97,9 +101,12 @@ case "$program" in
       exit 0
     fi
 
-    if [ "${1:-}" = "status" ] && [ "${2:-}" = "--porcelain" ]; then
+    if [ "${1:-}" = "status" ] && { [ "${2:-}" = "--porcelain" ] || [ "${2:-}" = "--porcelain=v1" ]; }; then
       if [ "$mode" = "undo_dirty" ]; then
         echo " M packages/nix/cli.nix"
+      fi
+      if [ "$mode" = "upgrade_hash_repair_dirty" ]; then
+        echo " M home/agent-sync.nix"
       fi
       exit 0
     fi
@@ -131,7 +138,7 @@ case "$program" in
           exit 1
         fi
       fi
-      if [ "$mode" = "upgrade_flake_changed" ] || [ "$mode" = "upgrade_prefetch_cache_corruption" ]; then
+      if [ "$mode" = "upgrade_flake_changed" ] || [ "$mode" = "upgrade_prefetch_cache_corruption" ] || [ "$mode" = "upgrade_hash_repair" ]; then
         printf '%s' "${NX_SYSTEM_IT_UPGRADE_NEW_LOCK:?NX_SYSTEM_IT_UPGRADE_NEW_LOCK must be set}" > flake.lock
       fi
       echo "stub nix flake command ok"
@@ -380,6 +387,16 @@ case "$program" in
     exit 1
     ;;
   darwin-rebuild)
+    if [ "$mode" = "upgrade_hash_repair" ]; then
+      marker="${HOME}/.nx-system-it-hash-repair-once"
+      if [ ! -f "$marker" ]; then
+        : > "$marker"
+        echo "error: hash mismatch in fixed-output derivation '/nix/store/example-npm-deps.drv':" >&2
+        echo "         specified: sha256-old" >&2
+        echo "            got:    sha256-new" >&2
+        exit 1
+      fi
+    fi
     if [ "$mode" = "darwin_rebuild_fail" ]; then
       echo "stub darwin-rebuild failed" >&2
       exit 1

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use crate::cli::{RebuildArgs, UpgradeArgs};
 use crate::commands::context::AppContext;
@@ -14,7 +15,7 @@ use crate::output::printer::Printer;
 
 use crate::infra::timing::TimingCommand;
 
-use super::cmd_rebuild_with_command;
+use super::rebuild::{FixedOutputHashRepairMode, cmd_rebuild_with_command_result};
 
 // ─── upgrade ─────────────────────────────────────────────────────────────────
 
@@ -39,6 +40,8 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
         return 0;
     }
 
+    let mut repaired_paths = Vec::new();
+
     // Phase 3: Rebuild
     if !args.skip_rebuild() {
         if upgrade_requires_manifest_system_safety(args)
@@ -48,14 +51,24 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
         }
         let rebuild = RebuildArgs::default();
         let system_ctx = ctx.system_context();
-        if cmd_rebuild_with_command(&rebuild, &system_ctx, TimingCommand::Upgrade) != 0 {
+        let rebuild_result = cmd_rebuild_with_command_result(
+            &rebuild,
+            &system_ctx,
+            TimingCommand::Upgrade,
+            FixedOutputHashRepairMode::Auto,
+        );
+        if rebuild_result.code != 0 {
             return 1;
         }
+        repaired_paths = rebuild_result.repaired_paths;
     }
 
     // Phase 4: Commit
-    if !args.skip_commit() && !flake_changes.is_empty() {
-        commit_flake_lock(ctx, &flake_changes);
+    if !args.skip_commit()
+        && (!flake_changes.is_empty() || !repaired_paths.is_empty())
+        && let Err(code) = commit_flake_lock(ctx, &flake_changes, &repaired_paths)
+    {
+        return code;
     }
 
     0
@@ -966,15 +979,50 @@ fn clear_tarball_pack_cache() {
     }
 }
 
-/// Commit `flake.lock` after a successful upgrade.
-fn commit_flake_lock(ctx: &AppContext, flake_changes: &[InputChange]) {
+/// Commit `flake.lock` and any auto-repaired files after a successful upgrade.
+fn commit_flake_lock(
+    ctx: &AppContext,
+    flake_changes: &[InputChange],
+    extra_paths: &[PathBuf],
+) -> Result<(), i32> {
     let repo = ctx.repo_root.display().to_string();
-    let message = build_upgrade_commit_message(flake_changes);
-    let _ = run_captured_command("git", &["-C", &repo, "add", "flake.lock"], None);
+    let message = build_upgrade_commit_message(flake_changes, extra_paths);
+    let mut paths = Vec::new();
+    if !flake_changes.is_empty() {
+        paths.push("flake.lock".to_string());
+    }
+    for path in extra_paths {
+        if let Some(path) = path.to_str() {
+            paths.push(path.to_string());
+        }
+    }
+
+    let mut add_args = vec!["-C", repo.as_str(), "add", "--"];
+    add_args.extend(paths.iter().map(String::as_str));
+    let add_result = run_captured_command("git", &add_args, None);
+    match add_result {
+        Ok(cmd) if cmd.code == 0 => {}
+        Ok(cmd) => {
+            ctx.printer.error("Commit failed");
+            Printer::detail("Could not stage upgrade changes");
+            let detail = first_nonempty_output(&cmd);
+            if !detail.is_empty() {
+                Printer::detail(detail);
+            }
+            return Err(1);
+        }
+        Err(err) => {
+            ctx.printer.error("Commit failed");
+            Printer::detail(&format!("Could not stage upgrade changes: {err:#}"));
+            return Err(1);
+        }
+    }
+
     let result = run_captured_command("git", &["-C", &repo, "commit", "-m", &message], None);
     match result {
         Ok(cmd) if cmd.code == 0 => {
             ctx.printer.success(&format!("Committed: {message}"));
+            Ok(())
         }
         Ok(cmd)
             if cmd
@@ -987,26 +1035,56 @@ fn commit_flake_lock(ctx: &AppContext, flake_changes: &[InputChange]) {
                     .contains("nothing to commit") =>
         {
             Printer::detail("No changes to commit");
+            Ok(())
         }
-        _ => {
+        Ok(cmd) => {
             ctx.printer.error("Commit failed");
+            let detail = first_nonempty_output(&cmd);
+            if !detail.is_empty() {
+                Printer::detail(detail);
+            }
+            Err(1)
+        }
+        Err(err) => {
+            ctx.printer.error("Commit failed");
+            Printer::detail(&format!("{err:#}"));
+            Err(1)
         }
     }
 }
 
-fn build_upgrade_commit_message(flake_changes: &[InputChange]) -> String {
-    if flake_changes.is_empty() {
-        return "Update flake inputs".to_string();
-    }
+fn build_upgrade_commit_message(
+    flake_changes: &[InputChange],
+    repaired_paths: &[PathBuf],
+) -> String {
+    let flake_part = if flake_changes.is_empty() {
+        None
+    } else {
+        let mut names = flake_changes
+            .iter()
+            .map(|change| change.name.as_str())
+            .take(5)
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if flake_changes.len() > 5 {
+            names.push(format!("+{} more", flake_changes.len() - 5));
+        }
+        Some(format!("Update flake ({})", names.join(", ")))
+    };
 
-    let mut names = flake_changes
-        .iter()
-        .map(|change| change.name.as_str())
-        .take(5)
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    if flake_changes.len() > 5 {
-        names.push(format!("+{} more", flake_changes.len() - 5));
+    let repair_part = format_repaired_paths(repaired_paths);
+    match (flake_part, repair_part) {
+        (Some(flake), Some(repair)) => format!("{flake} + fix FOD hash drift in {repair}"),
+        (Some(flake), None) => flake,
+        (None, Some(repair)) => format!("Fix FOD hash drift in {repair}"),
+        (None, None) => "Update flake inputs".to_string(),
     }
-    format!("Update flake ({})", names.join(", "))
+}
+
+fn format_repaired_paths(repaired_paths: &[PathBuf]) -> Option<String> {
+    match repaired_paths {
+        [] => None,
+        [path] => Some(path.display().to_string()),
+        [first, rest @ ..] => Some(format!("{} +{} more", first.display(), rest.len())),
+    }
 }

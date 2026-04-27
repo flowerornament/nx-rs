@@ -520,7 +520,13 @@ High-level phases:
   - enrich and changelog fetch
   - non-dry-run `brew upgrade <pkgs...>`
 3. Rebuild unless `--skip-rebuild`
-4. Commit `flake.lock` unless `--skip-commit` (and if flake changes exist)
+  - If rebuild fails with a Nix fixed-output hash mismatch, parse the `specified` and `got` hashes.
+  - If exactly one tracked `.nix` file contains the exact specified hash string and that file has no pre-existing staged or unstaged changes, update that occurrence to the got hash and retry rebuild.
+  - Print the repaired file, line number, old hash, and new hash when automatic repair runs.
+  - Disable automatic repair when `NX_NO_AUTO_HASH_FIX=1` (also accepting `true`, `yes`, or `on`).
+  - Stop automatic repairs after three fixed-output hash mismatches in one upgrade and require manual review.
+  - If the hash cannot be repaired safely, print the specified/got hashes and the matching file hints before failing.
+4. Commit `flake.lock` and any auto-repaired hash files unless `--skip-commit` (and if flake changes or repairs exist)
 
 Dry-run behavior:
 

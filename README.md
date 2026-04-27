@@ -166,6 +166,7 @@ Requirements:
 | `NX_PROFILE_PATH` | No | `~/.local/state/nx/timings.jsonl` | Override where rebuild/upgrade timing records are written and read. |
 | `NX_RS_SOPS_BIN` | No | `sops` | Override the `sops` executable used by `nx secret add`. |
 | `NX_RS_AUTO_REFRESH` | No | enabled | Controls auto-refresh of a local cargo-installed `nx` binary before `rebuild`/`upgrade`. Set to `0`, `false`, or `no` to disable. |
+| `NX_NO_AUTO_HASH_FIX` | No | unset | Disable automatic fixed-output hash repair during `nx upgrade` when set to `1`, `true`, `yes`, or `on`. |
 | `NX_CODE_ROOTS` | No | `~/code` | Colon-separated roots scanned by `nx clean-caches`; set to an empty string to disable code-root scans. |
 | `NX_CLEAN_SCAN_DEPTH` | No | `3` | Maximum directory depth for `nx clean-caches` code-root scans; values above `8` are clamped. |
 | `NX_CLEAN_SKIP` | No | unset | Comma-separated cache names for `nx clean-caches` to skip. |
@@ -434,6 +435,7 @@ Runs the upgrade flow for either the whole repo or named flake inputs.
 - `nx upgrade` with no positional inputs runs the full repo-wide flow: flake update, Homebrew update/upgrade, rebuild, and git commit.
 - `nx upgrade <input...>` updates only the named flake inputs via `nix flake update <input...>`.
 - After changed GitHub-backed inputs are written to `flake.lock`, `nx upgrade` prefetches those exact revisions so Nix lazy source caches are warm before flake check and rebuild.
+- If rebuild reports a Nix fixed-output hash mismatch, `nx upgrade` updates the unique clean matching hash in a tracked `.nix` file, retries, and includes that file in the upgrade commit. It prints the file, line, old hash, and new hash when it does this. If it cannot do that safely, it prints the exact next action.
 - Targeted input upgrades skip the Homebrew phase by default.
 - Use `--skip-brew`, `--skip-rebuild`, or `--skip-commit` to trim the flow further.
 - Use `--no-ai` to disable AI-generated summaries and recovery prompts.

@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::cli::RebuildArgs;
@@ -17,7 +17,14 @@ use crate::infra::timing::{
 };
 use crate::output::printer::Printer;
 
-use super::{DARWIN_REBUILD, lint::run_routing_lint};
+use super::{
+    DARWIN_REBUILD,
+    fixed_output_hash::{
+        FixedOutputHashMismatch, FixedOutputHashTarget, apply_fixed_output_hash_repair,
+        find_fixed_output_hash_targets, parse_fixed_output_hash_mismatch, path_is_clean,
+    },
+    lint::run_routing_lint,
+};
 
 const SPLIT_DARWIN_ENV: &str = "NX_SPLIT_DARWIN";
 const DARWIN_HOST_ENV: &str = "NX_DARWIN_HOST";
@@ -27,6 +34,9 @@ const SUDO_SET_HOME_ARG: &str = "-H";
 const ROOT_HOME_ENV: &str = "HOME=/var/root";
 const NIX_REMOTE_DAEMON_ENV: &str = "NIX_REMOTE=daemon";
 const ROOT_ENV_WRAPPER: &[&str] = &["/usr/bin/env", ROOT_HOME_ENV, NIX_REMOTE_DAEMON_ENV];
+const NO_AUTO_HASH_FIX_ENV: &str = "NX_NO_AUTO_HASH_FIX";
+const MAX_AUTO_HASH_FIXES: usize = 3;
+const MAX_REBUILD_ATTEMPTS: usize = 8;
 
 pub fn cmd_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> i32 {
     cmd_rebuild_with_command(args, ctx, TimingCommand::Rebuild)
@@ -37,43 +47,93 @@ pub fn cmd_rebuild_with_command(
     ctx: &SystemContext<'_>,
     command: TimingCommand,
 ) -> i32 {
+    cmd_rebuild_with_command_result(args, ctx, command, FixedOutputHashRepairMode::HintOnly).code
+}
+
+pub(super) struct RebuildCommandResult {
+    pub(super) code: i32,
+    pub(super) repaired_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FixedOutputHashRepairMode {
+    HintOnly,
+    Auto,
+}
+
+pub(super) fn cmd_rebuild_with_command_result(
+    args: &RebuildArgs,
+    ctx: &SystemContext<'_>,
+    command: TimingCommand,
+    hash_repair: FixedOutputHashRepairMode,
+) -> RebuildCommandResult {
     if let Err(code) = ctx.require_manifest_system_safe("rebuild") {
-        return code;
+        return RebuildCommandResult {
+            code,
+            repaired_paths: Vec::new(),
+        };
     }
     let mut timing = TimingSession::new(command, ctx.repo_root);
 
-    let code = run_rebuild(args, ctx, &mut timing);
-    let record = timing.finish(code);
+    let result = run_rebuild(args, ctx, &mut timing, hash_repair);
+    let record = timing.finish(result.code);
     finish_timing(args, ctx, &record);
-    code
+    result
 }
 
-fn run_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>, timing: &mut TimingSession) -> i32 {
+fn run_rebuild(
+    args: &RebuildArgs,
+    ctx: &SystemContext<'_>,
+    timing: &mut TimingSession,
+    hash_repair: FixedOutputHashRepairMode,
+) -> RebuildCommandResult {
     if args.preflight {
         let routing_code =
             timing.record_result_phase("routing-preflight", || check_routing_preflight(ctx));
         if let Some(code) = routing_code {
-            return code;
+            return RebuildCommandResult {
+                code,
+                repaired_paths: Vec::new(),
+            };
         }
     }
 
     let git_code = timing.record_result_phase("git-preflight", || check_git_preflight(ctx));
     if let Some(code) = git_code {
-        return code;
+        return RebuildCommandResult {
+            code,
+            repaired_paths: Vec::new(),
+        };
     }
 
     let flake_code = timing.record_result_phase("flake-check", || check_flake(ctx));
     if let Some(code) = flake_code {
-        return code;
+        return RebuildCommandResult {
+            code,
+            repaired_paths: Vec::new(),
+        };
     }
 
     if args.preflight {
         println!();
         ctx.printer.success("Rebuild preflight passed");
-        return 0;
+        return RebuildCommandResult {
+            code: 0,
+            repaired_paths: Vec::new(),
+        };
     }
 
-    timing.record_exit_phase_with_children("activation", || do_rebuild(args, ctx))
+    let mut repaired_paths = Vec::new();
+    let code = timing.record_exit_phase_with_children("activation", || {
+        let (code, phases, repairs) = do_rebuild(args, ctx, hash_repair);
+        repaired_paths = repairs;
+        (code, phases)
+    });
+
+    RebuildCommandResult {
+        code,
+        repaired_paths,
+    }
 }
 
 fn finish_timing(args: &RebuildArgs, ctx: &SystemContext<'_>, record: &TimingRecord) {
@@ -256,14 +316,19 @@ fn check_flake(ctx: &SystemContext<'_>) -> Result<(), i32> {
     Err(1)
 }
 
-fn do_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> (i32, Vec<TimingPhase>) {
+fn do_rebuild(
+    args: &RebuildArgs,
+    ctx: &SystemContext<'_>,
+    hash_repair: FixedOutputHashRepairMode,
+) -> (i32, Vec<TimingPhase>, Vec<PathBuf>) {
     let repo = ctx.repo_root.display().to_string();
     let manifest = ctx.config_files.manifest();
     let use_sudo = manifest.is_none_or(|m| m.platform.sudo);
     let mut retried_cache_corruption = false;
+    let mut repaired_paths = Vec::new();
     let mut profiler = ActivationPhaseProfiler::new();
 
-    for attempt in 0..3 {
+    for attempt in 0..MAX_REBUILD_ATTEMPTS {
         if attempt == 0 {
             ctx.printer.action("Rebuilding system");
         } else {
@@ -278,7 +343,7 @@ fn do_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> (i32, Vec<TimingPh
                     ctx.printer.error(&format!("{err:#}"));
                     let mut phases = profiler.finish();
                     phases.push(failed_phase("rebuild-error"));
-                    return (1, phases);
+                    return (1, phases, repaired_paths);
                 }
             };
 
@@ -288,11 +353,11 @@ fn do_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> (i32, Vec<TimingPh
                 RebuildOutcome::AlreadyCurrent => ctx.printer.success("System already current"),
                 RebuildOutcome::Rebuilt => ctx.printer.success("System rebuilt"),
             }
-            return (0, split_phases_or_profile(split_phases, profiler.finish()));
-        }
-
-        if attempt >= 2 {
-            break;
+            return (
+                0,
+                split_phases_or_profile(split_phases, profiler.finish()),
+                repaired_paths,
+            );
         }
 
         if super::upgrade::is_fd_exhaustion(&output) {
@@ -311,11 +376,143 @@ fn do_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> (i32, Vec<TimingPh
             continue;
         }
 
+        if let Some(path) =
+            handle_fixed_output_hash_mismatch(ctx, &output, hash_repair, repaired_paths.len())
+        {
+            if !repaired_paths.contains(&path) {
+                repaired_paths.push(path);
+            }
+            continue;
+        }
+
         break;
     }
 
     ctx.printer.error("Rebuild failed");
-    (1, profiler.finish())
+    (1, profiler.finish(), repaired_paths)
+}
+
+fn handle_fixed_output_hash_mismatch(
+    ctx: &SystemContext<'_>,
+    output: &str,
+    repair_mode: FixedOutputHashRepairMode,
+    repaired_count: usize,
+) -> Option<PathBuf> {
+    let mismatch = parse_fixed_output_hash_mismatch(output)?;
+    let targets = match find_fixed_output_hash_targets(ctx.repo_root, &mismatch.specified) {
+        Ok(targets) => targets,
+        Err(err) => {
+            print_fixed_output_hash_hint(
+                ctx,
+                &mismatch,
+                &[],
+                Some(&format!("could not scan tracked .nix files: {err:#}")),
+            );
+            return None;
+        }
+    };
+
+    let [target] = targets.as_slice() else {
+        print_fixed_output_hash_hint(ctx, &mismatch, &targets, None);
+        return None;
+    };
+
+    if repair_mode == FixedOutputHashRepairMode::HintOnly {
+        print_fixed_output_hash_hint(ctx, &mismatch, &targets, None);
+        return None;
+    }
+
+    if env_flag(NO_AUTO_HASH_FIX_ENV) {
+        print_fixed_output_hash_hint(
+            ctx,
+            &mismatch,
+            &targets,
+            Some("automatic hash repair is disabled by NX_NO_AUTO_HASH_FIX"),
+        );
+        return None;
+    }
+
+    if repaired_count >= MAX_AUTO_HASH_FIXES {
+        print_fixed_output_hash_hint(
+            ctx,
+            &mismatch,
+            &targets,
+            Some("multiple fixed-output hash mismatches in one upgrade need manual review"),
+        );
+        return None;
+    }
+
+    if !path_is_clean(ctx.repo_root, &target.path) {
+        print_fixed_output_hash_hint(
+            ctx,
+            &mismatch,
+            &targets,
+            Some("matching file has pre-existing changes, so nx left it alone"),
+        );
+        return None;
+    }
+
+    match apply_fixed_output_hash_repair(ctx.repo_root, target, &mismatch) {
+        Ok(()) => {
+            ctx.printer.warn(&format!(
+                "Auto-updated {}:{}: hash {} -> {} (FOD content drift); retrying",
+                target.path.display(),
+                target.line_number,
+                mismatch.specified,
+                mismatch.got
+            ));
+            Some(target.path.clone())
+        }
+        Err(err) => {
+            print_fixed_output_hash_hint(
+                ctx,
+                &mismatch,
+                &targets,
+                Some(&format!("could not update matching file: {err:#}")),
+            );
+            None
+        }
+    }
+}
+
+fn print_fixed_output_hash_hint(
+    ctx: &SystemContext<'_>,
+    mismatch: &FixedOutputHashMismatch,
+    targets: &[FixedOutputHashTarget],
+    reason: Option<&str>,
+) {
+    ctx.printer
+        .warn("Nix fixed-output hash changed during rebuild");
+    if let Some(reason) = reason {
+        Printer::detail(reason);
+    }
+    Printer::detail(&format!("specified: {}", mismatch.specified));
+    Printer::detail(&format!("got:       {}", mismatch.got));
+
+    match targets {
+        [] => {
+            Printer::detail("No unique tracked .nix hash assignment was found to update.");
+        }
+        [target] => {
+            Printer::detail(&format!(
+                "Update {}:{}:{} from the specified hash to the got hash, then rerun.",
+                target.path.display(),
+                target.line_number,
+                target.column_number
+            ));
+        }
+        _ => {
+            Printer::detail("Multiple matching hash occurrences were found:");
+            for target in targets {
+                Printer::detail(&format!(
+                    "- {}:{}:{}",
+                    target.path.display(),
+                    target.line_number,
+                    target.column_number
+                ));
+            }
+        }
+    }
 }
 
 fn do_rebuild_once(

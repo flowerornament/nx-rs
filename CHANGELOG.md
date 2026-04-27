@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.12 - 2026-04-27
+
+- fixed split Darwin sudo authorization on macOS by using `sudo -v` for the timestamp check while keeping `sudo -H` on the privileged profile and activation commands
+- tightened the system-command sudo stub so invalid `sudo -H -v` invocations are caught before release
+
 ## v1.5.11 - 2026-04-27
 
 - made `nx upgrade` recover from safe Nix fixed-output hash drift by updating exactly one clean tracked `.nix` hash occurrence, retrying the rebuild, and committing the repaired file with `flake.lock`

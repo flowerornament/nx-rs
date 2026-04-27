@@ -239,6 +239,11 @@ case "$program" in
       exit 1
     fi
 
+    if [ "${1:-}" = "-H" ] && [ "${2:-}" = "-v" ]; then
+      echo "usage: sudo -v [-ABkNnS] [-g group] [-h host] [-p prompt] [-u user]" >&2
+      exit 1
+    fi
+
     if [ "${1:-}" = "-H" ]; then
       shift
       export HOME="/var/root"

@@ -178,7 +178,7 @@ const SPLIT_REBUILD_SUDO_CHECK_CALL: ExpectedCall =
     ExpectedCall::new("sudo", EXPECTED_CWD_REPO_ROOT, &["-n", "true"]);
 
 const SPLIT_REBUILD_SUDO_AUTH_CALL: ExpectedCall =
-    ExpectedCall::new("sudo", EXPECTED_CWD_REPO_ROOT, &[SUDO_SET_HOME_ARG, "-v"]);
+    ExpectedCall::new("sudo", EXPECTED_CWD_REPO_ROOT, &["-v"]);
 
 const SPLIT_REBUILD_PROFILE_SET_CALL: ExpectedCall = ExpectedCall::new(
     "sudo",

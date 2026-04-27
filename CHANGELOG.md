@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.10 - 2026-04-27
+
+- treated likely typos of guarded command names, such as `nx rebulid`, as command errors instead of rewriting them to `nx install`, preserving clap's command suggestions
+- kept ordinary bare package inference intact for package names such as `nx docker`
+
 ## v1.5.9 - 2026-04-27
 
 - added live per-bucket progress while `nx clean-caches` scans slow cache roots, including the currently scanned code-root cache type and delayed Nix GC sizing

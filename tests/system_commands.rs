@@ -531,7 +531,7 @@ fn split_darwin_rebuild_authorizes_sudo_when_prompt_is_needed() -> Result<(), Bo
         "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
-        stdout.contains("Authorizing sudo"),
+        stdout.contains("Authorizing sudo for system profile update and activation"),
         "stdout missing sudo authorization phase\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(

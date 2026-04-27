@@ -808,7 +808,8 @@ fn authorize_split_sudo(
     }
 
     let (output, mut phase) = timed_phase("sudo-auth", || {
-        ctx.printer.action("Authorizing sudo");
+        ctx.printer
+            .action("Authorizing sudo for system profile update and activation");
         run_indented_command_collecting_with_env("sudo", &["-v"], None, None, ctx.printer, "  ")
     })?;
     phase.status = exit_status(output.0);

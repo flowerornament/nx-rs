@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.5.13 - 2026-04-27
+
+- clarified the split Darwin sudo prompt so changed-system rebuilds say sudo is for the system profile update and activation, not an unexplained generic authorization step
+
 ## v1.5.12 - 2026-04-27
 
 - fixed split Darwin sudo authorization on macOS by using `sudo -v` for the timestamp check while keeping `sudo -H` on the privileged profile and activation commands

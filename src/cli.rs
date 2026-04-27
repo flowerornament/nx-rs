@@ -62,6 +62,7 @@ const CLEAN_CACHES_HELP: &str = concat!(
     "Notes:\n",
     "  - Scans known cache and build artifact directories, reports sizes, and cleans them.\n",
     "  - Covers: cargo, uv, npm, Homebrew, Xcode, nix GC, Rust targets, Elixir _build, node_modules, AI agent data.\n",
+    "  - Large Nix GC and code-root scans show a live loading indicator while sizes are computed.\n",
     "  - Host-scoped: works from any directory.\n",
     "  - Configure with NX_CODE_ROOTS, NX_CLEAN_SCAN_DEPTH, and NX_CLEAN_SKIP.\n",
     "  - Valid NX_CLEAN_SKIP names: cargo-registry, uv, npm, homebrew, huggingface, puppeteer, playwright, xcode-derived, core-simulator, codex-sessions, codex-logs, claude-telemetry, claude-file-history, nix-gc, rust-targets, elixir-builds, node-modules.",

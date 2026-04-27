@@ -1,4 +1,7 @@
 use std::io::{self, BufRead, IsTerminal, Write};
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use crate::output::style::{IconSet, OutputStyle};
 
@@ -22,6 +25,11 @@ struct GlyphSet {
 
 pub struct Printer {
     style: OutputStyle,
+}
+
+pub(crate) struct LoadingIndicator {
+    stop: Option<Sender<()>>,
+    handle: Option<JoinHandle<()>>,
 }
 
 impl Printer {
@@ -78,6 +86,42 @@ impl Printer {
             ActivityKind::Running => ">",
         };
         println!("{}", self.paint(format!("  {glyph} {text}"), "35"));
+    }
+
+    #[must_use]
+    pub(crate) fn loading(&self, text: &str) -> LoadingIndicator {
+        if !loading_enabled(self.style, io::stderr().is_terminal()) {
+            return LoadingIndicator::disabled();
+        }
+
+        let (stop, stopped) = mpsc::channel();
+        let text = text.to_string();
+        let frames = loading_frames(self.style.icon_set);
+        let color = self.style.color;
+        let handle = thread::spawn(move || {
+            let mut index = 0usize;
+            loop {
+                let frame = frames[index % frames.len()];
+                if color {
+                    eprint!("\r\x1b[2K\x1b[35m  {frame} {text}\x1b[0m");
+                } else {
+                    eprint!("\r\x1b[2K  {frame} {text}");
+                }
+                let _ = io::stderr().flush();
+                index += 1;
+                match stopped.recv_timeout(Duration::from_millis(120)) {
+                    Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
+                    Err(RecvTimeoutError::Timeout) => {}
+                }
+            }
+            eprint!("\r\x1b[2K");
+            let _ = io::stderr().flush();
+        });
+
+        LoadingIndicator {
+            stop: Some(stop),
+            handle: Some(handle),
+        }
     }
 
     pub fn searching(name: &str) {
@@ -173,6 +217,45 @@ impl Printer {
     }
 }
 
+impl LoadingIndicator {
+    fn disabled() -> Self {
+        Self {
+            stop: None,
+            handle: None,
+        }
+    }
+
+    pub(crate) fn finish(mut self) {
+        self.stop();
+    }
+
+    fn stop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for LoadingIndicator {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+const fn loading_frames(icon_set: IconSet) -> &'static [&'static str] {
+    match icon_set {
+        IconSet::Unicode => &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
+        IconSet::Minimal => &["-", "\\", "|", "/"],
+    }
+}
+
+const fn loading_enabled(style: OutputStyle, stderr_is_terminal: bool) -> bool {
+    !style.plain && stderr_is_terminal
+}
+
 fn parse_confirm_response(response: &str, default_yes: bool) -> bool {
     let trimmed = response.trim().to_ascii_lowercase();
     if trimmed.is_empty() {
@@ -220,7 +303,9 @@ fn nth_char_boundary(input: &str, n: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{Printer, parse_confirm_response, wrapped_segments};
+    use super::{
+        Printer, loading_enabled, loading_frames, parse_confirm_response, wrapped_segments,
+    };
     use crate::output::style::{IconSet, OutputStyle};
 
     #[test]
@@ -290,6 +375,30 @@ mod tests {
         });
         let line = printer.success_line("ok");
         assert!(!line.contains("\x1b["));
+    }
+
+    #[test]
+    fn loading_policy_requires_non_plain_terminal_stderr() {
+        let style = OutputStyle {
+            plain: false,
+            icon_set: IconSet::Minimal,
+            color: false,
+        };
+        assert!(loading_enabled(style, true));
+        assert!(!loading_enabled(style, false));
+        assert!(!loading_enabled(
+            OutputStyle {
+                plain: true,
+                ..style
+            },
+            true
+        ));
+    }
+
+    #[test]
+    fn loading_frames_follow_icon_set() {
+        assert_eq!(loading_frames(IconSet::Minimal), &["-", "\\", "|", "/"]);
+        assert!(loading_frames(IconSet::Unicode).contains(&"⠋"));
     }
 
     #[test]

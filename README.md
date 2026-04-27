@@ -464,6 +464,7 @@ Scans host cache directories and common build artifacts, reports sizes, and clea
 
 - Supports `--dry-run` and `--yes`.
 - Code-root scans default to `~/code` and depth `3`; scan depth is capped at `8`.
+- Large Nix GC and code-root scans show a live loading indicator while sizes are computed.
 - Set `NX_CODE_ROOTS`, `NX_CLEAN_SCAN_DEPTH`, and `NX_CLEAN_SKIP` directly, or configure them declaratively with `programs.nx.cleanCaches`.
 - Valid skip names: `cargo-registry`, `uv`, `npm`, `homebrew`, `huggingface`, `puppeteer`, `playwright`, `xcode-derived`, `core-simulator`, `codex-sessions`, `codex-logs`, `claude-telemetry`, `claude-file-history`, `nix-gc`, `rust-targets`, `elixir-builds`, `node-modules`.
 

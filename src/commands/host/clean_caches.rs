@@ -157,7 +157,11 @@ pub fn cmd_clean_caches(args: &CleanCachesArgs, ctx: &HostContext<'_>) -> i32 {
         ctx.printer
             .warn(&format!("unknown {CLEAN_SKIP_ENV} entry: {name}"));
     }
+    let loading = ctx
+        .printer
+        .loading("Sizing caches; Nix GC and large code roots can take a while");
     let entries = scan_caches(&home, &config);
+    loading.finish();
 
     if entries.is_empty() {
         Printer::body("No caches found.");
@@ -470,21 +474,43 @@ fn nix_dead_size() -> u64 {
     match output {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            let mut total = 0u64;
-            for p in stdout.lines().map(str::trim).filter(|l| !l.is_empty()) {
-                let sz = Command::new("nix-store").args(["-q", "--size", p]).output();
-                if let Ok(sz_out) = sz
-                    && let Ok(n) = String::from_utf8_lossy(&sz_out.stdout)
-                        .trim()
-                        .parse::<u64>()
-                {
-                    total += n;
-                }
-            }
-            total
+            let paths: Vec<&str> = stdout
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .collect();
+            nix_store_size_total(&paths)
         }
         Err(_) => 0,
     }
+}
+
+fn nix_store_size_total(paths: &[&str]) -> u64 {
+    paths.chunks(128).map(nix_store_size_chunk).sum()
+}
+
+fn nix_store_size_chunk(paths: &[&str]) -> u64 {
+    if paths.is_empty() {
+        return 0;
+    }
+
+    let output = Command::new("nix-store")
+        .args(["-q", "--size"])
+        .args(paths)
+        .output();
+    match output {
+        Ok(out) if out.status.success() => {
+            parse_nix_store_sizes(&String::from_utf8_lossy(&out.stdout))
+        }
+        _ => 0,
+    }
+}
+
+fn parse_nix_store_sizes(output: &str) -> u64 {
+    output
+        .lines()
+        .filter_map(|line| line.trim().parse::<u64>().ok())
+        .sum()
 }
 
 fn walk_code_cache_dirs(
@@ -501,13 +527,16 @@ fn walk_code_cache_dirs(
         return;
     };
     for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
             continue;
         }
 
         let name = entry.file_name();
         let name = name.to_string_lossy();
+        let path = entry.path();
         match sizes.record_target(&name, &path, config) {
             CodeCacheMatch::NotMatched if !name.starts_with('.') => {
                 walk_code_cache_dirs(&path, max_depth, depth + 1, config, sizes);
@@ -642,6 +671,11 @@ mod tests {
         };
 
         assert_eq!(config.unknown_skip_names(), vec!["mystery-cache"]);
+    }
+
+    #[test]
+    fn nix_store_size_output_sums_numeric_lines() {
+        assert_eq!(parse_nix_store_sizes("1024\nbad\n2048\n"), 3072);
     }
 
     #[test]

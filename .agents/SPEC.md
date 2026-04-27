@@ -528,6 +528,7 @@ Dry-run behavior:
 
 - Host-scoped and does not require repository discovery.
 - Scans known cache directories plus code-root build artifacts and reports sizes before cleaning.
+- Shows live loading feedback during cache sizing; Nix GC and large code roots may take minutes.
 - Prompts before mutation unless `--yes` is set.
 - `--dry-run` reports caches without mutation.
 - `NX_CODE_ROOTS` overrides code roots as a colon-separated list. Missing defaults to `~/code`; an empty value disables code-root scans.

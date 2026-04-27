@@ -485,6 +485,7 @@ Experimental split Darwin rebuild:
 - Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get LocalHostName`, then `hostname -s`.
 - If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
 - Otherwise runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
+- Retries once after clearing Nix git/fetcher caches when flake check or rebuild output reports lazy source object lookup failures.
 
 Routing lint rules:
 

@@ -215,28 +215,45 @@ fn check_git_preflight(ctx: &SystemContext<'_>) -> Result<(), i32> {
 }
 
 fn check_flake(ctx: &SystemContext<'_>) -> Result<(), i32> {
-    ctx.printer.action("Checking flake");
     let repo = ctx.repo_root.display().to_string();
     let args = ["flake", "check", &repo];
-    let output = match run_captured_command("nix", &args, None) {
-        Ok(output) => output,
-        Err(err) => {
-            ctx.printer.error(&format!("Flake check failed: {err:#}"));
-            return Err(1);
-        }
-    };
 
-    if output.code != 0 {
-        ctx.printer.error("Flake check failed");
+    for attempt in 0..2 {
+        if attempt == 0 {
+            ctx.printer.action("Checking flake");
+        } else {
+            ctx.printer.action("Retrying flake check");
+        }
+
+        let output = match run_captured_command("nix", &args, None) {
+            Ok(output) => output,
+            Err(err) => {
+                ctx.printer.error(&format!("Flake check failed: {err:#}"));
+                return Err(1);
+            }
+        };
+
+        if output.code == 0 {
+            ctx.printer.success("Flake check passed");
+            return Ok(());
+        }
+
         let err_text = first_nonempty_output(&output);
+        if attempt == 0 && super::upgrade::is_cache_corruption(err_text) {
+            super::upgrade::clear_user_git_cache();
+            ctx.printer
+                .warn("Nix cache corruption detected, clearing cache and retrying");
+            continue;
+        }
+
+        ctx.printer.error("Flake check failed");
         if !err_text.is_empty() {
             println!("{err_text}");
         }
         return Err(1);
     }
 
-    ctx.printer.success("Flake check passed");
-    Ok(())
+    Err(1)
 }
 
 fn do_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> (i32, Vec<TimingPhase>) {
@@ -394,6 +411,7 @@ fn do_split_darwin_rebuild(
 
     let attr = format!("{repo}#darwinConfigurations.{host}.system");
     let mut phases = Vec::new();
+    let mut build_stderr = String::new();
     let (build, mut build_phase) = match timed_phase("build", || {
         ctx.printer.action("Building system configuration");
         run_indented_command_collecting_stdout_with_observer(
@@ -403,7 +421,11 @@ fn do_split_darwin_rebuild(
             None,
             ctx.printer,
             "  ",
-            |_, _| {},
+            |stream, line| {
+                if stream == StreamName::Stderr {
+                    push_stream_line(&mut build_stderr, line);
+                }
+            },
         )
     }) {
         Ok(result) => result,
@@ -412,7 +434,12 @@ fn do_split_darwin_rebuild(
     build_phase.status = exit_status(build.0);
     phases.push(build_phase);
     if build.0 != 0 {
-        return SplitDarwinResult::Handled(Ok((build.0, build.1, phases, RebuildOutcome::Rebuilt)));
+        return SplitDarwinResult::Handled(Ok((
+            build.0,
+            combined_stream_output(&build.1, &build_stderr),
+            phases,
+            RebuildOutcome::Rebuilt,
+        )));
     }
 
     let Some(system_config) = parse_system_config_path(&build.1) else {
@@ -651,6 +678,22 @@ pub(super) fn parse_system_config_path(output: &str) -> Option<String> {
         .get("out")?
         .as_str()
         .map(str::to_string)
+}
+
+fn push_stream_line(output: &mut String, line: &str) {
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    output.push_str(line);
+}
+
+fn combined_stream_output(stdout: &str, stderr: &str) -> String {
+    match (stdout.trim().is_empty(), stderr.trim().is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => stderr.to_string(),
+        (false, true) => stdout.to_string(),
+        (false, false) => format!("{stdout}\n{stderr}"),
+    }
 }
 
 fn timed_phase<T, F>(name: &str, run: F) -> anyhow::Result<(T, TimingPhase)>

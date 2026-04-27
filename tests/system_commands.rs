@@ -208,6 +208,23 @@ const SPLIT_REBUILD_ACTIVATE_CALL: ExpectedCall = ExpectedCall::new(
     ],
 );
 
+const ROOT_GIT_CACHE_CLEAR_CALL: ExpectedCall = ExpectedCall::new(
+    "sudo",
+    EXPECTED_CWD_REPO_ROOT,
+    &["-n", "rm", "-rf", "/var/root/.cache/nix/gitv3"],
+);
+
+const ROOT_FETCHER_CACHE_CLEAR_CALL: ExpectedCall = ExpectedCall::new(
+    "sudo",
+    EXPECTED_CWD_REPO_ROOT,
+    &[
+        "-n",
+        "rm",
+        "-f",
+        "/var/root/.cache/nix/fetcher-cache-v4.sqlite",
+    ],
+);
+
 fn split_rebuild_calls(authorizes_sudo: bool) -> Vec<ExpectedCall> {
     let mut calls = Vec::with_capacity(SPLIT_REBUILD_BUILD_CALLS.len() + 4);
     calls.extend_from_slice(SPLIT_REBUILD_BUILD_CALLS);
@@ -215,6 +232,32 @@ fn split_rebuild_calls(authorizes_sudo: bool) -> Vec<ExpectedCall> {
     if authorizes_sudo {
         calls.push(SPLIT_REBUILD_SUDO_AUTH_CALL);
     }
+    calls.push(SPLIT_REBUILD_PROFILE_SET_CALL);
+    calls.push(SPLIT_REBUILD_ACTIVATE_CALL);
+    calls
+}
+
+fn split_rebuild_cache_retry_calls() -> Vec<ExpectedCall> {
+    let mut calls = Vec::with_capacity(SPLIT_REBUILD_BUILD_CALLS.len() + 7);
+    calls.extend_from_slice(SPLIT_REBUILD_BUILD_CALLS);
+    calls.push(ROOT_GIT_CACHE_CLEAR_CALL);
+    calls.push(ROOT_FETCHER_CACHE_CLEAR_CALL);
+    calls.push(ExpectedCall::new(
+        "scutil",
+        EXPECTED_CWD_REPO_ROOT,
+        &["--get", "LocalHostName"],
+    ));
+    calls.push(ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "build",
+            "--json",
+            "--no-link",
+            "<REPO_ROOT>#darwinConfigurations.test-host.system",
+        ],
+    ));
+    calls.push(SPLIT_REBUILD_SUDO_CHECK_CALL);
     calls.push(SPLIT_REBUILD_PROFILE_SET_CALL);
     calls.push(SPLIT_REBUILD_ACTIVATE_CALL);
     calls
@@ -494,6 +537,34 @@ fn split_darwin_rebuild_authorizes_sudo_when_prompt_is_needed() -> Result<(), Bo
     assert!(
         !stdout.contains("Falling back to darwin-rebuild switch"),
         "stdout should not fall back after sudo authorization\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn split_darwin_rebuild_retries_source_cache_corruption() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+    let expected_calls = split_rebuild_cache_retry_calls();
+
+    let RunResult { stdout, stderr, .. } = run_split_rebuild(
+        &nx_bin,
+        &repo_base,
+        "split_rebuild_cache_corruption",
+        "split_build_cache_corruption",
+        &[("NX_SPLIT_DARWIN", "1")],
+        &expected_calls,
+    )?;
+
+    assert!(
+        stdout.contains("Nix git cache corruption detected, clearing cache and retrying"),
+        "stdout missing cache-corruption retry warning\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("System rebuilt"),
+        "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
 
     Ok(())

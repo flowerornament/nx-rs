@@ -161,6 +161,14 @@ case "$program" in
     fi
 
     if [ "${1:-}" = "build" ] && [ "${2:-}" = "--json" ]; then
+      if [ "$mode" = "split_build_cache_corruption" ]; then
+        marker="${HOME}/.nx-system-it-split-build-cache-corruption-once"
+        if [ ! -f "$marker" ]; then
+          : > "$marker"
+          echo "error: looking up file '«github:flowerornament/nx-rs/b9471c7»/scripts/test-home-manager-module.sh': object not found - no match for id (c2217e)" >&2
+          exit 1
+        fi
+      fi
       if [ "$mode" = "split_build_fail" ]; then
         echo "stub nix build failed" >&2
         exit 1

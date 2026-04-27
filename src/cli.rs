@@ -31,6 +31,28 @@ const KNOWN_COMMANDS: &[&str] = &[
     "clean-caches",
 ];
 
+const TYPO_GUARDED_COMMANDS: &[&str] = &[
+    "version",
+    "completion",
+    "init",
+    "install",
+    "remove",
+    "secret",
+    "search",
+    "where",
+    "status",
+    "installed",
+    "profile",
+    "lint",
+    "undo",
+    "update",
+    "test",
+    "rebuild",
+    "upgrade",
+    "generations",
+    "clean-caches",
+];
+
 const ROOT_HELP: &str = "Run `nx help <topic>` for hierarchical help, or `nx <command> --help` for full command docs.\n\nExamples:\n  nx version\n  nx doctor\n  nx help install\n  nx upgrade --dry-run\n  nx completion zsh";
 const VERSION_HELP: &str = "Examples:\n  nx --version\n  nx -V\n  nx version\n  nx version --json";
 const COMPLETION_HELP: &str = "Examples:\n  nx completion zsh > ~/.zsh/completions/_nx\n  nx completion bash > /usr/local/etc/bash_completion.d/nx\n\nNotes:\n  - Completion scripts are written to stdout.\n  - Re-run this after upgrading nx if completions drift.";
@@ -842,12 +864,52 @@ where
         return out;
     }
 
-    if first.starts_with('-') || KNOWN_COMMANDS.contains(&first.as_ref()) {
+    if first.starts_with('-')
+        || KNOWN_COMMANDS.contains(&first.as_ref())
+        || is_probable_command_typo(&first)
+    {
         return out;
     }
 
     out.insert(1, OsString::from("install"));
     out
+}
+
+fn is_probable_command_typo(token: &str) -> bool {
+    if token.chars().count() < 5 {
+        return false;
+    }
+
+    TYPO_GUARDED_COMMANDS
+        .iter()
+        .any(|command| edit_distance_at_most(token, command, 2))
+}
+
+fn edit_distance_at_most(left: &str, right: &str, limit: usize) -> bool {
+    let left_chars: Vec<_> = left.chars().collect();
+    let right_chars: Vec<_> = right.chars().collect();
+
+    if left_chars.len().abs_diff(right_chars.len()) > limit {
+        return false;
+    }
+
+    let mut previous: Vec<_> = (0..=right_chars.len()).collect();
+    let mut current = vec![0; right_chars.len() + 1];
+
+    for (left_index, left_char) in left_chars.iter().enumerate() {
+        current[0] = left_index + 1;
+
+        for (right_index, right_char) in right_chars.iter().enumerate() {
+            let substitution_cost = usize::from(left_char != right_char);
+            current[right_index + 1] = (current[right_index] + 1)
+                .min(previous[right_index + 1] + 1)
+                .min(previous[right_index] + substitution_cost);
+        }
+
+        previous.clone_from_slice(&current);
+    }
+
+    previous[right_chars.len()] <= limit
 }
 
 #[cfg(test)]
@@ -862,11 +924,25 @@ mod tests {
     // --- preprocess_args ---
 
     #[test]
-    fn preprocess_args_typo_like_token_inserts_install() {
+    fn preprocess_args_typo_like_token_passes_through() {
         let result = preprocess_args(["nx", "upgade", "--dry-run"]);
+        assert_eq!(result[1], OsString::from("upgade"));
+        assert_eq!(result[2], OsString::from("--dry-run"));
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn preprocess_args_rebuild_typo_passes_through() {
+        let result = preprocess_args(["nx", "rebulid"]);
+        assert_eq!(result[1], OsString::from("rebulid"));
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn preprocess_args_common_package_near_doctor_still_inserts_install() {
+        let result = preprocess_args(["nx", "docker"]);
         assert_eq!(result[1], OsString::from("install"));
-        assert_eq!(result[2], OsString::from("upgade"));
-        assert_eq!(result[3], OsString::from("--dry-run"));
+        assert_eq!(result[2], OsString::from("docker"));
     }
 
     #[test]

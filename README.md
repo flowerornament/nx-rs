@@ -192,6 +192,8 @@ Package changes:
 ```bash
 # Bare package names are treated as "install"
 nx ripgrep
+# Likely command typos are left as command errors with suggestions
+nx rebulid
 
 # Explicit install flows
 nx install ripgrep fd
@@ -293,7 +295,7 @@ Scans the current repo and writes `.nx/manifest.toml`. Use `--refresh` to rescan
 
 #### `install`
 
-Installs one or more packages into the managed repo. If you run `nx ripgrep`, `nx` treats the bare token as `nx install ripgrep`.
+Installs one or more packages into the managed repo. If you run `nx ripgrep`, `nx` treats the bare token as `nx install ripgrep`. Likely command typos such as `nx rebulid` are left as command errors so `nx` can suggest the intended command.
 
 - Use `--dry-run` to preview edits without writing files.
 - Use `--yes` to skip interactive prompts and accept defaults.

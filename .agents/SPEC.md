@@ -28,6 +28,7 @@ When implementation and this document disagree, this repository's tests are cons
   hierarchical `help` subcommand for topic lookup
 - Command preprocessing:
   - If first CLI arg is not a known command and does not start with `-`, prepend `install`.
+  - Likely typos of guarded command names, such as `rebulid`, must not be rewritten as installs; preserve them for clap's unknown-command suggestion.
   - Example: `nx ripgrep` behaves as `nx install ripgrep`.
 
 Known commands:

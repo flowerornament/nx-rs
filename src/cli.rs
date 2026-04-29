@@ -87,6 +87,7 @@ const CLEAN_CACHES_HELP: &str = concat!(
     "  - Scans known cache and build artifact directories, reports sizes, and cleans them.\n",
     "  - Covers: cargo, uv, npm, Homebrew, Xcode, nix GC, Rust targets, Elixir _build, node_modules, AI agent data.\n",
     "  - Large Nix GC and code-root scans show live per-bucket loading feedback while sizes are computed.\n",
+    "  - Confirmed cleaning shows live per-cache loading feedback before final results are printed.\n",
     "  - Positional cache names or --only limit the scan and clean plan to selected caches.\n",
     "  - Code-root build artifacts report how many directories were discovered.\n",
     "  - Nix GC sizing runs last because dead-store estimation can be slower than normal cache directory sizing.\n",

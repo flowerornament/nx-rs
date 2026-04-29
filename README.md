@@ -471,6 +471,7 @@ Scans host cache directories and common build artifacts, reports sizes, and clea
 - Supports `--dry-run` and `--yes`.
 - Code-root scans default to `~/code` and depth `3`; scan depth is capped at `8`.
 - Large Nix GC and code-root scans show live per-bucket loading feedback while sizes are computed.
+- Confirmed cleaning shows live per-cache loading feedback before final success or warning lines are printed.
 - Positional cache names or `--only` limit the scan and clean plan to selected caches.
 - Code-root build artifacts report how many directories were discovered.
 - Nix GC sizing runs last because dead-store estimation can be slower than normal cache directory sizing.

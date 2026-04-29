@@ -177,11 +177,10 @@ pub fn cmd_clean_caches(args: &CleanCachesArgs, ctx: &HostContext<'_>) -> i32 {
         ctx.printer
             .warn(&format!("unknown {CLEAN_SKIP_ENV} entry: {name}"));
     }
-    let loading = ctx
-        .printer
-        .loading("Sizing caches; Nix GC and large code roots can take a while");
-    let entries = scan_caches(&home, &config, |message| loading.set_text(message));
-    loading.finish();
+    let entries = ctx.printer.with_loading(
+        "Sizing caches; Nix GC and large code roots can take a while",
+        |loading| scan_caches(&home, &config, |message| loading.set_text(message)),
+    );
 
     if entries.is_empty() {
         Printer::body("No caches found.");
@@ -232,25 +231,7 @@ pub fn cmd_clean_caches(args: &CleanCachesArgs, ctx: &HostContext<'_>) -> i32 {
     }
 
     println!();
-    let mut cleaned_bytes: u64 = 0;
-    let mut cleaned_count = 0;
-
-    for entry in &nonzero {
-        match clean_entry(entry) {
-            Ok(()) => {
-                ctx.printer.success(&format!(
-                    "{} ({})",
-                    entry.name,
-                    format_size(entry.size_bytes)
-                ));
-                cleaned_bytes += entry.size_bytes;
-                cleaned_count += 1;
-            }
-            Err(err) => {
-                ctx.printer.warn(&format!("{}: {err}", entry.name));
-            }
-        }
-    }
+    let (cleaned_count, cleaned_bytes) = clean_selected_entries(ctx.printer, &nonzero);
 
     println!();
     ctx.printer.success(&format!(
@@ -258,6 +239,43 @@ pub fn cmd_clean_caches(args: &CleanCachesArgs, ctx: &HostContext<'_>) -> i32 {
         format_size(cleaned_bytes)
     ));
     0
+}
+
+fn clean_selected_entries(printer: &Printer, entries: &[&CacheEntry]) -> (usize, u64) {
+    let outcomes = printer.with_loading("Cleaning selected caches", |loading| {
+        entries
+            .iter()
+            .map(|&entry| {
+                loading.set_text(&format!(
+                    "Cleaning {} ({})",
+                    entry.name,
+                    format_size(entry.size_bytes)
+                ));
+                (entry, clean_entry(entry))
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let mut cleaned_count = 0;
+    let mut cleaned_bytes = 0;
+    for (entry, result) in outcomes {
+        match result {
+            Ok(()) => {
+                printer.success(&format!(
+                    "{} ({})",
+                    entry.name,
+                    format_size(entry.size_bytes)
+                ));
+                cleaned_count += 1;
+                cleaned_bytes += entry.size_bytes;
+            }
+            Err(err) => {
+                printer.warn(&format!("{}: {err}", entry.name));
+            }
+        }
+    }
+
+    (cleaned_count, cleaned_bytes)
 }
 
 fn scan_caches(

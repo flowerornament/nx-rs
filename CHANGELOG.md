@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.15 - 2026-04-29
+
+- added a shared `Printer::with_loading` helper so commands can wrap slow operations in a standard spinner scope instead of hand-managing spinner lifetimes
+- kept `nx clean-caches` visibly busy while confirmed cache deletion runs, including per-cache progress text for large removals such as `target` trees and Nix garbage collection
+
 ## v1.5.14 - 2026-04-28
 
 - fixed transient loading spinners so top-level progress starts at column zero, matching the rest of the status glyph layout

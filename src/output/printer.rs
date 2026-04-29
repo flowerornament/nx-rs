@@ -156,6 +156,17 @@ impl Printer {
         }
     }
 
+    pub(crate) fn with_loading<T>(
+        &self,
+        text: &str,
+        run: impl FnOnce(&LoadingIndicator) -> T,
+    ) -> T {
+        let loading = self.loading(text);
+        let result = run(&loading);
+        loading.finish();
+        result
+    }
+
     pub fn searching(name: &str) {
         eprint!("{}Searching for {name}...", LineLayout::Detail.indent());
     }
@@ -539,6 +550,22 @@ mod tests {
             layout_line(LineLayout::SubDetail, "-", "deeper"),
             "    - deeper"
         );
+    }
+
+    #[test]
+    fn with_loading_returns_closure_value() {
+        let printer = Printer::new(OutputStyle {
+            plain: true,
+            icon_set: IconSet::Minimal,
+            color: false,
+        });
+
+        let value = printer.with_loading("Working", |loading| {
+            loading.set_text("Still working");
+            42
+        });
+
+        assert_eq!(value, 42);
     }
 
     #[test]

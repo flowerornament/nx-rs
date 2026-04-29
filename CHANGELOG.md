@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.16 - 2026-04-29
+
+- added shared loading spinners to other long-running lookups: `nx search`, `nx info`, install source resolution, and the Homebrew update check in `nx upgrade`
+- removed the old one-off search progress printer so query commands use the same formatter path as cache scanning and cleanup
+- updated the tag release workflow to `softprops/action-gh-release@v3`, avoiding GitHub's Node.js 20 deprecation warning
+
 ## v1.5.15 - 2026-04-29
 
 - added a shared `Printer::with_loading` helper so commands can wrap slow operations in a standard spinner scope instead of hand-managing spinner lifetimes

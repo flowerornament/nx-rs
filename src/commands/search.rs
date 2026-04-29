@@ -16,9 +16,11 @@ pub fn cmd_search(args: &SearchArgs, ctx: &QueryContext<'_>) -> i32 {
 
     let mut cache = MultiSourceCache::load(ctx.repo_root).ok();
 
-    Printer::searching(&args.package);
-    let report = query_package(&args.package, &prefs, ctx.repo_root, &mut cache);
-    Printer::searching_done();
+    let report = ctx
+        .printer
+        .with_loading(&format!("Searching sources for {}", args.package), |_| {
+            query_package(&args.package, &prefs, ctx.repo_root, &mut cache)
+        });
     let outcome = &report.outcome;
 
     if outcome.results.is_empty() {

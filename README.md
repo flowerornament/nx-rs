@@ -306,6 +306,7 @@ Installs one or more packages into the managed repo. If you run `nx ripgrep`, `n
 - Use `--rebuild` to rebuild after successful changes.
 - Use `--engine`, `--model`, and `--explain` for AI-assisted routing/edit flows.
 - Use `--verbose` to surface cache and query timing diagnostics.
+- Source resolution shows live loading feedback while package queries run.
 
 ---
 
@@ -336,6 +337,7 @@ Searches package sources without editing the repo.
 
 - Good first step when you are not sure which backend will provide a package.
 - Supports `--bleeding-edge`, `--nur`, `--source`, `--json`, and `--verbose`.
+- Shows live loading feedback while package sources are queried.
 
 ---
 
@@ -360,6 +362,7 @@ Shows package metadata plus candidate source information.
 
 - Useful when deciding between nixpkgs, NUR, flake input, Homebrew, or MAS routes.
 - Supports `--json`, `--bleeding-edge`, `--nur`, `--source`, and `--verbose`.
+- Shows live loading feedback while package metadata and source candidates are collected.
 
 ---
 
@@ -436,6 +439,7 @@ Runs the upgrade flow for either the whole repo or named flake inputs.
 - `nx upgrade <input...>` updates only the named flake inputs via `nix flake update <input...>`.
 - After changed GitHub-backed inputs are written to `flake.lock`, `nx upgrade` prefetches those exact revisions so Nix lazy source caches are warm before flake check and rebuild.
 - If rebuild reports a Nix fixed-output hash mismatch, `nx upgrade` updates the unique clean matching hash in a tracked `.nix` file, retries, and includes that file in the upgrade commit. It prints the file, line, old hash, and new hash when it does this. If it cannot do that safely, it prints the exact next action.
+- Homebrew update checks show live loading feedback before upgrade details are rendered.
 - Targeted input upgrades skip the Homebrew phase by default.
 - Use `--skip-brew`, `--skip-rebuild`, or `--skip-commit` to trim the flow further.
 - Use `--no-ai` to disable AI-generated summaries and recovery prompts.

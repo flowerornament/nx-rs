@@ -443,7 +443,11 @@ fn brew_compare_endpoint(package: &BrewOutdatedPackage) -> Option<String> {
 fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
     ctx.printer.action("Checking Homebrew updates");
 
-    let outdated = enrich_brew_outdated(brew_outdated());
+    let outdated = ctx
+        .printer
+        .with_loading("Querying Homebrew outdated packages", |_| {
+            enrich_brew_outdated(brew_outdated())
+        });
 
     if outdated.is_empty() {
         ctx.printer.success("All Homebrew packages up to date");

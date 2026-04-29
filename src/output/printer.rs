@@ -167,14 +167,6 @@ impl Printer {
         result
     }
 
-    pub fn searching(name: &str) {
-        eprint!("{}Searching for {name}...", LineLayout::Detail.indent());
-    }
-
-    pub fn searching_done() {
-        eprintln!(" done");
-    }
-
     pub fn detail(text: &str) {
         println!("{}{text}", LineLayout::Detail.indent());
     }

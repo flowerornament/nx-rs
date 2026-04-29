@@ -584,6 +584,8 @@ Dry-run behavior:
   body/detail output is indented.
 - Long-running operations should use the shared printer loading scope so spinner lifecycle,
   cleanup, and top-level layout remain centralized.
+- Captured package/source lookups (`search`, `info`, install resolution, and Homebrew
+  outdated checks) use shared loading scopes rather than one-off progress printers.
 - Dry-run install output includes `Dry Run`.
 - Dry-run remove output includes `Would remove`.
 - Rebuild flow invokes streaming command path when preflight and flake-check pass.

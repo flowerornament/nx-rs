@@ -15,7 +15,7 @@ use crate::domain::source::{
 use crate::infra::cache::MultiSourceCache;
 use crate::infra::config_scan::{PackageBuckets, collect_nix_files, scan_packages};
 use crate::infra::finder::{PackageMatch, find_package, find_package_fuzzy};
-use crate::infra::package_query::query_package_quiet;
+use crate::infra::package_query::{PackageQueryReport, query_package_quiet};
 use crate::infra::query_info::{
     ConfigOptionInfo, FlakeHubInfo, config_option_hints, search_flakehub,
 };
@@ -119,11 +119,13 @@ pub fn cmd_info(args: &InfoArgs, ctx: &QueryContext<'_>) -> i32 {
         }
     };
 
-    let mut cache = MultiSourceCache::load(ctx.repo_root).ok();
-    let info_search = collect_info_sources(package, args, ctx.repo_root, &mut cache);
+    let InfoDetails {
+        search: info_search,
+        hm_module,
+        darwin_service,
+        flakehub,
+    } = load_info_details(package, args, ctx);
     let info_sources = info_search.outcome.results.clone();
-    let (hm_module, darwin_service) = config_option_hints(package, ctx.repo_root);
-    let flakehub = collect_info_flakehub(package, args.bleeding_edge(), search_flakehub);
     let unavailable_sources = if location.is_none()
         && info_sources.is_empty()
         && hm_module.is_none()
@@ -223,6 +225,39 @@ fn source_prefs_from_info_args(args: &InfoArgs) -> SourcePreferences {
         nur: args.nur(),
         force_source: args.source().map(str::to_owned),
         ..Default::default()
+    }
+}
+
+struct InfoDetails {
+    search: PackageQueryReport,
+    hm_module: Option<ConfigOptionInfo>,
+    darwin_service: Option<ConfigOptionInfo>,
+    flakehub: Vec<FlakeHubInfo>,
+}
+
+fn load_info_details(package: &str, args: &InfoArgs, ctx: &QueryContext<'_>) -> InfoDetails {
+    let mut cache = MultiSourceCache::load(ctx.repo_root).ok();
+    ctx.printer
+        .with_loading(&format!("Collecting info for {package}"), |_| {
+            collect_info_details(package, args, ctx, &mut cache)
+        })
+}
+
+fn collect_info_details(
+    package: &str,
+    args: &InfoArgs,
+    ctx: &QueryContext<'_>,
+    cache: &mut Option<MultiSourceCache>,
+) -> InfoDetails {
+    let search = collect_info_sources(package, args, ctx.repo_root, cache);
+    let (hm_module, darwin_service) = config_option_hints(package, ctx.repo_root);
+    let flakehub = collect_info_flakehub(package, args.bleeding_edge(), search_flakehub);
+
+    InfoDetails {
+        search,
+        hm_module,
+        darwin_service,
+        flakehub,
     }
 }
 

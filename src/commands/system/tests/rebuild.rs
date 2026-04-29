@@ -90,6 +90,29 @@ fn split_darwin_json_parser_rejects_missing_output() {
 }
 
 #[test]
+fn split_nix_build_raises_file_descriptor_limit() {
+    let (program, args) =
+        split_nix_build_command("git+file:///repo#darwinConfigurations.host.system");
+
+    assert_eq!(
+        (program, args),
+        (
+            "bash".to_string(),
+            vec![
+                "-lc".to_string(),
+                "ulimit -n 65536 2>/dev/null; exec \"$@\"".to_string(),
+                "nx-nix-with-ulimit".to_string(),
+                "nix".to_string(),
+                "build".to_string(),
+                "--json".to_string(),
+                "--no-link".to_string(),
+                "git+file:///repo#darwinConfigurations.host.system".to_string(),
+            ],
+        )
+    );
+}
+
+#[test]
 fn split_darwin_defaults_on_for_darwin_and_allows_opt_out() {
     use std::collections::HashMap;
 

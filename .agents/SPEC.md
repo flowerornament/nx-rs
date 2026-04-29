@@ -483,11 +483,12 @@ Experimental split Darwin rebuild:
 - `NX_SPLIT_DARWIN=1` enables the split path for Darwin repos without a manifest.
 - Applies only to Darwin manifests using the default `darwin-rebuild` command and no passthrough args.
 - Falls back to the default rebuild path when the split path cannot confidently preserve behavior.
-- Runs `nix build --json --no-link <repo_root>#darwinConfigurations.<host>.system`.
+- Runs `nix build --json --no-link <repo_root>#darwinConfigurations.<host>.system` under a raised file descriptor limit.
 - Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get LocalHostName`, then `hostname -s`.
 - If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
 - Otherwise runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
-- Retries once after clearing Nix git/fetcher caches when flake check or rebuild output reports lazy source object lookup failures.
+- Retries a bounded number of times after clearing Nix git/tarball/fetcher caches when flake check or rebuild output reports lazy source object lookup failures.
+- Retries after file descriptor exhaustion by clearing tarball/fetcher caches; root cache cleanup must be non-interactive.
 
 Routing lint rules:
 

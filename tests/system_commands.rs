@@ -559,7 +559,7 @@ fn split_darwin_rebuild_retries_source_cache_corruption() -> Result<(), Box<dyn 
     )?;
 
     assert!(
-        stdout.contains("Nix git cache corruption detected, clearing cache and retrying"),
+        stdout.contains("Nix source cache corruption detected, clearing cache and retrying"),
         "stdout missing cache-corruption retry warning\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(

@@ -13,11 +13,11 @@ use super::fixed_output_hash::{
 };
 use super::rebuild::{
     build_rebuild_command, build_rebuild_command_with_manifest, has_nix_extension,
-    parse_system_config_path, should_use_split_darwin,
+    parse_system_config_path, should_use_split_darwin, split_nix_build_command,
 };
 use super::undo::{git_diff_stat, git_modified_files};
 use super::upgrade::{
-    brew_compare_url, build_nix_update_command, flake_compare_endpoint, flake_compare_url,
+    brew_compare_url, build_nix_command, flake_compare_endpoint, flake_compare_url,
     flake_prefetch_ref, is_cache_corruption, is_fd_exhaustion, maybe_ai_summary,
     parse_ai_summary_output, parse_brew_info_json, parse_brew_outdated_json, parse_compare_json,
     should_use_detailed_ai_summary, upgrade_requires_manifest_system_safety,

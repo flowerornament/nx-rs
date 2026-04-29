@@ -173,18 +173,34 @@ fn flake_prefetch_ref_skips_inputs_without_prefetch_ref() {
 #[test]
 fn build_command_without_ulimit() {
     let args = build_flake_update_args(&[], &[]);
-    let result = build_nix_update_command(&args, None);
-    assert_eq!(result, vec!["flake", "update"]);
+    let result = build_nix_command(&args, None);
+    assert_eq!(
+        result,
+        (
+            "nix".to_string(),
+            vec!["flake".to_string(), "update".to_string()]
+        )
+    );
 }
 
 #[test]
 fn build_command_with_ulimit() {
     let args = build_flake_update_args(&[], &[]);
-    let result = build_nix_update_command(&args, Some(8192));
-    assert_eq!(result.len(), 2);
-    assert_eq!(result[0], "-lc");
-    assert!(result[1].contains("ulimit -n 8192"));
-    assert!(result[1].contains("exec nix flake update"));
+    let result = build_nix_command(&args, Some(8192));
+    assert_eq!(
+        result,
+        (
+            "bash".to_string(),
+            vec![
+                "-lc".to_string(),
+                "ulimit -n 8192 2>/dev/null; exec \"$@\"".to_string(),
+                "nx-nix-with-ulimit".to_string(),
+                "nix".to_string(),
+                "flake".to_string(),
+                "update".to_string(),
+            ],
+        )
+    );
 }
 
 #[test]
@@ -196,10 +212,19 @@ fn targeted_upgrade_builds_flake_update_input_args() {
 #[test]
 fn targeted_upgrade_command_with_ulimit_wraps_flake_update_input() {
     let args = build_flake_update_args(&["nx-rs".to_string()], &[]);
-    let result = build_nix_update_command(&args, Some(8192));
-    assert_eq!(result.len(), 2);
-    assert_eq!(result[0], "-lc");
-    assert!(result[1].contains("exec nix flake update nx-rs"));
+    let result = build_nix_command(&args, Some(8192));
+    assert_eq!(
+        result.1,
+        vec![
+            "-lc".to_string(),
+            "ulimit -n 8192 2>/dev/null; exec \"$@\"".to_string(),
+            "nx-nix-with-ulimit".to_string(),
+            "nix".to_string(),
+            "flake".to_string(),
+            "update".to_string(),
+            "nx-rs".to_string(),
+        ]
+    );
 }
 
 #[test]

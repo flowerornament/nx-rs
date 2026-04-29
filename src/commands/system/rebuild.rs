@@ -37,6 +37,9 @@ const ROOT_ENV_WRAPPER: &[&str] = &["/usr/bin/env", ROOT_HOME_ENV, NIX_REMOTE_DA
 const NO_AUTO_HASH_FIX_ENV: &str = "NX_NO_AUTO_HASH_FIX";
 const MAX_AUTO_HASH_FIXES: usize = 3;
 const MAX_REBUILD_ATTEMPTS: usize = 8;
+const MAX_SOURCE_CACHE_RETRIES: usize = 3;
+const MAX_FD_EXHAUSTION_RETRIES: usize = 2;
+const SPLIT_NIX_BUILD_NOFILE_LIMIT: u32 = 65536;
 
 pub fn cmd_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> i32 {
     cmd_rebuild_with_command(args, ctx, TimingCommand::Rebuild)
@@ -300,7 +303,7 @@ fn check_flake(ctx: &SystemContext<'_>) -> Result<(), i32> {
 
         let err_text = first_nonempty_output(&output);
         if attempt == 0 && super::upgrade::is_cache_corruption(err_text) {
-            super::upgrade::clear_user_git_cache();
+            super::upgrade::clear_user_source_caches();
             ctx.printer
                 .warn("Nix cache corruption detected, clearing cache and retrying");
             continue;
@@ -324,7 +327,8 @@ fn do_rebuild(
     let repo = ctx.repo_root.display().to_string();
     let manifest = ctx.config_files.manifest();
     let use_sudo = manifest.is_none_or(|m| m.platform.sudo);
-    let mut retried_cache_corruption = false;
+    let mut source_cache_retries = 0usize;
+    let mut fd_exhaustion_retries = 0usize;
     let mut repaired_paths = Vec::new();
     let mut profiler = ActivationPhaseProfiler::new();
 
@@ -360,18 +364,27 @@ fn do_rebuild(
             );
         }
 
-        if super::upgrade::is_fd_exhaustion(&output) {
+        if super::upgrade::is_fd_exhaustion(&output)
+            && fd_exhaustion_retries < MAX_FD_EXHAUSTION_RETRIES
+        {
+            fd_exhaustion_retries += 1;
             ctx.printer
-                .warn("Nix hit file descriptor limits, clearing cache and retrying");
-            clear_root_tarball_pack_cache();
+                .warn("Nix hit file descriptor limits, clearing tarball caches and retrying");
+            super::upgrade::clear_user_tarball_pack_cache();
+            super::upgrade::clear_user_fetcher_cache();
+            if use_sudo {
+                clear_root_tarball_pack_cache_noninteractive();
+            }
             continue;
         }
 
-        if !retried_cache_corruption && super::upgrade::is_cache_corruption(&output) {
-            retried_cache_corruption = true;
-            super::upgrade::clear_user_git_cache();
+        if super::upgrade::is_cache_corruption(&output)
+            && source_cache_retries < MAX_SOURCE_CACHE_RETRIES
+        {
+            source_cache_retries += 1;
+            super::upgrade::clear_user_source_caches();
             ctx.printer
-                .warn("Nix git cache corruption detected, clearing cache and retrying");
+                .warn("Nix source cache corruption detected, clearing cache and retrying");
             clear_root_git_cache_noninteractive();
             continue;
         }
@@ -609,11 +622,13 @@ fn do_split_darwin_rebuild(
     let attr = format!("{repo}#darwinConfigurations.{host}.system");
     let mut phases = Vec::new();
     let mut build_stderr = String::new();
+    let (build_program, build_args) = split_nix_build_command(&attr);
+    let build_arg_refs: Vec<&str> = build_args.iter().map(String::as_str).collect();
     let (build, mut build_phase) = match timed_phase("build", || {
         ctx.printer.action("Building system configuration");
         run_indented_command_collecting_stdout_with_observer(
-            "nix",
-            &["build", "--json", "--no-link", &attr],
+            &build_program,
+            &build_arg_refs,
             None,
             None,
             ctx.printer,
@@ -698,6 +713,16 @@ fn do_split_darwin_rebuild(
         phases,
         RebuildOutcome::Rebuilt,
     )))
+}
+
+pub(super) fn split_nix_build_command(attr: &str) -> (String, Vec<String>) {
+    let args = vec![
+        "build".to_string(),
+        "--json".to_string(),
+        "--no-link".to_string(),
+        attr.to_string(),
+    ];
+    super::upgrade::build_nix_command(&args, Some(SPLIT_NIX_BUILD_NOFILE_LIMIT))
 }
 
 enum SplitDarwinResult {
@@ -963,10 +988,10 @@ pub(super) fn build_rebuild_command_with_manifest(
 }
 
 /// Clear root's nix tarball pack cache to reduce open file pressure during rebuild.
-fn clear_root_tarball_pack_cache() {
+fn clear_root_tarball_pack_cache_noninteractive() {
     let pack_dir = "/var/root/.cache/nix/tarball-cache-v2/objects/pack";
-    let _ = run_captured_command("sudo", &["rm", "-rf", pack_dir], None);
-    let _ = run_captured_command("sudo", &["mkdir", "-p", pack_dir], None);
+    let _ = run_captured_command("sudo", &["-n", "rm", "-rf", pack_dir], None);
+    let _ = run_captured_command("sudo", &["-n", "mkdir", "-p", pack_dir], None);
 }
 
 /// Clear nix git caches under root to fix tree-builder corruption.

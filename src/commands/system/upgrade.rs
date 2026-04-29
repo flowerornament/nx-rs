@@ -747,22 +747,22 @@ fn normalize_version(version: &str) -> &str {
     trimmed.strip_prefix('v').unwrap_or(trimmed)
 }
 
-/// Build the nix flake update command, optionally wrapped with a ulimit raise.
-pub(super) fn build_nix_update_command(
+/// Build a nix command, optionally wrapped with a ulimit raise.
+pub(super) fn build_nix_command(
     base_args: &[String],
     raise_nofile: Option<u32>,
-) -> Vec<String> {
+) -> (String, Vec<String>) {
     raise_nofile.map_or_else(
-        || base_args.to_vec(),
+        || ("nix".to_string(), base_args.to_vec()),
         |limit| {
-            let nix_cmd = std::iter::once("nix".to_string())
-                .chain(base_args.iter().cloned())
-                .collect::<Vec<_>>()
-                .join(" ");
-            vec![
+            let mut args = vec![
                 "-lc".to_string(),
-                format!("ulimit -n {limit} 2>/dev/null; exec {nix_cmd}"),
-            ]
+                format!("ulimit -n {limit} 2>/dev/null; exec \"$@\""),
+                "nx-nix-with-ulimit".to_string(),
+                "nix".to_string(),
+            ];
+            args.extend(base_args.iter().cloned());
+            ("bash".to_string(), args)
         },
     )
 }
@@ -801,15 +801,11 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext, nix_env: &NixCommandE
             ctx.printer.action("Retrying flake update");
         }
 
-        let cmd_args = build_nix_update_command(&base_args, raise_nofile);
-        let (program, arg_refs): (&str, Vec<&str>) = if raise_nofile.is_some() {
-            ("bash", cmd_args.iter().map(String::as_str).collect())
-        } else {
-            ("nix", cmd_args.iter().map(String::as_str).collect())
-        };
+        let (program, cmd_args) = build_nix_command(&base_args, raise_nofile);
+        let arg_refs: Vec<&str> = cmd_args.iter().map(String::as_str).collect();
         let (code, output) = match nix_env.with_command_env(|env| {
             run_indented_command_collecting_with_env(
-                program,
+                &program,
                 &arg_refs,
                 Some(&ctx.repo_root),
                 env,
@@ -836,7 +832,7 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext, nix_env: &NixCommandE
         if is_fd_exhaustion(&output) {
             ctx.printer
                 .warn("Nix hit file descriptor limits, clearing cache and retrying");
-            clear_tarball_pack_cache();
+            clear_user_tarball_pack_cache();
             clear_user_fetcher_cache();
             raise_nofile = Some(65536);
             continue;
@@ -845,7 +841,7 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext, nix_env: &NixCommandE
         // Source-cache corruption: clear user source caches and retry once.
         if !retried_cache_corruption && is_cache_corruption(&output) {
             retried_cache_corruption = true;
-            clear_user_git_cache();
+            clear_user_source_caches();
             ctx.printer
                 .warn("Nix cache corruption detected, clearing cache and retrying");
             continue;
@@ -923,7 +919,7 @@ fn prefetch_flake_source_with_retry(
         return false;
     }
 
-    clear_user_git_cache();
+    clear_user_source_caches();
     nix_env
         .with_command_env(|env| run_captured_command_with_env("nix", &args, Some(repo_root), env))
         .is_ok_and(|retry| retry.code == 0)
@@ -961,21 +957,22 @@ impl NixCommandEnv {
     }
 }
 
-/// Clear user-owned nix source caches to fix lazy git source corruption.
-pub(super) fn clear_user_git_cache() {
+/// Clear user-owned nix source caches to fix lazy git/tarball source corruption.
+pub(super) fn clear_user_source_caches() {
     let cache_dir = crate::app::dirs_home().join(".cache/nix");
     let _ = std::fs::remove_dir_all(cache_dir.join("gitv3"));
+    let _ = std::fs::remove_dir_all(cache_dir.join("tarball-cache-v2"));
     let _ = std::fs::remove_file(cache_dir.join("fetcher-cache-v4.sqlite"));
 }
 
-fn clear_user_fetcher_cache() {
+pub(super) fn clear_user_fetcher_cache() {
     let cache_dir = crate::app::dirs_home().join(".cache/nix");
     let _ = std::fs::remove_file(cache_dir.join("fetcher-cache-v4.sqlite"));
 }
 
 /// Clear the nix tarball pack cache to fix FD exhaustion from stale packfiles.
 /// Recreates the empty directory so nix can write new packfiles.
-fn clear_tarball_pack_cache() {
+pub(super) fn clear_user_tarball_pack_cache() {
     let pack_dir = crate::app::dirs_home().join(".cache/nix/tarball-cache-v2/objects/pack");
     if pack_dir.is_dir() {
         let _ = std::fs::remove_dir_all(&pack_dir);

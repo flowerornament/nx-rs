@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.17 - 2026-04-29
+
+- raised the file descriptor limit for split Darwin `nix build` invocations, preventing large flake graphs from failing under macOS's low default soft limit
+- made split rebuild source-cache recovery clear user tarball caches as well as git/fetcher caches, and allow a bounded series of source-cache retries when separate inputs fail in sequence
+- made root tarball-cache cleanup non-interactive so retry recovery does not introduce an unexpected sudo password prompt
+
 ## v1.5.16 - 2026-04-29
 
 - added shared loading spinners to other long-running lookups: `nx search`, `nx info`, install source resolution, and the Homebrew update check in `nx upgrade`

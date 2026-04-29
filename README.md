@@ -416,6 +416,7 @@ Runs `darwin-rebuild switch` for the managed repo.
 
 - Use `--preflight` to stop after lint, git, and flake checks without switching.
 - Use `--timing` to print phase timings after recording them locally.
+- Darwin split rebuilds raise Nix's file descriptor limit and retry bounded source-cache failures before surfacing an error.
 - Additional args after `--` pass through to the underlying `darwin-rebuild` command.
 
 ---

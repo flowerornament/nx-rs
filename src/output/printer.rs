@@ -24,6 +24,22 @@ struct GlyphSet {
     dry_run: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum LineLayout {
+    TopLevel,
+    Detail,
+    SubDetail,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum AnsiStyle {
+    Action,
+    Success,
+    Warning,
+    Error,
+    Activity,
+}
+
 pub struct Printer {
     style: OutputStyle,
 }
@@ -65,15 +81,15 @@ impl Printer {
     }
 
     pub fn heading(text: &str) {
-        println!("\n  \x1b[1m{text}\x1b[0m");
+        println!("\n\x1b[1m{}{text}\x1b[0m", LineLayout::Detail.indent());
     }
 
     pub fn body(text: &str) {
-        println!("  {text}");
+        println!("{}{text}", LineLayout::Detail.indent());
     }
 
     pub fn sub_detail(text: &str) {
-        println!("    {text}");
+        println!("{}{text}", LineLayout::SubDetail.indent());
     }
 
     pub fn dry_run_banner(&self) {
@@ -87,7 +103,13 @@ impl Printer {
             ActivityKind::Editing => "~",
             ActivityKind::Running => ">",
         };
-        println!("{}", self.paint(format!("  {glyph} {text}"), "35"));
+        println!(
+            "{}",
+            self.paint(
+                layout_line(LineLayout::Detail, glyph, text),
+                AnsiStyle::Activity
+            )
+        );
     }
 
     #[must_use]
@@ -109,11 +131,13 @@ impl Printer {
                     .lock()
                     .map(|text| text.clone())
                     .unwrap_or_default();
-                if color {
-                    eprint!("\r\x1b[2K\x1b[35m  {frame} {text}\x1b[0m");
-                } else {
-                    eprint!("\r\x1b[2K  {frame} {text}");
-                }
+                eprint!(
+                    "\r\x1b[2K{}{}{} {text}{}",
+                    ansi_prefix(color, AnsiStyle::Activity),
+                    LineLayout::TopLevel.indent(),
+                    frame,
+                    ansi_reset(color),
+                );
                 let _ = io::stderr().flush();
                 index += 1;
                 match stopped.recv_timeout(Duration::from_millis(120)) {
@@ -133,7 +157,7 @@ impl Printer {
     }
 
     pub fn searching(name: &str) {
-        eprint!("  Searching for {name}...");
+        eprint!("{}Searching for {name}...", LineLayout::Detail.indent());
     }
 
     pub fn searching_done() {
@@ -141,7 +165,7 @@ impl Printer {
     }
 
     pub fn detail(text: &str) {
-        println!("  {text}");
+        println!("{}{text}", LineLayout::Detail.indent());
     }
 
     pub fn stream_line(text: &str, indent: &str, width: usize) {
@@ -152,7 +176,7 @@ impl Printer {
 
     pub fn confirm(prompt: &str, default_yes: bool) -> bool {
         let suffix = if default_yes { " [Y/n]: " } else { " [y/N]: " };
-        print!("  {prompt}{suffix}");
+        print!("{}{prompt}{suffix}", LineLayout::Detail.indent());
         let _ = io::stdout().flush();
         let mut line = String::new();
         let read_result = io::stdin().lock().read_line(&mut line);
@@ -187,42 +211,105 @@ impl Printer {
     }
 
     fn action_line(&self, text: &str) -> String {
-        self.paint(format!("\n{} {text}", self.glyphs().action), "36")
+        self.paint(
+            layout_line_with_prefix("\n", LineLayout::TopLevel, self.glyphs().action, text),
+            AnsiStyle::Action,
+        )
     }
 
     fn success_line(&self, text: &str) -> String {
-        self.paint(format!("{} {text}", self.glyphs().success), "32")
+        self.paint(
+            layout_line(LineLayout::TopLevel, self.glyphs().success, text),
+            AnsiStyle::Success,
+        )
     }
 
     fn warn_line(&self, text: &str) -> String {
-        self.paint(format!("{} {text}", self.glyphs().warning), "33")
+        self.paint(
+            layout_line(LineLayout::TopLevel, self.glyphs().warning, text),
+            AnsiStyle::Warning,
+        )
     }
 
     fn error_line(&self, text: &str) -> String {
-        self.paint(format!("{} {text}", self.glyphs().error), "1;31")
+        self.paint(
+            layout_line(LineLayout::TopLevel, self.glyphs().error, text),
+            AnsiStyle::Error,
+        )
     }
 
     fn removal_line(&self, text: &str) -> String {
-        self.paint(format!("{} {text}", self.glyphs().removal), "1;31")
+        self.paint(
+            layout_line(LineLayout::TopLevel, self.glyphs().removal, text),
+            AnsiStyle::Error,
+        )
     }
 
     fn dry_run_line(&self) -> String {
         self.paint(
-            format!(
-                "\n{} Dry Run (no changes will be made)",
-                self.glyphs().dry_run
+            layout_line_with_prefix(
+                "\n",
+                LineLayout::TopLevel,
+                self.glyphs().dry_run,
+                "Dry Run (no changes will be made)",
             ),
-            "33",
+            AnsiStyle::Warning,
         )
     }
 
-    fn paint(&self, text: String, code: &str) -> String {
+    fn paint(&self, text: String, style: AnsiStyle) -> String {
         if self.style.color {
-            format!("\x1b[{code}m{text}\x1b[0m")
+            format!("{}{text}{}", ansi_prefix(true, style), ansi_reset(true))
         } else {
             text
         }
     }
+}
+
+#[cfg(test)]
+fn loading_line(color: bool, frame: &str, text: &str) -> String {
+    format!(
+        "{}{}{} {text}{}",
+        ansi_prefix(color, AnsiStyle::Activity),
+        LineLayout::TopLevel.indent(),
+        frame,
+        ansi_reset(color),
+    )
+}
+
+fn layout_line(layout: LineLayout, glyph: &str, text: &str) -> String {
+    layout_line_with_prefix("", layout, glyph, text)
+}
+
+fn layout_line_with_prefix(prefix: &str, layout: LineLayout, glyph: &str, text: &str) -> String {
+    format!("{prefix}{}{} {text}", layout.indent(), glyph)
+}
+
+impl LineLayout {
+    const fn indent(self) -> &'static str {
+        match self {
+            LineLayout::TopLevel => "",
+            LineLayout::Detail => "  ",
+            LineLayout::SubDetail => "    ",
+        }
+    }
+}
+
+const fn ansi_prefix(color: bool, style: AnsiStyle) -> &'static str {
+    if !color {
+        return "";
+    }
+    match style {
+        AnsiStyle::Action => "\x1b[36m",
+        AnsiStyle::Success => "\x1b[32m",
+        AnsiStyle::Warning => "\x1b[33m",
+        AnsiStyle::Error => "\x1b[1;31m",
+        AnsiStyle::Activity => "\x1b[35m",
+    }
+}
+
+const fn ansi_reset(color: bool) -> &'static str {
+    if color { "\x1b[0m" } else { "" }
 }
 
 impl LoadingIndicator {
@@ -322,7 +409,8 @@ fn nth_char_boundary(input: &str, n: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        Printer, loading_enabled, loading_frames, parse_confirm_response, wrapped_segments,
+        LineLayout, Printer, layout_line, loading_enabled, loading_frames, loading_line,
+        parse_confirm_response, wrapped_segments,
     };
     use crate::output::style::{IconSet, OutputStyle};
 
@@ -417,6 +505,40 @@ mod tests {
     fn loading_frames_follow_icon_set() {
         assert_eq!(loading_frames(IconSet::Minimal), &["-", "\\", "|", "/"]);
         assert!(loading_frames(IconSet::Unicode).contains(&"⠋"));
+    }
+
+    #[test]
+    fn top_level_status_lines_start_at_column_zero() {
+        let printer = Printer::new(OutputStyle {
+            plain: false,
+            icon_set: IconSet::Minimal,
+            color: false,
+        });
+
+        assert!(printer.action_line("work").starts_with("\n> "));
+        assert!(printer.success_line("ok").starts_with("+ "));
+        assert!(printer.warn_line("warn").starts_with("! "));
+        assert!(printer.error_line("fail").starts_with("x "));
+        assert!(printer.removal_line("remove").starts_with("- "));
+        assert!(printer.dry_run_line().starts_with("\n~ "));
+        assert_eq!(loading_line(false, "|", "Sizing caches"), "| Sizing caches");
+    }
+
+    #[test]
+    fn loading_line_keeps_spinner_unindented_with_color() {
+        assert_eq!(
+            loading_line(true, "⠋", "Sizing caches"),
+            "\x1b[35m⠋ Sizing caches\x1b[0m"
+        );
+    }
+
+    #[test]
+    fn detail_layout_is_the_only_status_indent() {
+        assert_eq!(layout_line(LineLayout::Detail, ">", "nested"), "  > nested");
+        assert_eq!(
+            layout_line(LineLayout::SubDetail, "-", "deeper"),
+            "    - deeper"
+        );
     }
 
     #[test]

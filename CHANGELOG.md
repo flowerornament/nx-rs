@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.14 - 2026-04-28
+
+- fixed transient loading spinners so top-level progress starts at column zero, matching the rest of the status glyph layout
+- centralized printer layout and ANSI styling rules so status indentation is tested at the formatter boundary instead of being reimplemented by individual commands
+
 ## v1.5.13 - 2026-04-27
 
 - clarified the split Darwin sudo prompt so changed-system rebuilds say sudo is for the system profile update and activation, not an unexplained generic authorization step

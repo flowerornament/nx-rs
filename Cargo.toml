@@ -1,6 +1,6 @@
 [package]
 name = "nx-rs"
-version = "1.5.13"
+version = "1.5.14"
 edition = "2024"
 publish = false
 license = "MIT"

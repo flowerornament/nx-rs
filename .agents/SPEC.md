@@ -579,6 +579,8 @@ Dry-run behavior:
 
 ## 13. Output/UX Contracts Backed By Tests
 
+- Top-level status glyphs, including transient loading spinners, start at column zero; only
+  body/detail output is indented.
 - Dry-run install output includes `Dry Run`.
 - Dry-run remove output includes `Would remove`.
 - Rebuild flow invokes streaming command path when preflight and flake-check pass.

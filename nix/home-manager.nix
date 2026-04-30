@@ -107,7 +107,7 @@ in
           lib.types.addCheck lib.types.str (value: value != "" && !lib.hasInfix "," value)
         );
         default = [ ];
-        example = [ "huggingface" "nix-gc" ];
+        example = [ "huggingface" ];
         description = ''
           Cache names that `nx clean-caches` should skip. Exported as
           comma-separated `NX_CLEAN_SKIP`.

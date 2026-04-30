@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.20 - 2026-04-29
+
+- excluded `nix-gc` from default `nx clean-caches` plans so routine cache cleanup cannot force later Nix downloads or local source builds unless store GC is selected explicitly
+- added explicit `nix-gc` safety messaging in `clean-caches` help, docs, and prompts while keeping targeted Nix store GC available via `nx clean-caches nix-gc`
+- bumped the pinned Rust toolchain documentation to 1.94.0
+
 ## v1.5.19 - 2026-04-29
 
 - collapsed carriage-return progress frames in captured command output so Git/Nix fetch progress no longer smears stale percentages into normal lines

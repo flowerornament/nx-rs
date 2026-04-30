@@ -32,7 +32,7 @@ Primary priorities:
 
 Pinned toolchain:
 
-- Rust `1.93.1` via `rust-toolchain.toml`
+- Rust `1.94.0` via `rust-toolchain.toml`
 - Components: `rustfmt`, `clippy`
 
 Use `just` as the primary entrypoint:

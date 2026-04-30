@@ -21,6 +21,7 @@ struct CacheCandidate {
     name: &'static str,
     location: CacheLocation,
     clean: CleanMethod,
+    default_selected: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -86,6 +87,7 @@ const CACHE_CANDIDATES: &[CacheCandidate] = &[
         name: "nix-gc",
         location: CacheLocation::NixStoreGc,
         clean: CleanMethod::Command("nix-collect-garbage", &[]),
+        default_selected: false,
     },
 ];
 
@@ -109,6 +111,7 @@ const fn cache_dir(name: &'static str, rel_path: &'static str) -> CacheCandidate
         name,
         location: CacheLocation::HomeRelative(rel_path),
         clean: CleanMethod::RemoveContents,
+        default_selected: true,
     }
 }
 
@@ -122,6 +125,7 @@ const fn cache_command(
         name,
         location: CacheLocation::HomeRelative(rel_path),
         clean: CleanMethod::Command(program, args),
+        default_selected: true,
     }
 }
 
@@ -140,7 +144,20 @@ impl CleanCachesConfig {
     }
 
     fn selected(&self, name: &str) -> bool {
-        !self.skips(name) && (self.only.is_empty() || self.only.iter().any(|only| only == name))
+        !self.skips(name)
+            && if self.has_explicit_selection() {
+                self.only.iter().any(|only| only == name)
+            } else {
+                default_selected(name)
+            }
+    }
+
+    fn has_explicit_selection(&self) -> bool {
+        !self.only.is_empty()
+    }
+
+    fn omits_nix_gc_by_default(&self) -> bool {
+        !self.has_explicit_selection() && !self.skips("nix-gc")
     }
 
     fn unknown_skip_names(&self) -> Vec<&str> {
@@ -177,10 +194,19 @@ pub fn cmd_clean_caches(args: &CleanCachesArgs, ctx: &HostContext<'_>) -> i32 {
         ctx.printer
             .warn(&format!("unknown {CLEAN_SKIP_ENV} entry: {name}"));
     }
-    let entries = ctx.printer.with_loading(
-        "Sizing caches; Nix GC and large code roots can take a while",
-        |loading| scan_caches(&home, &config, |message| loading.set_text(message)),
-    );
+    if config.omits_nix_gc_by_default() {
+        Printer::detail(
+            "nix-gc is excluded by default; run `nx clean-caches nix-gc` only when you intentionally want Nix store GC.",
+        );
+    }
+    let scan_message = if config.selected("nix-gc") {
+        "Sizing caches; Nix GC and large code roots can take a while"
+    } else {
+        "Sizing caches; large code roots can take a while"
+    };
+    let entries = ctx.printer.with_loading(scan_message, |loading| {
+        scan_caches(&home, &config, |message| loading.set_text(message))
+    });
 
     if entries.is_empty() {
         Printer::body("No caches found.");
@@ -222,9 +248,21 @@ pub fn cmd_clean_caches(args: &CleanCachesArgs, ctx: &HostContext<'_>) -> i32 {
         return 0;
     }
 
+    let includes_nix_gc = nonzero.iter().any(|entry| entry.name == "nix-gc");
+    if includes_nix_gc {
+        ctx.printer.warn(
+            "nix-gc can force future downloads or local source builds if collected store paths are needed again",
+        );
+    }
+
     if !args.yes {
         println!();
-        if !Printer::confirm("Clean all listed caches?", false) {
+        let prompt = if includes_nix_gc {
+            "Clean all listed caches, including Nix store GC?"
+        } else {
+            "Clean all listed caches?"
+        };
+        if !Printer::confirm(prompt, false) {
             Printer::body("Cancelled.");
             return 0;
         }
@@ -473,6 +511,13 @@ fn unknown_cache_names(names: &[String]) -> Vec<&str> {
         .map(String::as_str)
         .filter(|name| !clean_cache_skip_names().any(|valid| valid == *name))
         .collect()
+}
+
+fn default_selected(name: &str) -> bool {
+    CACHE_CANDIDATES
+        .iter()
+        .find(|candidate| candidate.name == name)
+        .is_none_or(|candidate| candidate.default_selected)
 }
 
 fn prune_code_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -762,8 +807,30 @@ mod tests {
         assert!(!config.selected("huggingface"));
         assert!(!config.selected("rust-targets"));
         assert!(config.selected("node-modules"));
+        assert!(!config.selected("nix-gc"));
         assert!(!config.skips("node-modules"));
         assert!(config.unknown_skip_names().is_empty());
+    }
+
+    #[test]
+    fn nix_gc_is_default_excluded_but_explicitly_selectable() {
+        let default_config = CleanCachesConfig {
+            code_roots: Vec::new(),
+            scan_depth: DEFAULT_SCAN_DEPTH,
+            skip: Vec::new(),
+            only: Vec::new(),
+        };
+        let explicit_config = CleanCachesConfig {
+            code_roots: Vec::new(),
+            scan_depth: DEFAULT_SCAN_DEPTH,
+            skip: Vec::new(),
+            only: vec!["nix-gc".to_string()],
+        };
+
+        assert!(!default_config.selected("nix-gc"));
+        assert!(default_config.omits_nix_gc_by_default());
+        assert!(explicit_config.selected("nix-gc"));
+        assert!(!explicit_config.omits_nix_gc_by_default());
     }
 
     #[test]

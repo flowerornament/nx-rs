@@ -541,9 +541,12 @@ Dry-run behavior:
 - Host-scoped and does not require repository discovery.
 - Scans known cache directories plus code-root build artifacts and reports sizes before cleaning.
 - Optional positional cache names or `--only <names>` limit the scan and clean plan to selected cache names.
-- Shows live per-bucket loading feedback during cache sizing; Nix GC and large code roots may take minutes.
+- Excludes `nix-gc` from default scans/cleans because Nix store garbage collection can force future downloads or local source builds.
+- Includes `nix-gc` only when selected explicitly by positional cache name or `--only`.
+- Warns before cleaning selected `nix-gc` entries.
+- Shows live per-bucket loading feedback during cache sizing; large code roots may take minutes.
 - Shows live per-cache loading feedback during confirmed cleaning before rendering permanent success or warning lines.
-- Scans Nix GC last because dead-store estimation may be slower than normal cache directory sizing.
+- If selected, scans Nix GC last because dead-store estimation may be slower than normal cache directory sizing.
 - Reports code-root cache directory counts for grouped build artifact entries.
 - Prompts before mutation unless `--yes` is set.
 - `--dry-run` reports caches without mutation.

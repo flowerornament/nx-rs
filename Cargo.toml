@@ -1,6 +1,6 @@
 [package]
 name = "nx-rs"
-version = "1.5.19"
+version = "1.5.20"
 edition = "2024"
 publish = false
 license = "MIT"
@@ -26,6 +26,18 @@ clap_complete = "4.6.0"
 [dev-dependencies]
 insta = { version = "1.46.3", features = ["json"] }
 tempfile = "3.23.0"
+
+[profile.dev]
+debug = 0
+
+[profile.test]
+inherits = "dev"
+debug = 0
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
 
 [lints.rust]
 unsafe_code = "forbid"

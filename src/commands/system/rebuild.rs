@@ -9,7 +9,8 @@ use crate::infra::activation_profile::ActivationPhaseProfiler;
 use crate::infra::shell::{
     StreamName, first_nonempty_output, run_captured_command,
     run_indented_command_collecting_stdout_with_observer, run_indented_command_collecting_with_env,
-    run_indented_command_collecting_with_observer,
+    run_indented_command_collecting_with_observer, run_native_command_with_env,
+    terminal_stdio_available,
 };
 use crate::infra::timing::{
     TimingCommand, TimingPhase, TimingRecord, TimingSession, append_timing, timing_detail_lines,
@@ -62,6 +63,19 @@ pub(super) struct RebuildCommandResult {
 pub(super) enum FixedOutputHashRepairMode {
     HintOnly,
     Auto,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RebuildOutputMode {
+    split_activation_native: bool,
+}
+
+impl RebuildOutputMode {
+    fn from_args(args: &RebuildArgs) -> Self {
+        Self {
+            split_activation_native: native_rebuild_output_enabled(args),
+        }
+    }
 }
 
 pub(super) fn cmd_rebuild_with_command_result(
@@ -339,17 +353,25 @@ fn do_rebuild(
             ctx.printer.action("Retrying rebuild");
         }
 
-        let (code, output, split_phases, outcome) =
-            match do_rebuild_once(args, ctx, manifest, &repo, use_sudo, &mut profiler) {
-                Ok(result) => result,
-                Err(err) => {
-                    ctx.printer.error("Rebuild failed");
-                    ctx.printer.error(&format!("{err:#}"));
-                    let mut phases = profiler.finish();
-                    phases.push(failed_phase("rebuild-error"));
-                    return (1, phases, repaired_paths);
-                }
-            };
+        let output_mode = RebuildOutputMode::from_args(args);
+        let (code, output, split_phases, outcome) = match do_rebuild_once(
+            args,
+            ctx,
+            manifest,
+            &repo,
+            use_sudo,
+            output_mode,
+            &mut profiler,
+        ) {
+            Ok(result) => result,
+            Err(err) => {
+                ctx.printer.error("Rebuild failed");
+                ctx.printer.error(&format!("{err:#}"));
+                let mut phases = profiler.finish();
+                phases.push(failed_phase("rebuild-error"));
+                return (1, phases, repaired_paths);
+            }
+        };
 
         if code == 0 {
             println!();
@@ -534,10 +556,11 @@ fn do_rebuild_once(
     manifest: Option<&Manifest>,
     repo: &str,
     use_sudo: bool,
+    output_mode: RebuildOutputMode,
     profiler: &mut ActivationPhaseProfiler,
 ) -> anyhow::Result<(i32, String, Vec<TimingPhase>, RebuildOutcome)> {
     if should_use_split_darwin(args, manifest) {
-        match do_split_darwin_rebuild(ctx, repo, use_sudo) {
+        match do_split_darwin_rebuild(ctx, repo, use_sudo, output_mode.split_activation_native) {
             SplitDarwinResult::Handled(result) => return result,
             SplitDarwinResult::Fallback => {
                 ctx.printer.warn("Falling back to darwin-rebuild switch");
@@ -590,6 +613,10 @@ fn run_legacy_rebuild(
     )
 }
 
+fn native_rebuild_output_enabled(args: &RebuildArgs) -> bool {
+    !args.timing && terminal_stdio_available()
+}
+
 pub(super) fn should_use_split_darwin(args: &RebuildArgs, manifest: Option<&Manifest>) -> bool {
     if !args.passthrough.is_empty() {
         return false;
@@ -612,6 +639,7 @@ fn do_split_darwin_rebuild(
     ctx: &SystemContext<'_>,
     repo: &str,
     use_sudo: bool,
+    native_output: bool,
 ) -> SplitDarwinResult {
     let Some(host) = darwin_host(ctx) else {
         ctx.printer
@@ -702,10 +730,11 @@ fn do_split_darwin_rebuild(
         )));
     }
 
-    let (activate, activate_phase) = match activate_system(ctx, use_sudo, &system_config) {
-        Ok(result) => result,
-        Err(err) => return SplitDarwinResult::Handled(Err(err)),
-    };
+    let (activate, activate_phase) =
+        match activate_system(ctx, use_sudo, native_output, &system_config) {
+            Ok(result) => result,
+            Err(err) => return SplitDarwinResult::Handled(Err(err)),
+        };
     phases.push(activate_phase);
     SplitDarwinResult::Handled(Ok((
         activate.0,
@@ -751,11 +780,17 @@ fn set_system_profile(
 fn activate_system(
     ctx: &SystemContext<'_>,
     use_sudo: bool,
+    native_output: bool,
     system_config: &str,
 ) -> anyhow::Result<((i32, String), TimingPhase)> {
     let mut profiler = ActivationPhaseProfiler::new();
     let (output, mut phase) = timed_phase("activate", || {
         ctx.printer.action("Activating system");
+        if native_output {
+            let code =
+                run_split_command_native(use_sudo, &format!("{system_config}/activate"), &[], ctx)?;
+            return Ok((code, String::new()));
+        }
         run_split_command_with_observer(
             use_sudo,
             &format!("{system_config}/activate"),
@@ -771,6 +806,16 @@ fn activate_system(
     phase.status = exit_status(output.0);
     phase.children = profiler.finish();
     Ok((output, phase))
+}
+
+fn run_split_command_native(
+    use_sudo: bool,
+    program: &str,
+    args: &[&str],
+    ctx: &SystemContext<'_>,
+) -> anyhow::Result<i32> {
+    let (runner, runner_args) = split_command_invocation(use_sudo, program, args);
+    run_native_command_with_env(runner, &runner_args, None, None, ctx.printer)
 }
 
 fn run_split_command(
@@ -792,32 +837,33 @@ fn run_split_command_with_observer<F>(
 where
     F: FnMut(StreamName, &str),
 {
-    if use_sudo {
-        let mut sudo_args = Vec::with_capacity(args.len() + ROOT_ENV_WRAPPER.len() + 2);
-        sudo_args.push(SUDO_SET_HOME_ARG);
-        sudo_args.extend(ROOT_ENV_WRAPPER);
-        sudo_args.push(program);
-        sudo_args.extend(args.iter().copied());
-        run_indented_command_collecting_with_observer(
-            "sudo",
-            &sudo_args,
-            None,
-            None,
-            ctx.printer,
-            "  ",
-            |stream, line| observer(stream, line),
-        )
-    } else {
-        run_indented_command_collecting_with_observer(
-            program,
-            args,
-            None,
-            None,
-            ctx.printer,
-            "  ",
-            |stream, line| observer(stream, line),
-        )
+    let (runner, runner_args) = split_command_invocation(use_sudo, program, args);
+    run_indented_command_collecting_with_observer(
+        runner,
+        &runner_args,
+        None,
+        None,
+        ctx.printer,
+        "  ",
+        |stream, line| observer(stream, line),
+    )
+}
+
+fn split_command_invocation<'a>(
+    use_sudo: bool,
+    program: &'a str,
+    args: &'a [&'a str],
+) -> (&'a str, Vec<&'a str>) {
+    if !use_sudo {
+        return (program, args.to_vec());
     }
+
+    let mut sudo_args = Vec::with_capacity(args.len() + ROOT_ENV_WRAPPER.len() + 2);
+    sudo_args.push(SUDO_SET_HOME_ARG);
+    sudo_args.extend(ROOT_ENV_WRAPPER);
+    sudo_args.push(program);
+    sudo_args.extend(args.iter().copied());
+    ("sudo", sudo_args)
 }
 
 fn sudo_noninteractive_available() -> bool {

@@ -44,6 +44,8 @@ pub struct Printer {
     style: OutputStyle,
 }
 
+const NATIVE_OUTPUT_BOUNDARY: &str = "-------------------------";
+
 pub(crate) struct LoadingIndicator {
     text: Option<Arc<Mutex<String>>>,
     stop: Option<Sender<()>>,
@@ -175,6 +177,15 @@ impl Printer {
         for segment in wrapped_segments(text, width.saturating_sub(indent.len()).max(20)) {
             println!("{indent}{segment}");
         }
+    }
+
+    pub fn native_output_boundary() {
+        println!("{NATIVE_OUTPUT_BOUNDARY}");
+    }
+
+    #[cfg(test)]
+    const fn native_output_boundary_line() -> &'static str {
+        NATIVE_OUTPUT_BOUNDARY
     }
 
     pub fn confirm(prompt: &str, default_yes: bool) -> bool {
@@ -524,6 +535,7 @@ mod tests {
         assert!(printer.error_line("fail").starts_with("x "));
         assert!(printer.removal_line("remove").starts_with("- "));
         assert!(printer.dry_run_line().starts_with("\n~ "));
+        assert!(!Printer::native_output_boundary_line().starts_with(' '));
         assert_eq!(loading_line(false, "|", "Sizing caches"), "| Sizing caches");
     }
 

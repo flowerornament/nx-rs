@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader, Read};
+use std::io::{self, BufRead, BufReader, IsTerminal, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -205,6 +205,50 @@ where
         Some(&mut observer),
     )?;
     Ok((streamed.code, streamed.collected.unwrap_or_default()))
+}
+
+pub fn terminal_stdio_available() -> bool {
+    io::stdin().is_terminal() && io::stdout().is_terminal() && io::stderr().is_terminal()
+}
+
+pub fn run_native_command_with_env(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: Option<CommandEnv<'_>>,
+    _printer: &Printer,
+) -> anyhow::Result<i32> {
+    let mut command = Command::new(program);
+    configure_command(&mut command, args, cwd, env);
+    command
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    let _boundary = NativeOutputBoundary::start();
+    let status = command
+        .status()
+        .with_context(|| format!("failed to spawn {program}"))?;
+
+    Ok(status.code().unwrap_or(1))
+}
+
+struct NativeOutputBoundary;
+
+impl NativeOutputBoundary {
+    fn start() -> Self {
+        Printer::native_output_boundary();
+        let _ = io::stdout().flush();
+        Self
+    }
+}
+
+impl Drop for NativeOutputBoundary {
+    fn drop(&mut self) {
+        let _ = io::stdout().flush();
+        let _ = io::stderr().flush();
+        Printer::native_output_boundary();
+    }
 }
 
 fn run_streaming_command_with_env(
@@ -448,5 +492,10 @@ mod tests {
 
         assert_eq!(code, 0);
         assert_eq!(output, "json");
+    }
+
+    #[test]
+    fn terminal_stdio_detection_is_available_for_native_runner_gate() {
+        let _ = terminal_stdio_available();
     }
 }

@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.18 - 2026-04-29
+
+- preserved native terminal output for interactive split-rebuild activation blocks, bounded by separator lines, so Homebrew and Home Manager can render their own colors and progress UI
+- kept captured rebuild output for non-interactive runs and `--timing` so tests, timing detail, retry detection, and hash repair stay structured
+
 ## v1.5.17 - 2026-04-29
 
 - raised the file descriptor limit for split Darwin `nix build` invocations, preventing large flake graphs from failing under macOS's low default soft limit

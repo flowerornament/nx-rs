@@ -487,6 +487,7 @@ Experimental split Darwin rebuild:
 - Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get LocalHostName`, then `hostname -s`.
 - If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
 - Otherwise runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
+- In interactive terminals, activation output inherits stdio and is bounded by unindented separator lines so child tools preserve native color/progress behavior. Non-interactive runs and `--timing` continue to use captured output.
 - Retries a bounded number of times after clearing Nix git/tarball/fetcher caches when flake check or rebuild output reports lazy source object lookup failures.
 - Retries after file descriptor exhaustion by clearing tarball/fetcher caches; root cache cleanup must be non-interactive.
 
@@ -578,6 +579,10 @@ Dry-run behavior:
   - returns `(returncode, joined_output)`.
   - supports printer stream callback.
   - plain output must preserve indent on wrapped lines.
+- `run_native_command`:
+  - inherits stdin, stdout, and stderr from the parent process.
+  - prints unindented separator lines before and after child-owned terminal output.
+  - is only selected for interactive terminal flows that do not need stream parsing.
 
 ## 13. Output/UX Contracts Backed By Tests
 

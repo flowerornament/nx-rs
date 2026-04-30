@@ -156,6 +156,28 @@ fn split_darwin_defaults_on_for_darwin_and_allows_opt_out() {
 }
 
 #[test]
+fn sudo_password_classifier_detects_noninteractive_prompt_denial() {
+    let output = CapturedCommand {
+        code: 1,
+        stdout: String::new(),
+        stderr: "sudo: a password is required\n".to_string(),
+    };
+
+    assert!(sudo_password_required(&output));
+}
+
+#[test]
+fn sudo_password_classifier_allows_command_usage_failure() {
+    let output = CapturedCommand {
+        code: 1,
+        stdout: "darwin-rebuild [--help] {edit | switch | activate | build | check}\n".to_string(),
+        stderr: String::new(),
+    };
+
+    assert!(!sudo_password_required(&output));
+}
+
+#[test]
 fn fixed_output_hash_parser_extracts_specified_and_got_hashes() {
     let output = "\
 error: hash mismatch in fixed-output derivation '/nix/store/example-npm-deps.drv':

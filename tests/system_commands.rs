@@ -180,6 +180,12 @@ const SPLIT_REBUILD_SUDO_CHECK_CALL: ExpectedCall =
 const SPLIT_REBUILD_SUDO_AUTH_CALL: ExpectedCall =
     ExpectedCall::new("sudo", EXPECTED_CWD_REPO_ROOT, &["-v"]);
 
+const SPLIT_REBUILD_LEGACY_SUDO_PROBE_CALL: ExpectedCall = ExpectedCall::new(
+    "sudo",
+    EXPECTED_CWD_REPO_ROOT,
+    &["-n", "/run/current-system/sw/bin/darwin-rebuild", "--help"],
+);
+
 const SPLIT_REBUILD_PROFILE_SET_CALL: ExpectedCall = ExpectedCall::new(
     "sudo",
     EXPECTED_CWD_REPO_ROOT,
@@ -230,10 +236,34 @@ fn split_rebuild_calls(authorizes_sudo: bool) -> Vec<ExpectedCall> {
     calls.extend_from_slice(SPLIT_REBUILD_BUILD_CALLS);
     calls.push(SPLIT_REBUILD_SUDO_CHECK_CALL);
     if authorizes_sudo {
+        calls.push(SPLIT_REBUILD_LEGACY_SUDO_PROBE_CALL);
         calls.push(SPLIT_REBUILD_SUDO_AUTH_CALL);
     }
     calls.push(SPLIT_REBUILD_PROFILE_SET_CALL);
     calls.push(SPLIT_REBUILD_ACTIVATE_CALL);
+    calls
+}
+
+fn split_rebuild_legacy_fallback_calls() -> Vec<ExpectedCall> {
+    let mut calls = Vec::with_capacity(SPLIT_REBUILD_BUILD_CALLS.len() + 4);
+    calls.extend_from_slice(SPLIT_REBUILD_BUILD_CALLS);
+    calls.push(SPLIT_REBUILD_SUDO_CHECK_CALL);
+    calls.push(SPLIT_REBUILD_LEGACY_SUDO_PROBE_CALL);
+    calls.push(ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "/run/current-system/sw/bin/darwin-rebuild",
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+        ],
+    ));
+    calls.push(ExpectedCall::new(
+        "darwin-rebuild",
+        EXPECTED_CWD_REPO_ROOT,
+        &["switch", "--flake", REPO_ROOT_TOKEN],
+    ));
     calls
 }
 
@@ -537,6 +567,38 @@ fn split_darwin_rebuild_authorizes_sudo_when_prompt_is_needed() -> Result<(), Bo
     assert!(
         !stdout.contains("Falling back to darwin-rebuild switch"),
         "stdout should not fall back after sudo authorization\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn split_darwin_rebuild_preserves_passwordless_legacy_sudo() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+    let expected_calls = split_rebuild_legacy_fallback_calls();
+
+    let RunResult { stdout, stderr, .. } = run_split_rebuild(
+        &nx_bin,
+        &repo_base,
+        "split_rebuild_passwordless_legacy_sudo",
+        "split_sudo_prompt_legacy_available",
+        &[("NX_SPLIT_DARWIN", "1")],
+        &expected_calls,
+    )?;
+
+    assert!(
+        stdout.contains("Split activation needs sudo; using passwordless darwin-rebuild fallback"),
+        "stdout missing passwordless fallback warning\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("Falling back to darwin-rebuild switch"),
+        "stdout missing generic fallback warning\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("System rebuilt"),
+        "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
 
     Ok(())

@@ -488,6 +488,7 @@ Experimental split Darwin rebuild:
 - Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get LocalHostName`, then `hostname -s`.
 - If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
 - Otherwise runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
+- If direct split activation would require an interactive sudo prompt but the legacy `sudo darwin-rebuild` path is available non-interactively, falls back to legacy `darwin-rebuild` to preserve passwordless sudoers setups.
 - In interactive terminals, activation output inherits stdio and is bounded by unindented separator lines so child tools preserve native color/progress behavior. Non-interactive runs and `--timing` continue to use captured output.
 - Retries a bounded number of times after clearing Nix git/tarball/fetcher caches when flake check or rebuild output reports lazy source object lookup failures.
 - Retries after file descriptor exhaustion by clearing tarball/fetcher caches; root cache cleanup must be non-interactive.

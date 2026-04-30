@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- preserved passwordless Darwin rebuild setups by falling back to the existing `sudo darwin-rebuild` path when split activation would require an interactive sudo prompt
+
 ## v1.5.20 - 2026-04-29
 
 - excluded `nix-gc` from default `nx clean-caches` plans so routine cache cleanup cannot force later Nix downloads or local source builds unless store GC is selected explicitly

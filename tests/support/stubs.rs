@@ -258,7 +258,20 @@ case "$program" in
         echo "sudo: a password is required" >&2
         exit 1
       fi
+      if [ "$mode" = "split_sudo_prompt_legacy_available" ]; then
+        echo "sudo: a password is required" >&2
+        exit 1
+      fi
       exit 0
+    fi
+
+    if [ "${1:-}" = "-n" ] && [ "${2:-}" = "/run/current-system/sw/bin/darwin-rebuild" ]; then
+      if [ "$mode" = "split_sudo_prompt_legacy_available" ]; then
+        echo "darwin-rebuild [--help] {edit | switch | activate | build | check}"
+        exit 1
+      fi
+      echo "sudo: a password is required" >&2
+      exit 1
     fi
 
     # Handle bash -lc wrapper (ulimit + exec darwin-rebuild)

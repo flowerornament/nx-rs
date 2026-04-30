@@ -5,7 +5,7 @@ use tempfile::TempDir;
 
 use crate::cli::{RebuildArgs, UpgradeArgs, UpgradeFlowArgs, UpgradeSkipArgs};
 use crate::domain::upgrade::{InputChange, github_owner_repo};
-use crate::infra::shell::run_captured_command;
+use crate::infra::shell::{CapturedCommand, run_captured_command};
 
 use super::fixed_output_hash::{
     FixedOutputHashMismatch, apply_fixed_output_hash_repair, find_fixed_output_hash_targets,
@@ -14,6 +14,7 @@ use super::fixed_output_hash::{
 use super::rebuild::{
     build_rebuild_command, build_rebuild_command_with_manifest, has_nix_extension,
     parse_system_config_path, should_use_split_darwin, split_nix_build_command,
+    sudo_password_required,
 };
 use super::undo::{git_diff_stat, git_modified_files};
 use super::upgrade::{

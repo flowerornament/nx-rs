@@ -10,7 +10,7 @@ use crate::infra::shell::{
     StreamName, first_nonempty_output, run_captured_command,
     run_indented_command_collecting_stdout_with_observer, run_indented_command_collecting_with_env,
     run_indented_command_collecting_with_observer, run_native_command_with_env,
-    terminal_stdio_available,
+    run_stdout_collecting_tee_stderr_with_env, terminal_stdio_available,
 };
 use crate::infra::timing::{
     TimingCommand, TimingPhase, TimingRecord, TimingSession, append_timing, timing_detail_lines,
@@ -67,13 +67,13 @@ pub(super) enum FixedOutputHashRepairMode {
 
 #[derive(Debug, Clone, Copy)]
 struct RebuildOutputMode {
-    split_activation_native: bool,
+    split_native_output: bool,
 }
 
 impl RebuildOutputMode {
     fn from_args(args: &RebuildArgs) -> Self {
         Self {
-            split_activation_native: native_rebuild_output_enabled(args),
+            split_native_output: native_rebuild_output_enabled(args),
         }
     }
 }
@@ -560,7 +560,7 @@ fn do_rebuild_once(
     profiler: &mut ActivationPhaseProfiler,
 ) -> anyhow::Result<(i32, String, Vec<TimingPhase>, RebuildOutcome)> {
     if should_use_split_darwin(args, manifest) {
-        match do_split_darwin_rebuild(ctx, repo, use_sudo, output_mode.split_activation_native) {
+        match do_split_darwin_rebuild(ctx, repo, use_sudo, output_mode.split_native_output) {
             SplitDarwinResult::Handled(result) => return result,
             SplitDarwinResult::Fallback => {
                 ctx.printer.warn("Falling back to darwin-rebuild switch");
@@ -649,40 +649,21 @@ fn do_split_darwin_rebuild(
 
     let attr = format!("{repo}#darwinConfigurations.{host}.system");
     let mut phases = Vec::new();
-    let mut build_stderr = String::new();
-    let (build_program, build_args) = split_nix_build_command(&attr);
-    let build_arg_refs: Vec<&str> = build_args.iter().map(String::as_str).collect();
-    let (build, mut build_phase) = match timed_phase("build", || {
-        ctx.printer.action("Building system configuration");
-        run_indented_command_collecting_stdout_with_observer(
-            &build_program,
-            &build_arg_refs,
-            None,
-            None,
-            ctx.printer,
-            "  ",
-            |stream, line| {
-                if stream == StreamName::Stderr {
-                    push_stream_line(&mut build_stderr, line);
-                }
-            },
-        )
-    }) {
+    let build = match build_split_system_config(ctx, &attr, native_output) {
         Ok(result) => result,
         Err(err) => return SplitDarwinResult::Handled(Err(err)),
     };
-    build_phase.status = exit_status(build.0);
-    phases.push(build_phase);
-    if build.0 != 0 {
+    phases.push(build.phase);
+    if build.code != 0 {
         return SplitDarwinResult::Handled(Ok((
-            build.0,
-            combined_stream_output(&build.1, &build_stderr),
+            build.code,
+            combined_stream_output(&build.stdout, &build.stderr),
             phases,
             RebuildOutcome::Rebuilt,
         )));
     }
 
-    let Some(system_config) = parse_system_config_path(&build.1) else {
+    let Some(system_config) = parse_system_config_path(&build.stdout) else {
         ctx.printer
             .warn("Split darwin rebuild could not parse nix build output; falling back");
         return SplitDarwinResult::Fallback;
@@ -744,13 +725,77 @@ fn do_split_darwin_rebuild(
     )))
 }
 
+struct SplitBuildOutput {
+    code: i32,
+    stdout: String,
+    stderr: String,
+    phase: TimingPhase,
+}
+
+fn build_split_system_config(
+    ctx: &SystemContext<'_>,
+    attr: &str,
+    native_output: bool,
+) -> anyhow::Result<SplitBuildOutput> {
+    let mut build_stderr = String::new();
+    let (build_program, build_args) = if native_output {
+        split_nix_build_command_with_log_format(attr, Some("bar-with-logs"))
+    } else {
+        split_nix_build_command(attr)
+    };
+    let build_arg_refs: Vec<&str> = build_args.iter().map(String::as_str).collect();
+    let (build, mut phase) = timed_phase("build", || {
+        ctx.printer.action("Building system configuration");
+        if native_output {
+            let output = run_stdout_collecting_tee_stderr_with_env(
+                &build_program,
+                &build_arg_refs,
+                None,
+                None,
+            )?;
+            build_stderr = output.stderr;
+            return Ok((output.code, output.stdout));
+        }
+        run_indented_command_collecting_stdout_with_observer(
+            &build_program,
+            &build_arg_refs,
+            None,
+            None,
+            ctx.printer,
+            "  ",
+            |stream, line| {
+                if stream == StreamName::Stderr {
+                    push_stream_line(&mut build_stderr, line);
+                }
+            },
+        )
+    })?;
+    phase.status = exit_status(build.0);
+    Ok(SplitBuildOutput {
+        code: build.0,
+        stdout: build.1,
+        stderr: build_stderr,
+        phase,
+    })
+}
+
 pub(super) fn split_nix_build_command(attr: &str) -> (String, Vec<String>) {
-    let args = vec![
+    split_nix_build_command_with_log_format(attr, None)
+}
+
+fn split_nix_build_command_with_log_format(
+    attr: &str,
+    log_format: Option<&str>,
+) -> (String, Vec<String>) {
+    let mut args = vec![
         "build".to_string(),
         "--json".to_string(),
         "--no-link".to_string(),
-        attr.to_string(),
     ];
+    if let Some(log_format) = log_format {
+        args.extend(["--log-format".to_string(), log_format.to_string()]);
+    }
+    args.push(attr.to_string());
     super::upgrade::build_nix_command(&args, Some(SPLIT_NIX_BUILD_NOFILE_LIMIT))
 }
 

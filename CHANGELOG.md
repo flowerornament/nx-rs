@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.19 - 2026-04-29
+
+- collapsed carriage-return progress frames in captured command output so Git/Nix fetch progress no longer smears stale percentages into normal lines
+- made interactive split `nix build` keep stdout captured for JSON parsing while teeing stderr raw with Nix's `bar-with-logs` format and a bounded diagnostic tail, preserving progress UI without losing retry detection
+
 ## v1.5.18 - 2026-04-29
 
 - preserved native terminal output for interactive split-rebuild activation blocks, bounded by separator lines, so Homebrew and Home Manager can render their own colors and progress UI

@@ -417,6 +417,7 @@ Runs `darwin-rebuild switch` for the managed repo.
 - Use `--preflight` to stop after lint, git, and flake checks without switching.
 - Use `--timing` to print phase timings after recording them locally.
 - Darwin split rebuilds raise Nix's file descriptor limit and retry bounded source-cache failures before surfacing an error.
+- Interactive split builds keep stdout captured for JSON parsing but tee Nix stderr raw with `bar-with-logs`, so fetch/build progress behaves like terminal output while diagnostics remain bounded.
 - In an interactive terminal, rebuild activation output is handed through natively between separator lines so Nix, Homebrew, and Home Manager can keep their own colors and progress UI. Non-interactive runs and `--timing` keep captured output for parsing and timing detail.
 - Additional args after `--` pass through to the underlying `darwin-rebuild` command.
 

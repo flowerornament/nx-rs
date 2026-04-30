@@ -484,6 +484,7 @@ Experimental split Darwin rebuild:
 - Applies only to Darwin manifests using the default `darwin-rebuild` command and no passthrough args.
 - Falls back to the default rebuild path when the split path cannot confidently preserve behavior.
 - Runs `nix build --json --no-link <repo_root>#darwinConfigurations.<host>.system` under a raised file descriptor limit.
+- In interactive terminals, the split build still captures stdout for JSON parsing but tees stderr raw with Nix's `bar-with-logs` format so fetch/build progress behaves like terminal output. The retained stderr diagnostic buffer is bounded.
 - Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get LocalHostName`, then `hostname -s`.
 - If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
 - Otherwise runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
@@ -579,6 +580,7 @@ Dry-run behavior:
   - returns `(returncode, joined_output)`.
   - supports printer stream callback.
   - plain output must preserve indent on wrapped lines.
+  - carriage-return progress updates are collapsed to the final visible frame before printing, observing, or collecting.
 - `run_native_command`:
   - inherits stdin, stdout, and stderr from the parent process.
   - prints unindented separator lines before and after child-owned terminal output.

@@ -5,6 +5,7 @@ fn rebuild_command_includes_base_args() {
     let args = RebuildArgs {
         preflight: false,
         timing: false,
+        verbose: false,
         passthrough: Vec::new(),
     };
     let result = build_rebuild_command("/Users/test/.nix-config", &args);
@@ -19,6 +20,7 @@ fn rebuild_command_includes_passthrough_args() {
     let args = RebuildArgs {
         preflight: false,
         timing: false,
+        verbose: false,
         passthrough: vec!["--show-trace".into()],
     };
     let result = build_rebuild_command("/test", &args);
@@ -57,6 +59,7 @@ fn rebuild_command_uses_manifest_rebuild_command() {
     let args = RebuildArgs {
         preflight: false,
         timing: false,
+        verbose: false,
         passthrough: Vec::new(),
     };
     let result = build_rebuild_command_with_manifest("/test", &args, Some(&manifest));
@@ -113,6 +116,19 @@ fn split_nix_build_raises_file_descriptor_limit() {
 }
 
 #[test]
+fn split_nix_build_can_request_native_log_format() {
+    let (_, args) = split_nix_build_command_with_log_format(
+        "git+file:///repo#darwinConfigurations.host.system",
+        Some("bar"),
+    );
+
+    assert!(
+        args.windows(2)
+            .any(|pair| pair[0] == "--log-format" && pair[1] == "bar")
+    );
+}
+
+#[test]
 fn split_darwin_defaults_on_for_darwin_and_allows_opt_out() {
     use std::collections::HashMap;
 
@@ -121,6 +137,7 @@ fn split_darwin_defaults_on_for_darwin_and_allows_opt_out() {
     let args = RebuildArgs {
         preflight: false,
         timing: false,
+        verbose: false,
         passthrough: Vec::new(),
     };
     let manifest = Manifest {

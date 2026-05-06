@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- changed interactive split Darwin builds to use Nix's quieter `bar` log format by default, while `nx rebuild --verbose` and `nx upgrade --verbose` still stream full `bar-with-logs` builder output
 - preserved passwordless Darwin rebuild setups by falling back to the existing `sudo darwin-rebuild` path when split activation would require an interactive sudo prompt
 
 ## v1.5.20 - 2026-04-29

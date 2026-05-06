@@ -49,7 +49,10 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
         {
             return code;
         }
-        let rebuild = RebuildArgs::default();
+        let rebuild = RebuildArgs {
+            verbose: args.flow.verbose,
+            ..RebuildArgs::default()
+        };
         let system_ctx = ctx.system_context();
         let rebuild_result = cmd_rebuild_with_command_result(
             &rebuild,

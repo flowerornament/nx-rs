@@ -72,7 +72,7 @@ const UNDO_HELP: &str = "Examples:\n  nx undo\n  nx undo --yes\n\nNotes:\n  - `u
 const UPDATE_HELP: &str = "Examples:\n  nx update\n  nx update -- --commit-lock-file\n  nx update -- --flake ./hosts/macbook\n\nNotes:\n  - Additional args after `--` are passed directly to `nix flake update`.";
 const TEST_HELP: &str =
     "Examples:\n  nx test\n\nNotes:\n  - `test` runs the managed repo quality gate (`just ci`).";
-const REBUILD_HELP: &str = "Examples:\n  nx rebuild\n  nx rebuild --preflight\n  nx rebuild --timing\n  nx rebuild -- --show-trace\n\nNotes:\n  - `--preflight` stops after lint, git, and flake checks.\n  - Rebuild timings are recorded locally and can be reviewed with `nx profile`.\n  - Darwin repos use split rebuilds by default; set `platform.split_rebuild = false` to opt out.\n  - Additional args after `--` are passed directly to `darwin-rebuild switch`.";
+const REBUILD_HELP: &str = "Examples:\n  nx rebuild\n  nx rebuild --preflight\n  nx rebuild --timing\n  nx rebuild --verbose\n  nx rebuild -- --show-trace\n\nNotes:\n  - `--preflight` stops after lint, git, and flake checks.\n  - `--verbose` streams full split-build logs in interactive terminals.\n  - Rebuild timings are recorded locally and can be reviewed with `nx profile`.\n  - Darwin repos use split rebuilds by default; set `platform.split_rebuild = false` to opt out.\n  - Additional args after `--` are passed directly to `darwin-rebuild switch`.";
 const GENERATIONS_HELP: &str = "Examples:\n  nx generations status\n  nx generations plan\n  nx generations prune --dry-run\n  nx generations prune --keep 5 --kind darwin\n\nNotes:\n  - `nx generations` is host-scoped and works from any directory.\n  - Use `plan` or `prune --dry-run` to preview exact prune/GC commands.";
 const GENERATIONS_PRUNE_HELP: &str = "Examples:\n  nx generations prune --dry-run\n  nx generations prune --yes\n  nx generations prune --keep 5 --kind darwin\n  nx generations prune --kind home-manager --no-gc\n\nNotes:\n  - `--dry-run` renders the same plan as `nx generations plan`.\n  - By default, `prune` asks for confirmation before mutating the host.";
 const CLEAN_CACHES_HELP: &str = concat!(
@@ -97,7 +97,7 @@ const CLEAN_CACHES_HELP: &str = concat!(
     "  - Configure with NX_CODE_ROOTS, NX_CLEAN_SCAN_DEPTH, and NX_CLEAN_SKIP.\n",
     "  - Valid NX_CLEAN_SKIP names: cargo-registry, uv, npm, homebrew, huggingface, puppeteer, playwright, xcode-derived, core-simulator, codex-sessions, codex-logs, claude-telemetry, claude-file-history, nix-gc, rust-targets, elixir-builds, node-modules.",
 );
-const UPGRADE_HELP: &str = "Examples:\n  nx upgrade\n  nx upgrade --dry-run\n  nx upgrade nx-rs\n  nx upgrade nx-rs anneal -- --show-trace\n\nNotes:\n  - Without positional inputs, `upgrade` runs the full repo-wide flow: flake update, brew, rebuild, and commit.\n  - With positional inputs, `upgrade` updates only those flake inputs and skips the brew phase by default.\n  - Homebrew update checks show loading feedback before upgrade details are rendered.\n  - If rebuild hits a fixed-output hash mismatch, `upgrade` updates the unique clean matching .nix hash and retries.\n  - Set NX_NO_AUTO_HASH_FIX=1 to disable automatic fixed-output hash repairs.";
+const UPGRADE_HELP: &str = "Examples:\n  nx upgrade\n  nx upgrade --dry-run\n  nx upgrade --verbose\n  nx upgrade nx-rs\n  nx upgrade nx-rs anneal -- --show-trace\n\nNotes:\n  - Without positional inputs, `upgrade` runs the full repo-wide flow: flake update, brew, rebuild, and commit.\n  - With positional inputs, `upgrade` updates only those flake inputs and skips the brew phase by default.\n  - Homebrew update checks show loading feedback before upgrade details are rendered.\n  - `--verbose` also streams full split-build logs during the rebuild phase.\n  - If rebuild hits a fixed-output hash mismatch, `upgrade` updates the unique clean matching .nix hash and retries.\n  - Set NX_NO_AUTO_HASH_FIX=1 to disable automatic fixed-output hash repairs.";
 const SECRET_HELP: &str = "Examples:\n  nx secret add example_secret_key --value '<token>'\n  printf '%s' '<token>' | nx secret add example_secret_key --value-stdin";
 const SECRET_ADD_HELP: &str = "Examples:
   nx secret add example_secret_key --value '<token>'
@@ -718,6 +718,8 @@ pub struct RebuildArgs {
     pub preflight: bool,
     #[arg(long, help = "Print rebuild phase timings after recording them")]
     pub timing: bool,
+    #[arg(long, short = 'v', help = "Stream full split-build logs")]
+    pub verbose: bool,
     #[arg(
         last = true,
         help = "Arguments passed through to the underlying darwin-rebuild command"
@@ -1515,6 +1517,16 @@ mod tests {
     }
 
     #[test]
+    fn rebuild_parses_verbose_option() {
+        let cli =
+            Cli::try_parse_from(["nx", "rebuild", "--verbose"]).expect("parse rebuild verbose");
+        let CommandKind::Rebuild(args) = cli.command else {
+            panic!("expected rebuild command");
+        };
+        assert!(args.verbose);
+    }
+
+    #[test]
     fn upgrade_parses_target_inputs_and_passthrough() {
         let cli = Cli::try_parse_from(["nx", "upgrade", "nx-rs", "anneal", "--", "--show-trace"])
             .expect("parse targeted upgrade");
@@ -1619,7 +1631,7 @@ mod tests {
         assert_subcommand_local_long_flags("undo", &["yes"]);
         assert_subcommand_local_long_flags("update", &[]);
         assert_subcommand_local_long_flags("test", &[]);
-        assert_subcommand_local_long_flags("rebuild", &["preflight", "timing"]);
+        assert_subcommand_local_long_flags("rebuild", &["preflight", "timing", "verbose"]);
         assert_subcommand_local_long_flags("profile", &["limit", "json"]);
         assert_subcommand_local_long_flags("version", &["json"]);
         assert_subcommand_local_long_flags("doctor", &["json", "verbose"]);

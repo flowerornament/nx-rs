@@ -68,12 +68,15 @@ pub(super) enum FixedOutputHashRepairMode {
 #[derive(Debug, Clone, Copy)]
 struct RebuildOutputMode {
     split_native_output: bool,
+    split_verbose_build_logs: bool,
 }
 
 impl RebuildOutputMode {
     fn from_args(args: &RebuildArgs) -> Self {
+        let split_native_output = native_rebuild_output_enabled(args);
         Self {
-            split_native_output: native_rebuild_output_enabled(args),
+            split_native_output,
+            split_verbose_build_logs: split_native_output && args.verbose,
         }
     }
 }
@@ -560,7 +563,7 @@ fn do_rebuild_once(
     profiler: &mut ActivationPhaseProfiler,
 ) -> anyhow::Result<(i32, String, Vec<TimingPhase>, RebuildOutcome)> {
     if should_use_split_darwin(args, manifest) {
-        match do_split_darwin_rebuild(ctx, repo, use_sudo, output_mode.split_native_output) {
+        match do_split_darwin_rebuild(ctx, repo, use_sudo, output_mode) {
             SplitDarwinResult::Handled(result) => return result,
             SplitDarwinResult::Fallback => {
                 ctx.printer.warn("Falling back to darwin-rebuild switch");
@@ -639,7 +642,7 @@ fn do_split_darwin_rebuild(
     ctx: &SystemContext<'_>,
     repo: &str,
     use_sudo: bool,
-    native_output: bool,
+    output_mode: RebuildOutputMode,
 ) -> SplitDarwinResult {
     let Some(host) = darwin_host(ctx) else {
         ctx.printer
@@ -649,7 +652,7 @@ fn do_split_darwin_rebuild(
 
     let attr = format!("{repo}#darwinConfigurations.{host}.system");
     let mut phases = Vec::new();
-    let build = match build_split_system_config(ctx, &attr, native_output) {
+    let build = match build_split_system_config(ctx, &attr, output_mode) {
         Ok(result) => result,
         Err(err) => return SplitDarwinResult::Handled(Err(err)),
     };
@@ -718,11 +721,15 @@ fn do_split_darwin_rebuild(
         )));
     }
 
-    let (activate, activate_phase) =
-        match activate_system(ctx, use_sudo, native_output, &system_config) {
-            Ok(result) => result,
-            Err(err) => return SplitDarwinResult::Handled(Err(err)),
-        };
+    let (activate, activate_phase) = match activate_system(
+        ctx,
+        use_sudo,
+        output_mode.split_native_output,
+        &system_config,
+    ) {
+        Ok(result) => result,
+        Err(err) => return SplitDarwinResult::Handled(Err(err)),
+    };
     phases.push(activate_phase);
     SplitDarwinResult::Handled(Ok((
         activate.0,
@@ -742,18 +749,23 @@ struct SplitBuildOutput {
 fn build_split_system_config(
     ctx: &SystemContext<'_>,
     attr: &str,
-    native_output: bool,
+    output_mode: RebuildOutputMode,
 ) -> anyhow::Result<SplitBuildOutput> {
     let mut build_stderr = String::new();
-    let (build_program, build_args) = if native_output {
-        split_nix_build_command_with_log_format(attr, Some("bar-with-logs"))
+    let (build_program, build_args) = if output_mode.split_native_output {
+        let log_format = if output_mode.split_verbose_build_logs {
+            "bar-with-logs"
+        } else {
+            "bar"
+        };
+        split_nix_build_command_with_log_format(attr, Some(log_format))
     } else {
         split_nix_build_command(attr)
     };
     let build_arg_refs: Vec<&str> = build_args.iter().map(String::as_str).collect();
     let (build, mut phase) = timed_phase("build", || {
         ctx.printer.action("Building system configuration");
-        if native_output {
+        if output_mode.split_native_output {
             let output = run_stdout_collecting_tee_stderr_with_env(
                 &build_program,
                 &build_arg_refs,
@@ -790,7 +802,7 @@ pub(super) fn split_nix_build_command(attr: &str) -> (String, Vec<String>) {
     split_nix_build_command_with_log_format(attr, None)
 }
 
-fn split_nix_build_command_with_log_format(
+pub(super) fn split_nix_build_command_with_log_format(
     attr: &str,
     log_format: Option<&str>,
 ) -> (String, Vec<String>) {

@@ -118,7 +118,7 @@ Defined at root callback:
 - `test`
   - no args
 - `rebuild`
-  - options: `--preflight`, `--timing`
+  - options: `--preflight`, `--timing`, `--verbose/-v`
   - passthrough args accepted
 - `upgrade`
   - args: `[inputs...]`
@@ -484,7 +484,7 @@ Experimental split Darwin rebuild:
 - Applies only to Darwin manifests using the default `darwin-rebuild` command and no passthrough args.
 - Falls back to the default rebuild path when the split path cannot confidently preserve behavior.
 - Runs `nix build --json --no-link <repo_root>#darwinConfigurations.<host>.system` under a raised file descriptor limit.
-- In interactive terminals, the split build still captures stdout for JSON parsing but tees stderr raw with Nix's `bar-with-logs` format so fetch/build progress behaves like terminal output. The retained stderr diagnostic buffer is bounded.
+- In interactive terminals, the split build still captures stdout for JSON parsing but tees stderr raw with Nix's `bar` format so fetch/build progress behaves like terminal output without streaming every successful builder log line. `--verbose` switches the split build to `bar-with-logs`. The retained stderr diagnostic buffer is bounded.
 - Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get LocalHostName`, then `hostname -s`.
 - If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
 - Otherwise runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.

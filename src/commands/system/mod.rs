@@ -13,7 +13,7 @@ pub use undo::cmd_undo;
 pub use update::cmd_update;
 pub use upgrade::cmd_upgrade;
 
-const DARWIN_REBUILD: &str = "/run/current-system/sw/bin/darwin-rebuild";
+const DARWIN_REBUILD: &str = crate::domain::manifest::DEFAULT_DARWIN_REBUILD_COMMAND;
 
 #[cfg(test)]
 mod tests;

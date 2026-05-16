@@ -32,6 +32,7 @@ use support_stubs::{LOG_FILE_NAME, STUB_DIR_NAME, install_stubs, prepend_path};
 use support_system::{changed_paths, fetcher_cache_path};
 use support_tree::copy_tree;
 
+const DARWIN_REBUILD_CMD: &str = "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild";
 const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
     "-C",
     REPO_ROOT_TOKEN,
@@ -254,12 +255,7 @@ const UPGRADE_REBUILD_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new(
         "sudo",
         EXPECTED_CWD_REPO_ROOT,
-        &[
-            "/run/current-system/sw/bin/darwin-rebuild",
-            "switch",
-            "--flake",
-            REPO_ROOT_TOKEN,
-        ],
+        &[DARWIN_REBUILD_CMD, "switch", "--flake", REPO_ROOT_TOKEN],
     ),
     ExpectedCall::new(
         "darwin-rebuild",
@@ -277,12 +273,7 @@ const UPGRADE_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new(
         "sudo",
         EXPECTED_CWD_REPO_ROOT,
-        &[
-            "/run/current-system/sw/bin/darwin-rebuild",
-            "switch",
-            "--flake",
-            REPO_ROOT_TOKEN,
-        ],
+        &[DARWIN_REBUILD_CMD, "switch", "--flake", REPO_ROOT_TOKEN],
     ),
     ExpectedCall::new(
         "darwin-rebuild",
@@ -302,12 +293,7 @@ const UPGRADE_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new(
         "sudo",
         EXPECTED_CWD_REPO_ROOT,
-        &[
-            "/run/current-system/sw/bin/darwin-rebuild",
-            "switch",
-            "--flake",
-            REPO_ROOT_TOKEN,
-        ],
+        &[DARWIN_REBUILD_CMD, "switch", "--flake", REPO_ROOT_TOKEN],
     ),
     ExpectedCall::new(
         "darwin-rebuild",
@@ -323,12 +309,7 @@ const UPGRADE_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new(
         "sudo",
         EXPECTED_CWD_REPO_ROOT,
-        &[
-            "/run/current-system/sw/bin/darwin-rebuild",
-            "switch",
-            "--flake",
-            REPO_ROOT_TOKEN,
-        ],
+        &[DARWIN_REBUILD_CMD, "switch", "--flake", REPO_ROOT_TOKEN],
     ),
     ExpectedCall::new(
         "darwin-rebuild",

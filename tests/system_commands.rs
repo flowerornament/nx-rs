@@ -30,6 +30,7 @@ use support_snapshot::snapshot_repo_files;
 use support_stubs::{LOG_FILE_NAME, STUB_DIR_NAME, install_stubs, prepend_path};
 use support_tree::copy_tree;
 
+const DARWIN_REBUILD_CMD: &str = "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild";
 const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
     "-C",
     REPO_ROOT_TOKEN,
@@ -93,7 +94,7 @@ const REBUILD_SUCCESS_CALLS: &[ExpectedCall] = &[
         "sudo",
         EXPECTED_CWD_REPO_ROOT,
         &[
-            "/run/current-system/sw/bin/darwin-rebuild",
+            DARWIN_REBUILD_CMD,
             "switch",
             "--flake",
             REPO_ROOT_TOKEN,
@@ -138,7 +139,7 @@ const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
         "sudo",
         EXPECTED_CWD_REPO_ROOT,
         &[
-            "/run/current-system/sw/bin/darwin-rebuild",
+            DARWIN_REBUILD_CMD,
             "switch",
             "--flake",
             REPO_ROOT_TOKEN,
@@ -183,7 +184,7 @@ const SPLIT_REBUILD_SUDO_AUTH_CALL: ExpectedCall =
 const SPLIT_REBUILD_LEGACY_SUDO_PROBE_CALL: ExpectedCall = ExpectedCall::new(
     "sudo",
     EXPECTED_CWD_REPO_ROOT,
-    &["-n", "/run/current-system/sw/bin/darwin-rebuild", "--help"],
+    &["-n", DARWIN_REBUILD_CMD, "--help"],
 );
 
 const SPLIT_REBUILD_PROFILE_SET_CALL: ExpectedCall = ExpectedCall::new(
@@ -252,12 +253,7 @@ fn split_rebuild_legacy_fallback_calls() -> Vec<ExpectedCall> {
     calls.push(ExpectedCall::new(
         "sudo",
         EXPECTED_CWD_REPO_ROOT,
-        &[
-            "/run/current-system/sw/bin/darwin-rebuild",
-            "switch",
-            "--flake",
-            REPO_ROOT_TOKEN,
-        ],
+        &[DARWIN_REBUILD_CMD, "switch", "--flake", REPO_ROOT_TOKEN],
     ));
     calls.push(ExpectedCall::new(
         "darwin-rebuild",

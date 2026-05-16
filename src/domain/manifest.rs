@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+pub const DEFAULT_DARWIN_REBUILD_COMMAND: &str =
+    "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild";
+
 // --- Types
 
 /// Top-level manifest describing a Nix config repository's structure.
@@ -144,7 +147,7 @@ impl Manifest {
     pub fn default_darwin() -> PlatformConfig {
         PlatformConfig {
             kind: PlatformKind::Darwin,
-            rebuild_command: "/run/current-system/sw/bin/darwin-rebuild".to_string(),
+            rebuild_command: DEFAULT_DARWIN_REBUILD_COMMAND.to_string(),
             sudo: true,
             flake_root: ".".to_string(),
             split_rebuild: true,
@@ -259,7 +262,7 @@ fn parse_platform(table: &toml_edit::Table) -> Result<PlatformConfig> {
         .get("rebuild_command")
         .and_then(toml_edit::Item::as_str)
         .unwrap_or(match kind {
-            PlatformKind::Darwin => "/run/current-system/sw/bin/darwin-rebuild",
+            PlatformKind::Darwin => DEFAULT_DARWIN_REBUILD_COMMAND,
             PlatformKind::NixOS => "nixos-rebuild",
             PlatformKind::HomeManager => "home-manager",
             PlatformKind::Custom => "echo",

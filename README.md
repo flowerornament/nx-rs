@@ -53,7 +53,7 @@ Then rebuild:
 
 ```bash
 nix flake update nx-rs
-sudo /run/current-system/sw/bin/darwin-rebuild switch --flake .
+sudo /nix/var/nix/profiles/system/sw/bin/darwin-rebuild switch --flake .
 ```
 
 #### Nix + Home Manager

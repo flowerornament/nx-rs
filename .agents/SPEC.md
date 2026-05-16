@@ -475,7 +475,7 @@ Preflight requirements:
 
 Then run the default rebuild path:
 
-- `sudo /run/current-system/sw/bin/darwin-rebuild switch --flake <repo_root> [passthrough...]`
+- `sudo /nix/var/nix/profiles/system/sw/bin/darwin-rebuild switch --flake <repo_root> [passthrough...]`
 
 Experimental split Darwin rebuild:
 

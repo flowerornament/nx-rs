@@ -385,7 +385,8 @@ mod tests {
             schema_version: 1,
             platform: crate::domain::manifest::PlatformConfig {
                 kind: PlatformKind::Darwin,
-                rebuild_command: "/run/current-system/sw/bin/darwin-rebuild".to_string(),
+                rebuild_command: crate::domain::manifest::DEFAULT_DARWIN_REBUILD_COMMAND
+                    .to_string(),
                 sudo: true,
                 flake_root: ".".to_string(),
                 split_rebuild: false,

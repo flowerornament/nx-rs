@@ -940,7 +940,7 @@ fn split_activation_would_prompt(use_sudo: bool) -> bool {
 
 fn legacy_darwin_rebuild_sudo_available() -> bool {
     run_captured_command("sudo", &["-n", DARWIN_REBUILD, "--help"], None)
-        .is_ok_and(|output| !sudo_password_required(&output))
+        .is_ok_and(|output| output.code == 0 && !sudo_password_required(&output))
 }
 
 pub(super) fn sudo_password_required(output: &crate::infra::shell::CapturedCommand) -> bool {

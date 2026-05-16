@@ -21,7 +21,7 @@ schema_version = 1
 
 [platform]
 kind = "darwin"
-rebuild_command = "/run/current-system/sw/bin/darwin-rebuild"
+rebuild_command = "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild"
 sudo = true
 flake_root = "."
 

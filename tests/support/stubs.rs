@@ -265,10 +265,10 @@ case "$program" in
       exit 0
     fi
 
-    if [ "${1:-}" = "-n" ] && [ "${2:-}" = "/run/current-system/sw/bin/darwin-rebuild" ]; then
+    if [ "${1:-}" = "-n" ] && [ "${2:-}" = "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild" ]; then
       if [ "$mode" = "split_sudo_prompt_legacy_available" ]; then
         echo "darwin-rebuild [--help] {edit | switch | activate | build | check}"
-        exit 1
+        exit 0
       fi
       echo "sudo: a password is required" >&2
       exit 1
@@ -277,12 +277,12 @@ case "$program" in
     # Handle bash -lc wrapper (ulimit + exec darwin-rebuild)
     if [ "${1:-}" = "bash" ] && [ "${2:-}" = "-lc" ]; then
       cmd="${3:-}"
-      cmd="$(printf '%s' "$cmd" | sed "s|/run/current-system/sw/bin/darwin-rebuild|${NX_SYSTEM_IT_DARWIN_REBUILD:?}|g")"
+      cmd="$(printf '%s' "$cmd" | sed "s|/nix/var/nix/profiles/system/sw/bin/darwin-rebuild|${NX_SYSTEM_IT_DARWIN_REBUILD:?}|g")"
       bash -c "$cmd"
       exit $?
     fi
 
-    if [ "${1:-}" = "/run/current-system/sw/bin/darwin-rebuild" ]; then
+    if [ "${1:-}" = "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild" ]; then
       shift
       "${NX_SYSTEM_IT_DARWIN_REBUILD:?NX_SYSTEM_IT_DARWIN_REBUILD must be set}" "$@"
       exit $?

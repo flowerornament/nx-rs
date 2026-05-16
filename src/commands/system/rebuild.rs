@@ -51,18 +51,12 @@ pub fn cmd_rebuild_with_command(
     ctx: &SystemContext<'_>,
     command: TimingCommand,
 ) -> i32 {
-    cmd_rebuild_with_command_result(args, ctx, command, FixedOutputHashRepairMode::HintOnly).code
+    cmd_rebuild_with_command_result(args, ctx, command).code
 }
 
 pub(super) struct RebuildCommandResult {
     pub(super) code: i32,
     pub(super) repaired_paths: Vec<PathBuf>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum FixedOutputHashRepairMode {
-    HintOnly,
-    Auto,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -85,7 +79,6 @@ pub(super) fn cmd_rebuild_with_command_result(
     args: &RebuildArgs,
     ctx: &SystemContext<'_>,
     command: TimingCommand,
-    hash_repair: FixedOutputHashRepairMode,
 ) -> RebuildCommandResult {
     if let Err(code) = ctx.require_manifest_system_safe("rebuild") {
         return RebuildCommandResult {
@@ -95,7 +88,7 @@ pub(super) fn cmd_rebuild_with_command_result(
     }
     let mut timing = TimingSession::new(command, ctx.repo_root);
 
-    let result = run_rebuild(args, ctx, &mut timing, hash_repair);
+    let result = run_rebuild(args, ctx, &mut timing);
     let record = timing.finish(result.code);
     finish_timing(args, ctx, &record);
     result
@@ -105,7 +98,6 @@ fn run_rebuild(
     args: &RebuildArgs,
     ctx: &SystemContext<'_>,
     timing: &mut TimingSession,
-    hash_repair: FixedOutputHashRepairMode,
 ) -> RebuildCommandResult {
     if args.preflight {
         let routing_code =
@@ -145,7 +137,7 @@ fn run_rebuild(
 
     let mut repaired_paths = Vec::new();
     let code = timing.record_exit_phase_with_children("activation", || {
-        let (code, phases, repairs) = do_rebuild(args, ctx, hash_repair);
+        let (code, phases, repairs) = do_rebuild(args, ctx);
         repaired_paths = repairs;
         (code, phases)
     });
@@ -339,7 +331,6 @@ fn check_flake(ctx: &SystemContext<'_>) -> Result<(), i32> {
 fn do_rebuild(
     args: &RebuildArgs,
     ctx: &SystemContext<'_>,
-    hash_repair: FixedOutputHashRepairMode,
 ) -> (i32, Vec<TimingPhase>, Vec<PathBuf>) {
     let repo = ctx.repo_root.display().to_string();
     let manifest = ctx.config_files.manifest();
@@ -414,9 +405,7 @@ fn do_rebuild(
             continue;
         }
 
-        if let Some(path) =
-            handle_fixed_output_hash_mismatch(ctx, &output, hash_repair, repaired_paths.len())
-        {
+        if let Some(path) = handle_fixed_output_hash_mismatch(ctx, &output, repaired_paths.len()) {
             if !repaired_paths.contains(&path) {
                 repaired_paths.push(path);
             }
@@ -433,7 +422,6 @@ fn do_rebuild(
 fn handle_fixed_output_hash_mismatch(
     ctx: &SystemContext<'_>,
     output: &str,
-    repair_mode: FixedOutputHashRepairMode,
     repaired_count: usize,
 ) -> Option<PathBuf> {
     let mismatch = parse_fixed_output_hash_mismatch(output)?;
@@ -455,11 +443,6 @@ fn handle_fixed_output_hash_mismatch(
         return None;
     };
 
-    if repair_mode == FixedOutputHashRepairMode::HintOnly {
-        print_fixed_output_hash_hint(ctx, &mismatch, &targets, None);
-        return None;
-    }
-
     if env_flag(NO_AUTO_HASH_FIX_ENV) {
         print_fixed_output_hash_hint(
             ctx,
@@ -475,7 +458,7 @@ fn handle_fixed_output_hash_mismatch(
             ctx,
             &mismatch,
             &targets,
-            Some("multiple fixed-output hash mismatches in one upgrade need manual review"),
+            Some("multiple fixed-output hash mismatches in one command need manual review"),
         );
         return None;
     }

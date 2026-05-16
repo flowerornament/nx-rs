@@ -15,7 +15,7 @@ use crate::output::printer::Printer;
 
 use crate::infra::timing::TimingCommand;
 
-use super::rebuild::{FixedOutputHashRepairMode, cmd_rebuild_with_command_result};
+use super::rebuild::cmd_rebuild_with_command_result;
 
 // ─── upgrade ─────────────────────────────────────────────────────────────────
 
@@ -54,12 +54,8 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
             ..RebuildArgs::default()
         };
         let system_ctx = ctx.system_context();
-        let rebuild_result = cmd_rebuild_with_command_result(
-            &rebuild,
-            &system_ctx,
-            TimingCommand::Upgrade,
-            FixedOutputHashRepairMode::Auto,
-        );
+        let rebuild_result =
+            cmd_rebuild_with_command_result(&rebuild, &system_ctx, TimingCommand::Upgrade);
         if rebuild_result.code != 0 {
             return 1;
         }

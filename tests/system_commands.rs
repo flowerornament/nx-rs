@@ -52,6 +52,7 @@ const UPDATE_BASE_ARGS: &[&str] = &["update"];
 const TEST_BASE_ARGS: &[&str] = &["test"];
 const LINT_BASE_ARGS: &[&str] = &["lint"];
 const REBUILD_PASSTHROUGH_ARGS: &[&str] = &["rebuild", "--", "--show-trace", "foo"];
+const REBUILD_HASH_REPAIR_ARGS: &[&str] = &["rebuild", "--", "--show-trace"];
 const REBUILD_BASE_ARGS: &[&str] = &["rebuild"];
 const REBUILD_CHECK_ONLY_ARGS: &[&str] = &["rebuild", "--preflight"];
 const UNDO_BASE_ARGS: &[&str] = &["undo"];
@@ -151,6 +152,50 @@ const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
         "darwin-rebuild",
         EXPECTED_CWD_REPO_ROOT,
         &["switch", "--flake", REPO_ROOT_TOKEN, "--show-trace", "foo"],
+    ),
+];
+
+const REBUILD_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
+    ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            DARWIN_REBUILD_CMD,
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--show-trace",
+        ],
+    ),
+    ExpectedCall::new(
+        "darwin-rebuild",
+        EXPECTED_CWD_REPO_ROOT,
+        &["switch", "--flake", REPO_ROOT_TOKEN, "--show-trace"],
+    ),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, &["ls-files", "--", "*.nix"]),
+    ExpectedCall::new(
+        "git",
+        EXPECTED_CWD_REPO_ROOT,
+        &["status", "--porcelain=v1", "--", "home/agent-sync.nix"],
+    ),
+    ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            DARWIN_REBUILD_CMD,
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--show-trace",
+        ],
+    ),
+    ExpectedCall::new(
+        "darwin-rebuild",
+        EXPECTED_CWD_REPO_ROOT,
+        &["switch", "--flake", REPO_ROOT_TOKEN, "--show-trace"],
     ),
 ];
 
@@ -451,6 +496,77 @@ fn system_command_flows() -> Result<(), Box<dyn Error>> {
     for case in COMMAND_CASES {
         run_command_case(&nx_bin, &repo_base, case)?;
     }
+
+    Ok(())
+}
+
+#[test]
+fn rebuild_hash_mismatch_repairs_and_retries() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+
+    let repo_root = TempDir::new()?;
+    copy_tree(&repo_base, repo_root.path())?;
+    ensure_test_layout(repo_root.path())?;
+    fs::write(
+        repo_root.path().join("home/agent-sync.nix"),
+        "# nx: agent sync\n{ ... }:\n{\n  npmDepsHash = \"sha256-old\";\n}\n",
+    )?;
+
+    let stub_dir = repo_root.path().join(STUB_DIR_NAME);
+    fs::create_dir_all(&stub_dir)?;
+    install_stubs(&stub_dir)?;
+
+    let log_path = repo_root.path().join(LOG_FILE_NAME);
+    let home_dir = TempDir::new()?;
+    let mut command = Command::new(nx_bin);
+    command
+        .args(["--plain", "--minimal"])
+        .args(REBUILD_HASH_REPAIR_ARGS)
+        .current_dir(repo_root.path())
+        .env("NX_REPO_ROOT", repo_root.path())
+        .env("HOME", home_dir.path())
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .env("NX_SYSTEM_IT_LOG", &log_path)
+        .env("NX_SYSTEM_IT_MODE", "upgrade_hash_repair")
+        .env(
+            "NX_SYSTEM_IT_DARWIN_REBUILD",
+            stub_dir.join("darwin-rebuild"),
+        )
+        .env("PATH", prepend_path(&stub_dir));
+
+    let output = run_command_with_optional_stdin(&mut command, None)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code().unwrap_or(-1),
+        0,
+        "unexpected exit code\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains(
+            "Auto-updated home/agent-sync.nix:4: hash sha256-old -> sha256-new (FOD content drift); retrying"
+        ),
+        "stdout missing repair message\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("System rebuilt"),
+        "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let invocations = read_invocations(&log_path)?;
+    assert_invocations(
+        "rebuild_hash_mismatch_repairs_and_retries",
+        repo_root.path(),
+        &invocations,
+        REBUILD_HASH_REPAIR_CALLS,
+    );
+
+    let repaired = fs::read_to_string(repo_root.path().join("home/agent-sync.nix"))?;
+    assert!(repaired.contains("npmDepsHash = \"sha256-new\";"));
 
     Ok(())
 }

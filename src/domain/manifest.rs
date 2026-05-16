@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 
 pub const DEFAULT_DARWIN_REBUILD_COMMAND: &str =
     "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild";
+const LEGACY_DARWIN_REBUILD_COMMAND: &str = "/run/current-system/sw/bin/darwin-rebuild";
 
 // --- Types
 
@@ -268,6 +269,7 @@ fn parse_platform(table: &toml_edit::Table) -> Result<PlatformConfig> {
             PlatformKind::Custom => "echo",
         })
         .to_string();
+    let rebuild_command = canonical_rebuild_command(kind, rebuild_command);
 
     let sudo = table
         .get("sudo")
@@ -292,6 +294,14 @@ fn parse_platform(table: &toml_edit::Table) -> Result<PlatformConfig> {
         flake_root,
         split_rebuild,
     })
+}
+
+fn canonical_rebuild_command(kind: PlatformKind, command: String) -> String {
+    if kind == PlatformKind::Darwin && command == LEGACY_DARWIN_REBUILD_COMMAND {
+        DEFAULT_DARWIN_REBUILD_COMMAND.to_string()
+    } else {
+        command
+    }
 }
 
 fn parse_slot(table: &toml_edit::Table) -> Result<Slot> {
@@ -529,6 +539,34 @@ mod tests {
         assert_eq!(
             loaded.overlays.get("neovim").map(String::as_str),
             Some("neovim-nightly-overlay")
+        );
+    }
+
+    #[test]
+    fn load_canonicalizes_legacy_darwin_rebuild_command() {
+        let tmp = TempDir::new().unwrap();
+        let nx_dir = tmp.path().join(".nx");
+        fs::create_dir_all(&nx_dir).unwrap();
+        fs::write(
+            nx_dir.join("manifest.toml"),
+            r#"
+schema_version = 1
+
+[platform]
+kind = "darwin"
+rebuild_command = "/run/current-system/sw/bin/darwin-rebuild"
+sudo = true
+flake_root = "."
+split_rebuild = true
+"#,
+        )
+        .unwrap();
+
+        let loaded = Manifest::load(tmp.path()).unwrap().unwrap();
+
+        assert_eq!(
+            loaded.platform.rebuild_command,
+            DEFAULT_DARWIN_REBUILD_COMMAND
         );
     }
 

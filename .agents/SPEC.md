@@ -490,6 +490,7 @@ Experimental split Darwin rebuild:
 - Otherwise runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
 - If direct split activation would require an interactive sudo prompt but the legacy `sudo darwin-rebuild` path is available non-interactively, falls back to legacy `darwin-rebuild` to preserve passwordless sudoers setups.
 - In interactive terminals, activation output inherits stdio and is bounded by unindented separator lines so child tools preserve native color/progress behavior. Non-interactive runs and `--timing` continue to use captured output.
+- If rebuild fails with a Nix fixed-output hash mismatch, parse the `specified` and `got` hashes. If exactly one tracked `.nix` file contains the exact specified hash string and that file has no pre-existing staged or unstaged changes, update that occurrence to the got hash and retry rebuild. Disable automatic repair when `NX_NO_AUTO_HASH_FIX=1` (also accepting `true`, `yes`, or `on`). Stop automatic repairs after three fixed-output hash mismatches in one command and require manual review.
 - Retries a bounded number of times after clearing Nix git/tarball/fetcher caches when flake check or rebuild output reports lazy source object lookup failures.
 - Retries after file descriptor exhaustion by clearing tarball/fetcher caches; root cache cleanup must be non-interactive.
 
@@ -528,7 +529,7 @@ High-level phases:
   - If exactly one tracked `.nix` file contains the exact specified hash string and that file has no pre-existing staged or unstaged changes, update that occurrence to the got hash and retry rebuild.
   - Print the repaired file, line number, old hash, and new hash when automatic repair runs.
   - Disable automatic repair when `NX_NO_AUTO_HASH_FIX=1` (also accepting `true`, `yes`, or `on`).
-  - Stop automatic repairs after three fixed-output hash mismatches in one upgrade and require manual review.
+  - Stop automatic repairs after three fixed-output hash mismatches in one command and require manual review.
   - If the hash cannot be repaired safely, print the specified/got hashes and the matching file hints before failing.
 4. Commit `flake.lock` and any auto-repaired hash files unless `--skip-commit` (and if flake changes or repairs exist)
 

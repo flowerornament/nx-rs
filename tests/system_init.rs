@@ -155,6 +155,42 @@ fn init_refresh_is_idempotent() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn init_refresh_migrates_legacy_darwin_rebuild_command() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+
+    let tmp = TempDir::new()?;
+    copy_tree(&repo_base, tmp.path())?;
+    let home_dir = TempDir::new()?;
+
+    let out1 = run_nx(&nx_bin, tmp.path(), home_dir.path(), &["init"]);
+    assert_eq!(out1.status.code().unwrap_or(-1), 0, "first init failed");
+
+    let manifest_path = tmp.path().join(".nx/manifest.toml");
+    let old_manifest = fs::read_to_string(&manifest_path)?.replace(
+        "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild",
+        "/run/current-system/sw/bin/darwin-rebuild",
+    );
+    fs::write(&manifest_path, old_manifest)?;
+
+    let out2 = run_nx(&nx_bin, tmp.path(), home_dir.path(), &["init", "--refresh"]);
+    let stdout2 = String::from_utf8_lossy(&out2.stdout);
+    let stderr2 = String::from_utf8_lossy(&out2.stderr);
+    assert_eq!(
+        out2.status.code().unwrap_or(-1),
+        0,
+        "refresh failed\nstdout:\n{stdout2}\nstderr:\n{stderr2}"
+    );
+
+    let refreshed = fs::read_to_string(&manifest_path)?;
+    assert!(refreshed.contains("/nix/var/nix/profiles/system/sw/bin/darwin-rebuild"));
+    assert!(!refreshed.contains("/run/current-system/sw/bin/darwin-rebuild"));
+
+    Ok(())
+}
+
+#[test]
 fn list_parity_with_manifest() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");

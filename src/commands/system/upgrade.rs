@@ -9,7 +9,7 @@ use crate::domain::upgrade::{
 use crate::infra::ai_engine::DEFAULT_CODEX_MODEL;
 use crate::infra::shell::{
     first_nonempty_output, run_captured_command, run_captured_command_with_env,
-    run_indented_command, run_indented_command_collecting_with_env,
+    run_indented_command, run_stdout_collecting_tee_stderr_with_env, terminal_stdio_available,
 };
 use crate::output::printer::Printer;
 
@@ -800,16 +800,15 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext, nix_env: &NixCommandE
             ctx.printer.action("Retrying flake update");
         }
 
-        let (program, cmd_args) = build_nix_command(&base_args, raise_nofile);
+        let nix_args = nix_update_output_args(&base_args, args.flow.verbose);
+        let (program, cmd_args) = build_nix_command(&nix_args, raise_nofile);
         let arg_refs: Vec<&str> = cmd_args.iter().map(String::as_str).collect();
-        let (code, output) = match nix_env.with_command_env(|env| {
-            run_indented_command_collecting_with_env(
+        let output = match nix_env.with_command_env(|env| {
+            run_stdout_collecting_tee_stderr_with_env(
                 &program,
                 &arg_refs,
                 Some(&ctx.repo_root),
                 env,
-                &ctx.printer,
-                "  ",
             )
         }) {
             Ok(result) => result,
@@ -818,17 +817,19 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext, nix_env: &NixCommandE
                 return false;
             }
         };
+        let combined_output = combined_command_output(&output);
 
-        if code == 0 {
+        if output.code == 0 {
             return true;
         }
 
         if attempt >= 2 {
+            print_command_failure_detail(&output);
             return false;
         }
 
         // FD exhaustion: clear tarball pack cache, bump limit, retry
-        if is_fd_exhaustion(&output) {
+        if is_fd_exhaustion(&combined_output) {
             ctx.printer
                 .warn("Nix hit file descriptor limits, clearing cache and retrying");
             clear_user_tarball_pack_cache();
@@ -838,7 +839,7 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext, nix_env: &NixCommandE
         }
 
         // Source-cache corruption: clear user source caches and retry once.
-        if !retried_cache_corruption && is_cache_corruption(&output) {
+        if !retried_cache_corruption && is_cache_corruption(&combined_output) {
             retried_cache_corruption = true;
             clear_user_source_caches();
             ctx.printer
@@ -846,10 +847,40 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext, nix_env: &NixCommandE
             continue;
         }
 
+        print_command_failure_detail(&output);
         return false;
     }
 
     false
+}
+
+fn nix_update_output_args(base_args: &[String], verbose: bool) -> Vec<String> {
+    let mut args = Vec::with_capacity(base_args.len() + 2);
+    if terminal_stdio_available() {
+        args.push("--log-format".to_string());
+        args.push(if verbose { "bar-with-logs" } else { "bar" }.to_string());
+    }
+    args.extend(base_args.iter().cloned());
+    args
+}
+
+fn combined_command_output(output: &crate::infra::shell::CapturedCommand) -> String {
+    match (
+        output.stdout.trim().is_empty(),
+        output.stderr.trim().is_empty(),
+    ) {
+        (true, true) => String::new(),
+        (false, true) => output.stdout.clone(),
+        (true, false) => output.stderr.clone(),
+        (false, false) => format!("{}\n{}", output.stdout, output.stderr),
+    }
+}
+
+fn print_command_failure_detail(output: &crate::infra::shell::CapturedCommand) {
+    let detail = first_nonempty_output(output);
+    if !detail.is_empty() {
+        Printer::detail(detail);
+    }
 }
 
 fn realize_changed_flake_sources(

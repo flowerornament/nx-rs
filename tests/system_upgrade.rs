@@ -574,6 +574,13 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &UpgradeCase) -> Result<(), B
             stderr
         );
     }
+    assert!(
+        !stdout.contains("stub nix flake command ok"),
+        "case {}: successful nix flake update output should stay quiet by default\nstdout:\n{}\nstderr:\n{}",
+        case.id,
+        stdout,
+        stderr
+    );
 
     assert_repo_state(case, &before, &after, &stdout, &stderr);
     assert_home_state(case, home_dir.path(), &stdout, &stderr);

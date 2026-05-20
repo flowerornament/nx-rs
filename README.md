@@ -1,21 +1,60 @@
 # nx-rs
 
-`nx-rs` provides `nx`, a CLI for managing Nix configuration repositories and host maintenance tasks.
+`nx-rs` builds `nx`: a Rust CLI for operating a personal Nix configuration
+repository.
 
-## About
+## What Is `nx`?
 
-`nx` is a workflow-oriented tool for maintaining a Nix config repo from the command line.
-It helps you find package definitions, inspect what is installed, make deterministic
-manifest edits for package add/remove flows, and manage host-level Nix generations.
+`nx` sits between raw `nix`, `darwin-rebuild`, Homebrew, and the layout of a
+managed config repo. It knows where packages, services, secrets, Homebrew
+manifests, and host settings live, then wraps common maintenance workflows in
+commands that are easier to run and safer to repeat.
 
-The tool is intended for repositories that manage system and home configuration in Nix,
-and it uses `NX_REPO_ROOT` as an override when you want to target a repo other than the
-current `flake.nix` tree.
+Use it when your machine is managed as code and you want one CLI for daily
+operations:
 
-Host maintenance commands under `nx generations` are intentionally host-scoped and do not
-require a repository root.
+- inspect what your Nix repo declares and where each package lives
+- add or remove packages with deterministic edits across nixpkgs, Homebrew,
+  casks, MAS apps, and service manifests
+- run repo preflight checks and rebuild the host configuration
+- upgrade flake inputs, Homebrew packages, and the system in one flow
+- recover from known Nix failure modes, such as lazy source cache misses and
+  safe fixed-output hash drift
+- inspect rebuild timings, prune old generations, and clean local development
+  caches
+
+`nx` is not a replacement for Nix. It is a repo-aware command layer for people
+who already keep their system and home configuration in a flake-backed Nix
+repository.
+
+## Repository Model
+
+Most commands operate on a managed repo. `nx` finds that repo by walking up from
+the current directory until it sees `flake.nix`; set `NX_REPO_ROOT` only when you
+want to target a different repo.
+
+Run `nx init` once to scan the repo and write `.nx/manifest.toml`. The manifest
+records the files and routes that `nx` should use for package lists, services,
+Homebrew manifests, and rebuild behavior. `nx init --refresh` re-scans after you
+move files around.
+
+Host maintenance commands under `nx generations` and `nx clean-caches` are
+intentionally host-scoped and can run from any directory.
 
 ## Usage
+
+### First Commands
+
+After installing `nx`, start with:
+
+```bash
+nx doctor          # check repo discovery, manifest health, tools, and cache state
+nx init           # create .nx/manifest.toml for the current config repo
+nx status         # summarize declared packages by source
+nx where ripgrep  # jump to the file that declares a package
+nx rebuild        # run preflight checks and switch the system
+nx upgrade        # update inputs/Homebrew, rebuild, and commit changes
+```
 
 ### Install
 

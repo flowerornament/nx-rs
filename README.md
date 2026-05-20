@@ -1,42 +1,39 @@
 # nx-rs
 
-`nx-rs` builds `nx`: a Rust CLI for operating a personal Nix configuration
-repository.
+`nx-rs` builds `nx`, a Rust CLI for working with a personal Nix configuration
+repo.
 
 ## What Is `nx`?
 
-`nx` sits between raw `nix`, `darwin-rebuild`, Homebrew, and the layout of a
-managed config repo. It knows where packages, services, secrets, Homebrew
-manifests, and host settings live, then wraps common maintenance workflows in
-commands that are easier to run and safer to repeat.
+`nx` sits between raw `nix`, `darwin-rebuild`, Homebrew, and your config repo.
+It knows where packages, services, secrets, Homebrew manifests, and host
+settings live, then turns common maintenance workflows into short, repeatable
+commands.
 
-Use it when your machine is managed as code and you want one CLI for daily
-operations:
+Use it when your machine is managed as code and you want one CLI for daily work:
 
 - inspect what your Nix repo declares and where each package lives
-- add or remove packages with deterministic edits across nixpkgs, Homebrew,
-  casks, MAS apps, and service manifests
+- add or remove packages across nixpkgs, Homebrew, casks, MAS apps, and service
+  manifests
 - run repo preflight checks and rebuild the host configuration
 - upgrade flake inputs, Homebrew packages, and the system in one flow
-- recover from known Nix failure modes, such as lazy source cache misses and
-  safe fixed-output hash drift
+- recover from common Nix failures, such as lazy source cache misses and
+  fixed-output hash drift
 - inspect rebuild timings, prune old generations, and clean local development
   caches
 
-`nx` is not a replacement for Nix. It is a repo-aware command layer for people
-who already keep their system and home configuration in a flake-backed Nix
-repository.
+`nx` does not replace Nix. It is a repo-aware command layer for people who
+already keep their system and home configuration in a flake-backed Nix repo.
 
 ## Repository Model
 
-Most commands operate on a managed repo. `nx` finds that repo by walking up from
-the current directory until it sees `flake.nix`; set `NX_REPO_ROOT` only when you
+Most commands operate on a managed repo. `nx` finds it by walking up from the
+current directory until it sees `flake.nix`. Set `NX_REPO_ROOT` only when you
 want to target a different repo.
 
 Run `nx init` once to scan the repo and write `.nx/manifest.toml`. The manifest
-records the files and routes that `nx` should use for package lists, services,
-Homebrew manifests, and rebuild behavior. `nx init --refresh` re-scans after you
-move files around.
+records the files `nx` should use for package lists, services, Homebrew
+manifests, and rebuild behavior. Run `nx init --refresh` after moving files.
 
 Host maintenance commands under `nx generations` and `nx clean-caches` are
 intentionally host-scoped and can run from any directory.
@@ -48,7 +45,7 @@ intentionally host-scoped and can run from any directory.
 After installing `nx`, start with:
 
 ```bash
-nx doctor          # check repo discovery, manifest health, tools, and cache state
+nx doctor         # check repo discovery, manifest health, tools, and cache state
 nx init           # create .nx/manifest.toml for the current config repo
 nx status         # summarize declared packages by source
 nx where ripgrep  # jump to the file that declares a package
@@ -60,8 +57,8 @@ nx upgrade        # update inputs/Homebrew, rebuild, and commit changes
 
 #### Nix
 
-For a one-off install, use `nix run` or `nix profile install`.
-If you want persistent session defaults like `NX_REPO_ROOT`, prefer the Home Manager path below.
+For a one-off install, use `nix run` or `nix profile install`. If you want
+persistent session defaults like `NX_REPO_ROOT`, prefer the Home Manager module.
 
 Run without installing:
 
@@ -97,11 +94,9 @@ sudo /nix/var/nix/profiles/system/sw/bin/darwin-rebuild switch --flake .
 
 #### Nix + Home Manager
 
-This is the recommended install path for declarative Nix users.
-
-For a declarative user-level install, `nx-rs` now exports a Home Manager
-module. It installs `nx` into `home.packages` and can optionally export the
-same environment variables that drive `nx` at runtime.
+This is the recommended install path for declarative Nix users. The module
+installs `nx` into `home.packages` and can export the same environment variables
+that drive `nx` at runtime.
 
 Add the flake input:
 
@@ -142,8 +137,7 @@ Available module options:
 - `programs.nx.cleanCaches.skip`
 
 The module only manages binary installation and environment variables. Repo
-structure, manifests, and command behavior still live in the target Nix config
-repository itself.
+structure, manifests, and command behavior stay in the target Nix config repo.
 
 That boundary is intentional:
 
@@ -169,8 +163,9 @@ If you use `nx secret add`, you can wire `sops` declaratively too:
 
 ### Configure Repository Root
 
-`nx` auto-detects the managed repo by walking up from the current working directory until
-it finds `flake.nix`. Set `NX_REPO_ROOT` only when you want to override that detection:
+`nx` auto-detects the managed repo by walking up from the current directory
+until it finds `flake.nix`. Set `NX_REPO_ROOT` only when you want to override
+that detection:
 
 ```bash
 export NX_REPO_ROOT=/path/to/your/config-repo
@@ -192,25 +187,31 @@ Some flows can call local AI CLIs when helpful:
 
 Requirements:
 
-- `codex` and/or `claude` must be installed and available on `PATH` for the corresponding features.
-- Authentication and provider-specific environment variables are managed by those CLIs.
+- `codex` and/or `claude` must be installed and available on `PATH` for the
+  corresponding features.
+- Authentication and provider-specific environment variables are managed by
+  those CLIs.
 
 ### Environment Variables
 
-`nx` reads the following environment variables:
+`nx` reads these optional environment variables:
 
-| Variable | Required | Default | Purpose |
-|---|---|---|---|
-| `NX_REPO_ROOT` | No | auto-detect from `cwd` / `flake.nix` | Absolute/relative path override for the target Nix configuration repository. |
-| `NX_PROFILE_PATH` | No | `~/.local/state/nx/timings.jsonl` | Override where rebuild/upgrade timing records are written and read. |
-| `NX_RS_SOPS_BIN` | No | `sops` | Override the `sops` executable used by `nx secret add`. |
-| `NX_RS_AUTO_REFRESH` | No | enabled | Controls auto-refresh of a local cargo-installed `nx` binary before `rebuild`/`upgrade`. Set to `0`, `false`, or `no` to disable. |
-| `NX_NO_AUTO_HASH_FIX` | No | unset | Disable automatic fixed-output hash repair during `nx rebuild` and `nx upgrade` when set to `1`, `true`, `yes`, or `on`. |
-| `NX_CODE_ROOTS` | No | `~/code` | Colon-separated roots scanned by `nx clean-caches`; set to an empty string to disable code-root scans. |
-| `NX_CLEAN_SCAN_DEPTH` | No | `3` | Maximum directory depth for `nx clean-caches` code-root scans; values above `8` are clamped. |
-| `NX_CLEAN_SKIP` | No | unset | Comma-separated cache names for `nx clean-caches` to skip. |
-| `NO_COLOR` | No | unset | Disables colored output when set. |
-| `TERM` | No | shell/default | If set to `dumb`, color output is disabled. |
+- `NX_REPO_ROOT`: target repo override; defaults to walking up from `cwd` until
+  `flake.nix`.
+- `NX_PROFILE_PATH`: rebuild/upgrade timing file; defaults to
+  `~/.local/state/nx/timings.jsonl`.
+- `NX_RS_SOPS_BIN`: `sops` executable for `nx secret add`; defaults to `sops`.
+- `NX_RS_AUTO_REFRESH`: auto-refresh local cargo-installed `nx` binaries before
+  `rebuild` and `upgrade`; set to `0`, `false`, or `no` to disable.
+- `NX_NO_AUTO_HASH_FIX`: disable fixed-output hash repair during `nx rebuild`
+  and `nx upgrade`; set to `1`, `true`, `yes`, or `on`.
+- `NX_CODE_ROOTS`: colon-separated roots scanned by `nx clean-caches`; defaults
+  to `~/code`. Use an empty string to disable code-root scans.
+- `NX_CLEAN_SCAN_DEPTH`: maximum `nx clean-caches` code-root scan depth;
+  defaults to `3`; values above `8` are clamped.
+- `NX_CLEAN_SKIP`: comma-separated cache names for `nx clean-caches` to skip.
+- `NO_COLOR`: disable colored output when set.
+- `TERM`: if set to `dumb`, color output is disabled.
 
 ### Examples
 
@@ -304,7 +305,8 @@ Shows the current `nx` version.
 
 #### `help`
 
-Shows hierarchical help for commands and flags. Use `nx help install`, `nx help secret add`, or `nx help -- --dry-run` when you want the command tree rather than raw clap help.
+Shows hierarchical help for commands and flags. Use `nx help install`,
+`nx help secret add`, or `nx help -- --dry-run` when you want the command tree.
 
 ---
 
@@ -321,7 +323,8 @@ Generates shell completion scripts to stdout.
 
 Diagnoses repo and host prerequisites that affect normal `nx` usage.
 
-- Reports repo root resolution, manifest health, routing status, flake lock state, cache availability, and tool presence.
+- Reports repo root resolution, manifest health, routing status, flake lock
+  state, cache availability, and tool presence.
 - Supports `--verbose` for extra detail.
 - Supports `--json` for automation.
 
@@ -329,13 +332,16 @@ Diagnoses repo and host prerequisites that affect normal `nx` usage.
 
 #### `init`
 
-Scans the current repo and writes `.nx/manifest.toml`. Use `--refresh` to rescan and merge with an existing manifest.
+Scans the current repo and writes `.nx/manifest.toml`. Use `--refresh` to
+rescan and merge with an existing manifest.
 
 ---
 
 #### `install`
 
-Installs one or more packages into the managed repo. If you run `nx ripgrep`, `nx` treats the bare token as `nx install ripgrep`. Likely command typos such as `nx rebulid` are left as command errors so `nx` can suggest the intended command.
+Installs one or more packages into the managed repo. Bare tokens become package
+installs, so `nx ripgrep` means `nx install ripgrep`. Likely command typos such
+as `nx rebulid` stay command errors so `nx` can suggest the intended command.
 
 - Use `--dry-run` to preview edits without writing files.
 - Use `--yes` to skip interactive prompts and accept defaults.
@@ -354,7 +360,7 @@ Installs one or more packages into the managed repo. If you run `nx ripgrep`, `n
 Removes installed packages from the managed repo.
 
 - Supports `--dry-run` and `--yes`.
-- Supports `--model` for the AI fallback removal path.
+- Supports `--model` for AI-assisted fallback removal.
 - `rm` and `uninstall` are aliases of `remove`.
 
 ---
@@ -382,7 +388,8 @@ Searches package sources without editing the repo.
 
 #### `where`
 
-Shows where a package is declared in the managed repo. This is the fastest way to jump to the owning file before a manual edit or review.
+Shows where a package is declared in the managed repo. Use it to jump to the
+owning file before a manual edit or review.
 
 ---
 
@@ -399,15 +406,17 @@ Lists installed packages by source bucket.
 
 Shows package metadata plus candidate source information.
 
-- Useful when deciding between nixpkgs, NUR, flake input, Homebrew, or MAS routes.
+- Useful when deciding between nixpkgs, NUR, flake input, Homebrew, or MAS
+  routes.
 - Supports `--json`, `--bleeding-edge`, `--nur`, `--source`, and `--verbose`.
-- Shows live loading feedback while package metadata and source candidates are collected.
+- Shows live loading feedback while package metadata and source candidates are
+  collected.
 
 ---
 
 #### `status`
 
-Shows a package distribution summary for the managed repo. This is a read-only overview of how packages are split across supported source families.
+Shows a read-only package distribution summary for the managed repo.
 
 - Supports `--json`.
 
@@ -425,7 +434,8 @@ Checks whether one or more packages are currently installed.
 
 #### `lint`
 
-Checks `# nx:` routing annotations and keyword overlap across routable `.nix` files. Use this before reorganizing manifests or adding new routable files.
+Checks `# nx:` routing annotations and keyword overlap across routable `.nix`
+files. Use this before reorganizing manifests or adding new routable files.
 
 - Supports `--json`.
 
@@ -433,19 +443,21 @@ Checks `# nx:` routing annotations and keyword overlap across routable `.nix` fi
 
 #### `undo`
 
-Reverts modified tracked files via git checkout. Use `--yes` to skip the confirmation prompt.
+Reverts modified tracked files via git checkout. Use `--yes` to skip the
+confirmation prompt.
 
 ---
 
 #### `update`
 
-Runs `nix flake update`. Additional args after `--` are passed through to the underlying flake update invocation.
+Runs `nix flake update`. Additional args after `--` pass through to the
+underlying flake update invocation.
 
 ---
 
 #### `test`
 
-Runs repo quality checks. This is the CLI entry point for validating the managed Nix config repository itself.
+Runs repo quality checks. This validates the managed Nix config repo itself.
 
 ---
 
@@ -456,12 +468,23 @@ Runs `darwin-rebuild switch` for the managed repo.
 - Use `--preflight` to stop after lint, git, and flake checks without switching.
 - Use `--timing` to print phase timings after recording them locally.
 - Use `--verbose` to stream full split-build logs in interactive terminals.
-- Darwin split rebuilds raise Nix's file descriptor limit and retry bounded source-cache failures before surfacing an error.
-- Interactive split builds keep stdout captured for JSON parsing but tee Nix stderr raw with `bar`, so fetch/build progress behaves like terminal output without streaming every successful builder log line. `--verbose` switches to `bar-with-logs`.
-- If a changed split rebuild would need an interactive sudo prompt but your machine allows passwordless `sudo darwin-rebuild`, `nx` falls back to that legacy path instead of prompting.
-- In an interactive terminal, rebuild activation output is handed through natively between separator lines so Nix, Homebrew, and Home Manager can keep their own colors and progress UI. Non-interactive runs and `--timing` keep captured output for parsing and timing detail.
-- If rebuild reports a Nix fixed-output hash mismatch, `nx rebuild` updates the unique clean matching hash in a tracked `.nix` file and retries. It prints the file, line, old hash, and new hash when it does this. Set `NX_NO_AUTO_HASH_FIX=1` to require a manual edit.
-- Additional args after `--` pass through to the underlying `darwin-rebuild` command.
+- Darwin split rebuilds raise Nix's file descriptor limit and retry bounded
+  source-cache failures before surfacing an error.
+- Interactive split builds capture stdout for JSON parsing and tee Nix stderr
+  with `bar`, preserving fetch/build progress without streaming every
+  successful builder log. `--verbose` switches to `bar-with-logs`.
+- If split activation would need an interactive sudo prompt and passwordless
+  `sudo darwin-rebuild` is available, `nx` falls back to that path.
+- Interactive activation output passes through between separator lines so Nix,
+  Homebrew, and Home Manager keep their own colors and progress UI.
+  Non-interactive runs and `--timing` keep captured output for parsing and
+  timing detail.
+- If rebuild reports a fixed-output hash mismatch, `nx rebuild` updates the
+  unique clean matching hash in a tracked `.nix` file and retries. It prints the
+  file, line, old hash, and new hash. Set `NX_NO_AUTO_HASH_FIX=1` to require a
+  manual edit.
+- Additional args after `--` pass through to the underlying `darwin-rebuild`
+  command.
 
 ---
 
@@ -480,15 +503,24 @@ Shows recent local rebuild and upgrade timing records.
 Runs the upgrade flow for either the whole repo or named flake inputs.
 
 - Use `--dry-run` to preview without mutating files.
-- `nx upgrade` with no positional inputs runs the full repo-wide flow: flake update, Homebrew update/upgrade, rebuild, and git commit.
-- `nx upgrade <input...>` updates only the named flake inputs via `nix flake update <input...>`.
-- After changed GitHub-backed inputs are written to `flake.lock`, `nx upgrade` prefetches those exact revisions so Nix lazy source caches are warm before flake check and rebuild.
-- If rebuild reports a Nix fixed-output hash mismatch, `nx` updates the unique clean matching hash in a tracked `.nix` file, retries, and `nx upgrade` includes that file in the upgrade commit. It prints the file, line, old hash, and new hash when it does this. If it cannot do that safely, it prints the exact next action.
-- Homebrew update checks show live loading feedback before upgrade details are rendered.
+- `nx upgrade` with no positional inputs runs the full repo-wide flow: flake
+  update, Homebrew update/upgrade, rebuild, and git commit.
+- `nx upgrade <input...>` updates only the named flake inputs via
+  `nix flake update <input...>`.
+- After changed GitHub-backed inputs are written to `flake.lock`, `nx upgrade`
+  prefetches those exact revisions so lazy source caches are warm before flake
+  check and rebuild.
+- If rebuild reports a fixed-output hash mismatch, `nx` updates the unique clean
+  matching hash in a tracked `.nix` file, retries, and includes that file in the
+  upgrade commit. It prints the file, line, old hash, and new hash. If repair is
+  unsafe, it prints the exact next action.
+- Homebrew update checks show live loading feedback before upgrade details are
+  rendered.
 - Targeted input upgrades skip the Homebrew phase by default.
-- Use `--skip-brew`, `--skip-rebuild`, or `--skip-commit` to trim the flow further.
+- Use `--skip-brew`, `--skip-rebuild`, or `--skip-commit` to trim the flow.
 - Use `--no-ai` to disable AI-generated summaries and recovery prompts.
-- Additional args after `--` pass through to the underlying `nix flake update` command.
+- Additional args after `--` pass through to the underlying `nix flake update`
+  command.
 
 Examples:
 
@@ -503,40 +535,57 @@ nx upgrade nx-rs anneal -- --show-trace
 
 #### `generations`
 
-Host-scoped retention and garbage-collection commands. These work from any directory and do not require a managed repo.
+Host-scoped retention and garbage-collection commands. They work from any
+directory and do not require a managed repo.
 
-- `nx generations status` shows discovered nix-darwin and Home Manager generations plus the active retention policy.
-- `nx generations plan` renders the exact prune and garbage-collection plan without mutating the host.
+- `nx generations status` shows discovered nix-darwin and Home Manager
+  generations plus the active retention policy.
+- `nx generations plan` renders the exact prune and garbage-collection plan
+  without mutating the host.
 - `nx generations prune` executes that plan, prompting by default.
 - Important flags: `--keep`, `--kind`, `--no-gc`, `--yes`, `--dry-run`.
-- `nx generations prune --dry-run` renders the same plan as `nx generations plan`.
+- `nx generations prune --dry-run` renders the same plan as
+  `nx generations plan`.
 
 ---
 
 #### `clean-caches`
 
-Scans host cache directories and common build artifacts, reports sizes, and cleans them after confirmation.
+Scans host cache directories and common build artifacts, reports sizes, and
+cleans them after confirmation.
 
 - Supports `--dry-run` and `--yes`.
 - Code-root scans default to `~/code` and depth `3`; scan depth is capped at `8`.
-- Nix store GC is excluded by default because it can force future downloads or local source builds; select `nix-gc` explicitly when that is intended.
-- Large code-root scans show live per-bucket loading feedback while sizes are computed.
-- If selected, Nix GC sizing runs last because dead-store estimation can be slower than normal cache directory sizing.
-- Confirmed cleaning shows live per-cache loading feedback before final success or warning lines are printed.
-- Positional cache names or `--only` limit the scan and clean plan to selected caches.
+- Nix store GC is excluded by default because it can force future downloads or
+  local source builds; select `nix-gc` explicitly when that is intended.
+- Large code-root scans show live per-bucket loading feedback while sizes are
+  computed.
+- If selected, Nix GC sizing runs last because dead-store estimation can be
+  slower than normal cache directory sizing.
+- Confirmed cleaning shows live per-cache loading feedback before final success
+  or warning lines are printed.
+- Positional cache names or `--only` limit the scan and clean plan to selected
+  caches.
 - Code-root build artifacts report how many directories were discovered.
-- Set `NX_CODE_ROOTS`, `NX_CLEAN_SCAN_DEPTH`, and `NX_CLEAN_SKIP` directly, or configure them declaratively with `programs.nx.cleanCaches`.
-- Valid skip names: `cargo-registry`, `uv`, `npm`, `homebrew`, `huggingface`, `puppeteer`, `playwright`, `xcode-derived`, `core-simulator`, `codex-sessions`, `codex-logs`, `claude-telemetry`, `claude-file-history`, `nix-gc`, `rust-targets`, `elixir-builds`, `node-modules`.
+- Set `NX_CODE_ROOTS`, `NX_CLEAN_SCAN_DEPTH`, and `NX_CLEAN_SKIP` directly, or
+  configure them declaratively with `programs.nx.cleanCaches`.
+- Valid skip names: `cargo-registry`, `uv`, `npm`, `homebrew`, `huggingface`,
+  `puppeteer`, `playwright`, `xcode-derived`, `core-simulator`,
+  `codex-sessions`, `codex-logs`, `claude-telemetry`, `claude-file-history`,
+  `nix-gc`, `rust-targets`, `elixir-builds`, `node-modules`.
 
 ---
 
 ### Behavior Notes
 
-- `help`, `where`, `list`, `info`, `status`, `installed`, `search`, `generations status`, and `generations plan` are read-only.
+- `help`, `where`, `list`, `info`, `status`, `installed`, `search`,
+  `generations status`, and `generations plan` are read-only.
 - `version`, `completion`, and `doctor` are also read-only.
-- `install` and `remove` support `--dry-run` to preview changes before writing files.
+- `install` and `remove` support `--dry-run` to preview changes before writing
+  files.
 - `generations` commands are host-scoped and work from any directory.
-- Most commands operate on the current repo root; set `NX_REPO_ROOT` only when you want to override auto-discovery.
+- Most commands operate on the current repo root; set `NX_REPO_ROOT` only when
+  you want to override auto-discovery.
 
 ## Development
 

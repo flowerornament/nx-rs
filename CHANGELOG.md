@@ -2,8 +2,13 @@
 
 ## Unreleased
 
-- changed interactive split Darwin builds to use Nix's quieter `bar` log format by default, while `nx rebuild --verbose` and `nx upgrade --verbose` still stream full `bar-with-logs` builder output
+## v1.5.21 - 2026-05-20
+
+- made interactive split Darwin builds and `nx upgrade` quieter by default while preserving Nix's native `bar` progress UI; `--verbose` still uses `bar-with-logs`
+- made `nx rebuild` repair safe fixed-output hash drift automatically with the same clean-file guardrails used by `nx upgrade`
+- fixed Darwin rebuild command discovery by using the system profile path and canonicalizing legacy manifests that still point at `/run/current-system/sw/bin/darwin-rebuild`
 - preserved passwordless Darwin rebuild setups by falling back to the existing `sudo darwin-rebuild` path when split activation would require an interactive sudo prompt
+- refreshed the README introduction and style so new readers can understand what `nx` does before reading the command reference
 
 ## v1.5.20 - 2026-04-29
 

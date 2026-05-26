@@ -79,10 +79,10 @@ const CACHE_CANDIDATES: &[CacheCandidate] = &[
     cache_dir("playwright", "Library/Caches/ms-playwright"),
     cache_dir("xcode-derived", "Library/Developer/Xcode/DerivedData"),
     cache_dir("core-simulator", "Library/Developer/CoreSimulator"),
-    cache_dir("codex-sessions", ".codex/sessions"),
-    cache_dir("codex-logs", ".codex/log"),
+    explicit_cache_dir("codex-sessions", ".codex/sessions"),
+    explicit_cache_dir("codex-logs", ".codex/log"),
     cache_dir("claude-telemetry", ".claude/telemetry"),
-    cache_dir("claude-file-history", ".claude/file-history"),
+    explicit_cache_dir("claude-file-history", ".claude/file-history"),
     CacheCandidate {
         name: "nix-gc",
         location: CacheLocation::NixStoreGc,
@@ -112,6 +112,15 @@ const fn cache_dir(name: &'static str, rel_path: &'static str) -> CacheCandidate
         location: CacheLocation::HomeRelative(rel_path),
         clean: CleanMethod::RemoveContents,
         default_selected: true,
+    }
+}
+
+const fn explicit_cache_dir(name: &'static str, rel_path: &'static str) -> CacheCandidate {
+    CacheCandidate {
+        name,
+        location: CacheLocation::HomeRelative(rel_path),
+        clean: CleanMethod::RemoveContents,
+        default_selected: false,
     }
 }
 
@@ -160,6 +169,13 @@ impl CleanCachesConfig {
         !self.has_explicit_selection() && !self.skips("nix-gc")
     }
 
+    fn omits_agent_history_by_default(&self) -> bool {
+        !self.has_explicit_selection()
+            && ["codex-sessions", "codex-logs", "claude-file-history"]
+                .iter()
+                .any(|name| !self.skips(name))
+    }
+
     fn unknown_skip_names(&self) -> Vec<&str> {
         unknown_cache_names(&self.skip)
     }
@@ -197,6 +213,11 @@ pub fn cmd_clean_caches(args: &CleanCachesArgs, ctx: &HostContext<'_>) -> i32 {
     if config.omits_nix_gc_by_default() {
         Printer::detail(
             "nix-gc is excluded by default; run `nx clean-caches nix-gc` only when you intentionally want Nix store GC.",
+        );
+    }
+    if config.omits_agent_history_by_default() {
+        Printer::detail(
+            "agent session history is excluded by default; select codex-sessions, codex-logs, or claude-file-history explicitly to clean it.",
         );
     }
     let scan_message = if config.selected("nix-gc") {
@@ -831,6 +852,33 @@ mod tests {
         assert!(default_config.omits_nix_gc_by_default());
         assert!(explicit_config.selected("nix-gc"));
         assert!(!explicit_config.omits_nix_gc_by_default());
+    }
+
+    #[test]
+    fn agent_history_is_default_excluded_but_explicitly_selectable() {
+        let default_config = CleanCachesConfig {
+            code_roots: Vec::new(),
+            scan_depth: DEFAULT_SCAN_DEPTH,
+            skip: Vec::new(),
+            only: Vec::new(),
+        };
+        let explicit_config = CleanCachesConfig {
+            code_roots: Vec::new(),
+            scan_depth: DEFAULT_SCAN_DEPTH,
+            skip: Vec::new(),
+            only: vec![
+                "codex-sessions".to_string(),
+                "codex-logs".to_string(),
+                "claude-file-history".to_string(),
+            ],
+        };
+
+        for name in ["codex-sessions", "codex-logs", "claude-file-history"] {
+            assert!(!default_config.selected(name));
+            assert!(explicit_config.selected(name));
+        }
+        assert!(default_config.omits_agent_history_by_default());
+        assert!(!explicit_config.omits_agent_history_by_default());
     }
 
     #[test]

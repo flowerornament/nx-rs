@@ -546,6 +546,8 @@ Dry-run behavior:
 - Excludes `nix-gc` from default scans/cleans because Nix store garbage collection can force future downloads or local source builds.
 - Includes `nix-gc` only when selected explicitly by positional cache name or `--only`.
 - Warns before cleaning selected `nix-gc` entries.
+- Excludes agent session history from default scans/cleans so `codex-sessions`, `codex-logs`, and `claude-file-history` do not break resume/history workflows during routine cleanup.
+- Includes `codex-sessions`, `codex-logs`, and `claude-file-history` only when selected explicitly by positional cache name or `--only`.
 - Shows live per-bucket loading feedback during cache sizing; large code roots may take minutes.
 - Shows live per-cache loading feedback during confirmed cleaning before rendering permanent success or warning lines.
 - If selected, scans Nix GC last because dead-store estimation may be slower than normal cache directory sizing.

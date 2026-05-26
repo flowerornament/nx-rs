@@ -558,6 +558,9 @@ cleans them after confirmation.
 - Code-root scans default to `~/code` and depth `3`; scan depth is capped at `8`.
 - Nix store GC is excluded by default because it can force future downloads or
   local source builds; select `nix-gc` explicitly when that is intended.
+- Agent session history is excluded by default so routine cleanup does not
+  remove resume/history data. Select `codex-sessions`, `codex-logs`, or
+  `claude-file-history` explicitly when you want to clean those directories.
 - Large code-root scans show live per-bucket loading feedback while sizes are
   computed.
 - If selected, Nix GC sizing runs last because dead-store estimation can be

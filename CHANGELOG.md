@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- excluded Codex session/log directories and Claude file history from default `nx clean-caches` plans so routine cleanup preserves agent resume/history data unless those caches are selected explicitly
 - kept default split Darwin builds quiet by capturing Nix build stderr for diagnostics instead of teeing every `copying path` and `building` line; `--verbose` still streams full build logs
 
 ## v1.5.21 - 2026-05-20

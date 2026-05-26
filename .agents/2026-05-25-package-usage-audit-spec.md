@@ -1,7 +1,7 @@
 # Package Usage Audit Spec
 
 Status: Proposed
-Date: 2026-05-26
+Date: 2026-05-25
 Scope: Design for an advisory `nx` feature that helps identify declared packages with little local evidence of use.
 
 This is a proposal document. The implemented behavior contract remains

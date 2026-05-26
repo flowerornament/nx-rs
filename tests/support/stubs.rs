@@ -184,6 +184,8 @@ case "$program" in
         echo "not-json"
         exit 0
       fi
+      echo "copying path '/nix/store/split-example-one' from 'https://cache.nixos.org'..." >&2
+      echo "building '/nix/store/split-example.drv'..." >&2
       output="${NX_SYSTEM_IT_DARWIN_BUILD_OUTPUT:-/nix/store/new-system}"
       printf '[{"outputs":{"out":"%s"}}]\n' "$output"
       exit 0

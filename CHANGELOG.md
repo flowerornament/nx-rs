@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- kept default split Darwin builds quiet by capturing Nix build stderr for diagnostics instead of teeing every `copying path` and `building` line; `--verbose` still streams full build logs
+
 ## v1.5.21 - 2026-05-20
 
 - made interactive split Darwin builds and `nx upgrade` quieter by default while preserving Nix's native `bar` progress UI; `--verbose` still uses `bar-with-logs`

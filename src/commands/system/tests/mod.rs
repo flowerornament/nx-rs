@@ -12,8 +12,8 @@ use super::fixed_output_hash::{
     parse_fixed_output_hash_mismatch, path_is_clean,
 };
 use super::rebuild::{
-    build_rebuild_command, build_rebuild_command_with_manifest, has_nix_extension,
-    parse_system_config_path, should_use_split_darwin, split_nix_build_command,
+    SplitBuildOutputMode, build_rebuild_command, build_rebuild_command_with_manifest,
+    has_nix_extension, parse_system_config_path, should_use_split_darwin,
     split_nix_build_command_with_log_format, sudo_password_required,
 };
 use super::undo::{git_diff_stat, git_modified_files};

@@ -470,9 +470,9 @@ Runs `darwin-rebuild switch` for the managed repo.
 - Use `--verbose` to stream full split-build logs in interactive terminals.
 - Darwin split rebuilds raise Nix's file descriptor limit and retry bounded
   source-cache failures before surfacing an error.
-- Interactive split builds capture stdout for JSON parsing and tee Nix stderr
-  with `bar`, preserving fetch/build progress without streaming every
-  successful builder log. `--verbose` switches to `bar-with-logs`.
+- Interactive split builds capture Nix build stdout and stderr so successful
+  builder logs stay quiet while retry/error detection still works. `--verbose`
+  streams full build logs with `bar-with-logs`.
 - If split activation would need an interactive sudo prompt and passwordless
   `sudo darwin-rebuild` is available, `nx` falls back to that path.
 - Interactive activation output passes through between separator lines so Nix,

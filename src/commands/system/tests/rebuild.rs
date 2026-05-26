@@ -94,8 +94,10 @@ fn split_darwin_json_parser_rejects_missing_output() {
 
 #[test]
 fn split_nix_build_raises_file_descriptor_limit() {
-    let (program, args) =
-        split_nix_build_command("git+file:///repo#darwinConfigurations.host.system");
+    let (program, args) = split_nix_build_command_with_log_format(
+        "git+file:///repo#darwinConfigurations.host.system",
+        SplitBuildOutputMode::Quiet.log_format(),
+    );
 
     assert_eq!(
         (program, args),
@@ -125,6 +127,15 @@ fn split_nix_build_can_request_native_log_format() {
     assert!(
         args.windows(2)
             .any(|pair| pair[0] == "--log-format" && pair[1] == "bar")
+    );
+}
+
+#[test]
+fn split_build_log_format_is_verbose_only() {
+    assert_eq!(SplitBuildOutputMode::Quiet.log_format(), None);
+    assert_eq!(
+        SplitBuildOutputMode::Verbose.log_format(),
+        Some("bar-with-logs")
     );
 }
 

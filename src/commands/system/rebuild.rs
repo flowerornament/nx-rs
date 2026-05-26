@@ -7,10 +7,10 @@ use crate::commands::context::SystemContext;
 use crate::domain::manifest::{Manifest, PlatformKind};
 use crate::infra::activation_profile::ActivationPhaseProfiler;
 use crate::infra::shell::{
-    StreamName, first_nonempty_output, run_captured_command,
-    run_indented_command_collecting_stdout_with_observer, run_indented_command_collecting_with_env,
-    run_indented_command_collecting_with_observer, run_native_command_with_env,
-    run_stdout_collecting_tee_stderr_with_env, terminal_stdio_available,
+    StreamName, first_nonempty_output, run_captured_command, run_captured_command_with_env,
+    run_indented_command_collecting_with_env, run_indented_command_collecting_with_observer,
+    run_native_command_with_env, run_stdout_collecting_tee_stderr_with_env,
+    terminal_stdio_available,
 };
 use crate::infra::timing::{
     TimingCommand, TimingPhase, TimingRecord, TimingSession, append_timing, timing_detail_lines,
@@ -61,17 +61,60 @@ pub(super) struct RebuildCommandResult {
 
 #[derive(Debug, Clone, Copy)]
 struct RebuildOutputMode {
-    split_native_output: bool,
-    split_verbose_build_logs: bool,
+    split_build: SplitBuildOutputMode,
+    activation: ActivationOutputMode,
 }
 
 impl RebuildOutputMode {
     fn from_args(args: &RebuildArgs) -> Self {
-        let split_native_output = native_rebuild_output_enabled(args);
+        let native_activation = native_rebuild_output_enabled(args);
         Self {
-            split_native_output,
-            split_verbose_build_logs: split_native_output && args.verbose,
+            split_build: SplitBuildOutputMode::from_args(args, native_activation),
+            activation: ActivationOutputMode::from_native_enabled(native_activation),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SplitBuildOutputMode {
+    Quiet,
+    Verbose,
+}
+
+impl SplitBuildOutputMode {
+    const fn from_args(args: &RebuildArgs, native_activation: bool) -> Self {
+        if native_activation && args.verbose {
+            Self::Verbose
+        } else {
+            Self::Quiet
+        }
+    }
+
+    pub(super) const fn log_format(self) -> Option<&'static str> {
+        match self {
+            Self::Quiet => None,
+            Self::Verbose => Some("bar-with-logs"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActivationOutputMode {
+    Captured,
+    Native,
+}
+
+impl ActivationOutputMode {
+    const fn from_native_enabled(native_enabled: bool) -> Self {
+        if native_enabled {
+            Self::Native
+        } else {
+            Self::Captured
+        }
+    }
+
+    const fn is_native(self) -> bool {
+        matches!(self, Self::Native)
     }
 }
 
@@ -707,7 +750,7 @@ fn do_split_darwin_rebuild(
     let (activate, activate_phase) = match activate_system(
         ctx,
         use_sudo,
-        output_mode.split_native_output,
+        output_mode.activation.is_native(),
         &system_config,
     ) {
         Ok(result) => result,
@@ -735,20 +778,12 @@ fn build_split_system_config(
     output_mode: RebuildOutputMode,
 ) -> anyhow::Result<SplitBuildOutput> {
     let mut build_stderr = String::new();
-    let (build_program, build_args) = if output_mode.split_native_output {
-        let log_format = if output_mode.split_verbose_build_logs {
-            "bar-with-logs"
-        } else {
-            "bar"
-        };
-        split_nix_build_command_with_log_format(attr, Some(log_format))
-    } else {
-        split_nix_build_command(attr)
-    };
+    let (build_program, build_args) =
+        split_nix_build_command_with_log_format(attr, output_mode.split_build.log_format());
     let build_arg_refs: Vec<&str> = build_args.iter().map(String::as_str).collect();
     let (build, mut phase) = timed_phase("build", || {
         ctx.printer.action("Building system configuration");
-        if output_mode.split_native_output {
+        if output_mode.split_build == SplitBuildOutputMode::Verbose {
             let output = run_stdout_collecting_tee_stderr_with_env(
                 &build_program,
                 &build_arg_refs,
@@ -758,19 +793,9 @@ fn build_split_system_config(
             build_stderr = output.stderr;
             return Ok((output.code, output.stdout));
         }
-        run_indented_command_collecting_stdout_with_observer(
-            &build_program,
-            &build_arg_refs,
-            None,
-            None,
-            ctx.printer,
-            "  ",
-            |stream, line| {
-                if stream == StreamName::Stderr {
-                    push_stream_line(&mut build_stderr, line);
-                }
-            },
-        )
+        let output = run_captured_command_with_env(&build_program, &build_arg_refs, None, None)?;
+        build_stderr = output.stderr;
+        Ok((output.code, output.stdout))
     })?;
     phase.status = exit_status(build.0);
     Ok(SplitBuildOutput {
@@ -779,10 +804,6 @@ fn build_split_system_config(
         stderr: build_stderr,
         phase,
     })
-}
-
-pub(super) fn split_nix_build_command(attr: &str) -> (String, Vec<String>) {
-    split_nix_build_command_with_log_format(attr, None)
 }
 
 pub(super) fn split_nix_build_command_with_log_format(
@@ -1003,13 +1024,6 @@ pub(super) fn parse_system_config_path(output: &str) -> Option<String> {
         .get("out")?
         .as_str()
         .map(str::to_string)
-}
-
-fn push_stream_line(output: &mut String, line: &str) {
-    if !output.is_empty() {
-        output.push('\n');
-    }
-    output.push_str(line);
 }
 
 fn combined_stream_output(stdout: &str, stderr: &str) -> String {

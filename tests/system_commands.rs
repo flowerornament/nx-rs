@@ -595,6 +595,7 @@ fn split_darwin_rebuild_runs_explicit_phases() -> Result<(), Box<dyn Error>> {
         stdout.contains("System rebuilt"),
         "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
+    assert_quiet_split_build_output(&stdout, &stderr);
     assert_timing_children(
         home_dir.path(),
         "split_rebuild_env",
@@ -612,6 +613,18 @@ fn split_darwin_rebuild_runs_explicit_phases() -> Result<(), Box<dyn Error>> {
     )?;
 
     Ok(())
+}
+
+fn assert_quiet_split_build_output(stdout: &str, stderr: &str) {
+    for fragment in [
+        "copying path '/nix/store/split-example-one'",
+        "building '/nix/store/split-example.drv'",
+    ] {
+        assert!(
+            !stdout.contains(fragment) && !stderr.contains(fragment),
+            "default split build leaked noisy Nix output '{fragment}'\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
 }
 
 #[test]

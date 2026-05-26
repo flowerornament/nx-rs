@@ -47,6 +47,10 @@ const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
 ];
 const REBUILD_TIMING_HEAD_ARGS: &[&str] = &["rev-parse", "HEAD"];
 const REBUILD_FLAKE_ARGS: &[&str] = &["flake", "check", REPO_ROOT_TOKEN];
+const SUDO_SET_HOME_ARG: &str = "-H";
+const ROOT_ENV_PROGRAM: &str = "/usr/bin/env";
+const ROOT_HOME_ENV_ARG: &str = "HOME=/var/root";
+const NIX_REMOTE_DAEMON_ENV_ARG: &str = "NIX_REMOTE=daemon";
 
 const UPGRADE_COMMIT_ARGS: &[&str] = &["upgrade", "--skip-brew", "--skip-rebuild", "--no-ai"];
 const UPGRADE_FAILURE_ARGS: &[&str] = &["upgrade", "--no-ai"];
@@ -261,6 +265,56 @@ const UPGRADE_REBUILD_CALLS: &[ExpectedCall] = &[
         "darwin-rebuild",
         EXPECTED_CWD_REPO_ROOT,
         &["switch", "--flake", REPO_ROOT_TOKEN],
+    ),
+];
+
+const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
+    ExpectedCall::new(
+        "scutil",
+        EXPECTED_CWD_REPO_ROOT,
+        &["--get", "LocalHostName"],
+    ),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "build",
+            "--json",
+            "--no-link",
+            "<REPO_ROOT>#darwinConfigurations.test-host.system",
+        ],
+    ),
+    ExpectedCall::new("sudo", EXPECTED_CWD_REPO_ROOT, &["-n", "true"]),
+    ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            SUDO_SET_HOME_ARG,
+            ROOT_ENV_PROGRAM,
+            ROOT_HOME_ENV_ARG,
+            NIX_REMOTE_DAEMON_ENV_ARG,
+            "nix-env",
+            "-p",
+            "/nix/var/nix/profiles/system",
+            "--set",
+            "/nix/store/new-system",
+        ],
+    ),
+    ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            SUDO_SET_HOME_ARG,
+            ROOT_ENV_PROGRAM,
+            ROOT_HOME_ENV_ARG,
+            NIX_REMOTE_DAEMON_ENV_ARG,
+            "/nix/store/new-system/activate",
+        ],
     ),
 ];
 
@@ -516,7 +570,42 @@ fn system_upgrade_flows() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+fn upgrade_split_rebuild_keeps_nix_build_output_quiet() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+    let case = UpgradeCase {
+        id: "upgrade_split_rebuild_quiet",
+        cli_args: UPGRADE_REBUILD_ARGS,
+        mode: "success",
+        expected_exit: 0,
+        expected_calls: UPGRADE_SPLIT_REBUILD_CALLS,
+        stdout_contains: &["System rebuilt"],
+    };
+
+    let output = run_case_with_extra_env(&nx_bin, &repo_base, &case, &[("NX_SPLIT_DARWIN", "1")])?;
+
+    assert_quiet_split_build_output(&output.stdout, &output.stderr);
+
+    Ok(())
+}
+
 fn run_case(nx_bin: &Path, repo_base: &Path, case: &UpgradeCase) -> Result<(), Box<dyn Error>> {
+    run_case_with_extra_env(nx_bin, repo_base, case, &[]).map(|_| ())
+}
+
+struct CaseOutput {
+    stdout: String,
+    stderr: String,
+}
+
+fn run_case_with_extra_env(
+    nx_bin: &Path,
+    repo_base: &Path,
+    case: &UpgradeCase,
+    extra_env: &[(&str, &str)],
+) -> Result<CaseOutput, Box<dyn Error>> {
     let repo_root = TempDir::new()?;
     copy_tree(repo_base, repo_root.path())?;
     ensure_test_layout(repo_root.path())?;
@@ -549,6 +638,9 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &UpgradeCase) -> Result<(), B
             stub_dir.join("darwin-rebuild"),
         )
         .env("PATH", prepend_path(&stub_dir));
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
 
     let output = run_command_with_optional_stdin(&mut command, None)?;
     let after = snapshot_repo_files(repo_root.path(), &should_ignore_snapshot_path)?;
@@ -585,7 +677,22 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &UpgradeCase) -> Result<(), B
     assert_repo_state(case, &before, &after, &stdout, &stderr);
     assert_home_state(case, home_dir.path(), &stdout, &stderr);
 
-    Ok(())
+    Ok(CaseOutput {
+        stdout: stdout.into_owned(),
+        stderr: stderr.into_owned(),
+    })
+}
+
+fn assert_quiet_split_build_output(stdout: &str, stderr: &str) {
+    for fragment in [
+        "copying path '/nix/store/split-example-one'",
+        "building '/nix/store/split-example.drv'",
+    ] {
+        assert!(
+            !stdout.contains(fragment) && !stderr.contains(fragment),
+            "default split build leaked noisy Nix output '{fragment}'\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
 }
 
 fn seed_flake_lock_if_needed(repo_root: &Path, mode: &str) -> Result<(), Box<dyn Error>> {

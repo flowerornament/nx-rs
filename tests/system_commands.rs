@@ -757,6 +757,44 @@ fn split_darwin_rebuild_retries_source_cache_corruption() -> Result<(), Box<dyn 
     Ok(())
 }
 
+#[test]
+fn split_darwin_rebuild_failure_surfaces_quiet_build_output() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+
+    let RunResult {
+        home_dir,
+        stdout,
+        stderr,
+    } = run_split_rebuild_with_expected_exit(
+        &nx_bin,
+        &repo_base,
+        "split_rebuild_build_failure",
+        "split_build_fail",
+        &[("NX_SPLIT_DARWIN", "1")],
+        SPLIT_REBUILD_BUILD_CALLS,
+        1,
+    )?;
+
+    for expected in [
+        "Build failure output:",
+        "anneal-0.13.1",
+        "eval_git_mtime_uses_git_history",
+        "git [\"init\"] failed to run: No such file or directory (os error 2)",
+        "error: test failed, to rerun pass -p anneal-cli --lib",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "stdout missing quiet failure detail '{expected}'\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+    assert_quiet_split_build_output(&stdout, &stderr);
+    assert_timing_children(home_dir.path(), "split_rebuild_build_failure", &["build"])?;
+
+    Ok(())
+}
+
 struct RunResult {
     home_dir: TempDir,
     stdout: String,
@@ -770,6 +808,26 @@ fn run_split_rebuild(
     mode: &str,
     extra_env: &[(&str, &str)],
     expected_calls: &[ExpectedCall],
+) -> Result<RunResult, Box<dyn Error>> {
+    run_split_rebuild_with_expected_exit(
+        nx_bin,
+        repo_base,
+        case_id,
+        mode,
+        extra_env,
+        expected_calls,
+        0,
+    )
+}
+
+fn run_split_rebuild_with_expected_exit(
+    nx_bin: &Path,
+    repo_base: &Path,
+    case_id: &str,
+    mode: &str,
+    extra_env: &[(&str, &str)],
+    expected_calls: &[ExpectedCall],
+    expected_exit: i32,
 ) -> Result<RunResult, Box<dyn Error>> {
     let repo_root = TempDir::new()?;
     copy_tree(repo_base, repo_root.path())?;
@@ -814,7 +872,7 @@ fn run_split_rebuild(
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
 
     assert_eq!(
-        exit_code, 0,
+        exit_code, expected_exit,
         "case {case_id}: unexpected exit code\nstdout:\n{stdout}\nstderr:\n{stderr}",
     );
     assert_invocations(case_id, repo_root.path(), &invocations, expected_calls);

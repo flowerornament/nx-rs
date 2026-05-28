@@ -41,6 +41,7 @@ const MAX_REBUILD_ATTEMPTS: usize = 8;
 const MAX_SOURCE_CACHE_RETRIES: usize = 3;
 const MAX_FD_EXHAUSTION_RETRIES: usize = 2;
 const SPLIT_NIX_BUILD_NOFILE_LIMIT: u32 = 65536;
+const REBUILD_FAILURE_OUTPUT_LINES: usize = 80;
 
 pub fn cmd_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> i32 {
     cmd_rebuild_with_command(args, ctx, TimingCommand::Rebuild)
@@ -382,6 +383,8 @@ fn do_rebuild(
     let mut fd_exhaustion_retries = 0usize;
     let mut repaired_paths = Vec::new();
     let mut profiler = ActivationPhaseProfiler::new();
+    let mut final_failure_output = None;
+    let mut final_failure_phases = Vec::new();
 
     for attempt in 0..MAX_REBUILD_ATTEMPTS {
         if attempt == 0 {
@@ -455,11 +458,75 @@ fn do_rebuild(
             continue;
         }
 
+        if should_print_captured_rebuild_failure(output_mode, &split_phases) {
+            final_failure_output = Some(output);
+        }
+        final_failure_phases = split_phases;
         break;
     }
 
     ctx.printer.error("Rebuild failed");
-    (1, profiler.finish(), repaired_paths)
+    if let Some(output) = final_failure_output.as_deref() {
+        print_rebuild_failure_output(output);
+    }
+    let phases = if final_failure_phases.is_empty() {
+        profiler.finish()
+    } else {
+        final_failure_phases
+    };
+    (1, phases, repaired_paths)
+}
+
+fn should_print_captured_rebuild_failure(
+    output_mode: RebuildOutputMode,
+    phases: &[TimingPhase],
+) -> bool {
+    output_mode.split_build == SplitBuildOutputMode::Quiet
+        && phases
+            .first()
+            .is_some_and(|phase| phase.name == "build" && phase.status != "ok")
+}
+
+fn print_rebuild_failure_output(output: &str) {
+    let excerpt = failure_output_excerpt(output, REBUILD_FAILURE_OUTPUT_LINES);
+    if excerpt.lines.is_empty() {
+        return;
+    }
+
+    if excerpt.omitted == 0 {
+        Printer::detail("Build failure output:");
+    } else {
+        Printer::detail(&format!(
+            "Build failure output (last {REBUILD_FAILURE_OUTPUT_LINES} lines):"
+        ));
+        Printer::sub_detail(&format!("... omitted {} earlier lines", excerpt.omitted));
+    }
+    for line in excerpt.lines {
+        Printer::sub_detail(line);
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct FailureOutputExcerpt<'a> {
+    pub(super) omitted: usize,
+    pub(super) lines: Vec<&'a str>,
+}
+
+pub(super) fn failure_output_excerpt(output: &str, max_lines: usize) -> FailureOutputExcerpt<'_> {
+    let output = output.trim_end_matches(['\n', '\r']);
+    if output.is_empty() || max_lines == 0 {
+        return FailureOutputExcerpt {
+            omitted: 0,
+            lines: Vec::new(),
+        };
+    }
+
+    let lines: Vec<_> = output.lines().collect();
+    let omitted = lines.len().saturating_sub(max_lines);
+    FailureOutputExcerpt {
+        omitted,
+        lines: lines.into_iter().skip(omitted).collect(),
+    }
 }
 
 fn handle_fixed_output_hash_mismatch(

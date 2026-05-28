@@ -177,7 +177,13 @@ case "$program" in
         fi
       fi
       if [ "$mode" = "split_build_fail" ]; then
-        echo "stub nix build failed" >&2
+        echo "error: builder for '/nix/store/sijh5v1ag1q0ad4bngvjxycf5716qfqx-anneal-0.13.1.drv' failed with exit code 101" >&2
+        echo "       > failures:" >&2
+        echo "       > ---- app::tests::eval_git_mtime_uses_git_history stdout ----" >&2
+        echo "       > thread 'app::tests::eval_git_mtime_uses_git_history' panicked at crates/anneal-cli/src/app.rs:2491:35:" >&2
+        echo "       > git [\"init\"] failed to run: No such file or directory (os error 2)" >&2
+        echo "       > error: test failed, to rerun pass -p anneal-cli --lib" >&2
+        echo "error: Build failed due to failed dependency" >&2
         exit 1
       fi
       if [ "$mode" = "split_build_invalid_json" ]; then

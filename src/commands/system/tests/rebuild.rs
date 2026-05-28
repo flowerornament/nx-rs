@@ -140,6 +140,17 @@ fn split_build_log_format_is_verbose_only() {
 }
 
 #[test]
+fn failure_output_excerpt_keeps_bounded_tail() {
+    assert_eq!(
+        failure_output_excerpt("one\ntwo\nthree\n", 2),
+        FailureOutputExcerpt {
+            omitted: 1,
+            lines: vec!["two", "three"],
+        }
+    );
+}
+
+#[test]
 fn split_darwin_defaults_on_for_darwin_and_allows_opt_out() {
     use std::collections::HashMap;
 

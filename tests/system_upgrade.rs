@@ -318,6 +318,29 @@ const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
     ),
 ];
 
+const UPGRADE_SPLIT_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
+    ExpectedCall::new(
+        "scutil",
+        EXPECTED_CWD_REPO_ROOT,
+        &["--get", "LocalHostName"],
+    ),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "build",
+            "--json",
+            "--no-link",
+            "<REPO_ROOT>#darwinConfigurations.test-host.system",
+        ],
+    ),
+];
+
 const UPGRADE_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
@@ -582,6 +605,31 @@ fn upgrade_split_rebuild_keeps_nix_build_output_quiet() -> Result<(), Box<dyn Er
         expected_exit: 0,
         expected_calls: UPGRADE_SPLIT_REBUILD_CALLS,
         stdout_contains: &["System rebuilt"],
+    };
+
+    let output = run_case_with_extra_env(&nx_bin, &repo_base, &case, &[("NX_SPLIT_DARWIN", "1")])?;
+
+    assert_quiet_split_build_output(&output.stdout, &output.stderr);
+
+    Ok(())
+}
+
+#[test]
+fn upgrade_split_rebuild_failure_surfaces_quiet_build_output() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+    let case = UpgradeCase {
+        id: "upgrade_split_rebuild_build_failure",
+        cli_args: UPGRADE_REBUILD_ARGS,
+        mode: "split_build_fail",
+        expected_exit: 1,
+        expected_calls: UPGRADE_SPLIT_REBUILD_FAILURE_CALLS,
+        stdout_contains: &[
+            "Build failure output:",
+            "anneal-0.13.1",
+            "git [\"init\"] failed to run: No such file or directory (os error 2)",
+        ],
     };
 
     let output = run_case_with_extra_env(&nx_bin, &repo_base, &case, &[("NX_SPLIT_DARWIN", "1")])?;

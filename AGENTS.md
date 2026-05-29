@@ -43,7 +43,7 @@ just doctor         # verify local toolchain and paths
 just hooks-install  # install/update bd git hooks
 just guard          # strict pre-compile checks
 just compile        # strict checks + cargo check
-just ci             # fmt-check + clippy + test + check
+just ci             # fmt-check + clippy + test + script tests + check
 ```
 
 Quality gates:
@@ -53,8 +53,9 @@ Quality gates:
 | Format | `just fmt` / `just fmt-check` | `cargo fmt --all`; check-only variant for CI |
 | Lint | `just lint` | `cargo clippy` with `-D warnings`, all targets/features |
 | Test | `just test` | `cargo test`, all targets/features |
+| Script tests | `just test-scripts` | Python helper/release tests |
 | Check | `just check` | `cargo check`, all targets/features |
-| **Full CI gate** | **`just ci`** | fmt-check + lint + test + check in sequence |
+| **Full CI gate** | **`just ci`** | fmt-check + lint + test + test-scripts + check in sequence |
 | System tests | `just test-system` | Integration matrix with deterministic stubs |
 
 All flags use `--workspace --all-targets --all-features`. Clippy treats warnings as errors.

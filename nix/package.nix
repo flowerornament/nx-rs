@@ -3,34 +3,32 @@ pkgs.rustPlatform.buildRustPackage {
   pname = "nx";
   inherit version src;
 
-  cargoDeps = pkgs.stdenvNoCC.mkDerivation {
-    pname = "nx-cargo-vendor";
-    inherit version src;
-
-    nativeBuildInputs = [ pkgs.cargo pkgs.cacert ];
-
-    buildPhase = ''
-      runHook preBuild
-
-      export HOME="$TMPDIR"
-      export CARGO_HOME="$TMPDIR/cargo-home"
-      export CARGO_HTTP_CAINFO="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-      export CARGO_HTTP_USER_AGENT="cargo/${pkgs.cargo.version} nx-rs-nix-vendor"
-
-      cargo vendor --locked --versioned-dirs "$out"
-      cp Cargo.lock "$out/Cargo.lock"
-
-      runHook postBuild
-    '';
-
-    dontConfigure = true;
-    dontInstall = true;
-    dontFixup = true;
-
-    outputHash = "sha256-b/oXLJZSFAVkt+WW6aVMJkQ9V1gn8hMkxedLFznunG4=";
-    outputHashAlgo = "sha256";
-    outputHashMode = "recursive";
+  cargoLock = {
+    lockFile = src + "/Cargo.lock";
+    # Avoid crates.io API fetches; Cargo lockfile checksums still verify content.
+    extraRegistries = {
+      "https://github.com/rust-lang/crates.io-index" = "https://static.crates.io/crates";
+    };
   };
+
+  configurePhase = ''
+    runHook preConfigure
+
+    # importCargoLock emits an extra source alias for extraRegistries. When the
+    # alias is crates.io's git index, Cargo treats it as a duplicate registry.
+    for config in .cargo/config.toml ../.cargo/config.toml; do
+      if [ -f "$config" ]; then
+        awk '
+          /^[[:space:]]*\[source\."https:\/\/github.com\/rust-lang\/crates.io-index"\][[:space:]]*$/ { skip = 2; next }
+          skip > 0 { skip--; next }
+          { print }
+        ' "$config" > "$config.tmp"
+        mv "$config.tmp" "$config"
+      fi
+    done
+
+    runHook postConfigure
+  '';
 
   nativeCheckInputs = [ pkgs.git pkgs.which ];
 

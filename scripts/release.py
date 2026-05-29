@@ -27,8 +27,7 @@ def write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def cargo_version() -> str:
-    text = read_text(ROOT / "Cargo.toml")
+def package_version_from_cargo_toml(text: str) -> str:
     package = re.search(r"(?ms)^\[package\]\s*(.*?)(?:^\[|\Z)", text)
     if package is None:
         fail("could not find [package] section in Cargo.toml")
@@ -36,6 +35,10 @@ def cargo_version() -> str:
     if match is None:
         fail("could not find package version in Cargo.toml")
     return match.group(1)
+
+
+def cargo_version() -> str:
+    return package_version_from_cargo_toml(read_text(ROOT / "Cargo.toml"))
 
 
 def cargo_lock_version() -> str:
@@ -81,21 +84,32 @@ def changelog_entry(version: str) -> str:
     return text[heading.end() : heading.end() + next_heading.start()]
 
 
+def changelog_entry_scaffold(version: str, today: str) -> str:
+    return (
+        f"## v{version} - {today}\n\n"
+        "- TODO: summarize release changes.\n\n"
+    )
+
+
+def insert_changelog_entry(text: str, version: str, today: str) -> str:
+    scaffold = changelog_entry_scaffold(version, today)
+    unreleased_marker = "## Unreleased\n\n"
+    if unreleased_marker in text:
+        return text.replace(unreleased_marker, unreleased_marker + scaffold, 1)
+
+    marker = "# Changelog\n\n"
+    if marker not in text:
+        fail("could not find CHANGELOG.md insertion marker")
+    return text.replace(marker, marker + scaffold, 1)
+
+
 def changelog_insert_entry(version: str) -> None:
     if changelog_has_entry(version):
         return
 
     today = date.today().isoformat()
-    scaffold = (
-        f"## v{version} - {today}\n\n"
-        "- TODO: summarize release changes.\n\n"
-    )
-
     text = changelog_text()
-    marker = "# Changelog\n\n"
-    if marker not in text:
-        fail("could not find CHANGELOG.md insertion marker")
-    updated = text.replace(marker, marker + scaffold, 1)
+    updated = insert_changelog_entry(text, version, today)
     write_text(ROOT / "CHANGELOG.md", updated)
 
 
@@ -157,6 +171,32 @@ def run(cmd: list[str]) -> None:
     print(f"+ {' '.join(cmd)}")
     subprocess.run(cmd, cwd=ROOT, check=True)
 
+
+def dirty_worktree_entries(status: str) -> list[str]:
+    return [line for line in status.splitlines() if line.strip()]
+
+
+def require_clean_worktree() -> None:
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    entries = dirty_worktree_entries(status.stdout)
+    if not entries:
+        return
+
+    preview = "\n".join(f"  {entry}" for entry in entries[:10])
+    suffix = "" if len(entries) <= 10 else f"\n  ... and {len(entries) - 10} more"
+    fail(
+        "release verification must run from a clean git worktree; "
+        "commit release-prep changes first\n"
+        f"{preview}{suffix}"
+    )
+
+
 def verify() -> None:
     versions = {
         "Cargo.toml": cargo_version(),
@@ -175,10 +215,12 @@ def verify() -> None:
             f"{version} with at least one bullet and no TODO/TBD placeholders"
         )
 
+    require_clean_worktree()
     run(["just", "ci"])
     run(["just", "test-system"])
     run(["just", "build"])
     run(["bash", "scripts/test-home-manager-module.sh"])
+    run(["bash", "scripts/test-nix-package-consumer.sh"])
     run(["nix", "build", "."])
     run(["nix", "run", ".", "--", "--help"])
     run(["./target/release/nx", "--help"])
@@ -193,15 +235,7 @@ def tag(version: str) -> None:
     if current != version:
         fail(f"Cargo.toml version is {current}, expected {version}")
 
-    status = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    if status.stdout.strip():
-        fail("git working tree must be clean before tagging")
+    require_clean_worktree()
 
     tag_name = f"v{version}"
     tags = subprocess.run(

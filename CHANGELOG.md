@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v1.5.23 - 2026-05-29
+
+- fixed the Nix package so consumers whose `nx-rs` input follows their own `nixpkgs` no longer hit Cargo-version-sensitive vendor hash mismatches
+- moved release packaging verification onto the consumer-follows flake shape that `.nix-config` uses, catching dependency-fetch regressions before tagging
+- added release helper unit tests and a clean-worktree release verification guard so release prep cannot silently verify a dirty source tree
+
 ## v1.5.22 - 2026-05-29
 
 - excluded Codex session/log directories and Claude file history from default `nx clean-caches` plans so routine cleanup preserves agent resume/history data unless those caches are selected explicitly

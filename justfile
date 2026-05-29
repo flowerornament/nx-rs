@@ -29,9 +29,10 @@ help:
     @echo "  just fmt-check       # Verify formatting"
     @echo "  just lint            # Clippy with -D warnings"
     @echo "  just test            # Full test suite"
+    @echo "  just test-scripts    # Python release helper unit tests"
     @echo "  just check           # cargo check for all targets/features"
     @echo "  just build           # Build a release binary"
-    @echo "  just ci              # fmt-check + lint + test + check"
+    @echo "  just ci              # fmt-check + lint + test + test-scripts + check"
     @echo "  just release-verify  # Run release-readiness checks"
     @echo
     @echo "Notes"
@@ -92,6 +93,10 @@ lint:
 test:
     @cargo test {{STRICT_FLAGS}}
 
+# Run script/helper tests.
+test-scripts:
+    @python3 -m unittest discover -s scripts -p 'test_*.py'
+
 # Run system command integration matrix with deterministic stubs.
 test-system:
     @cargo build --quiet --bin nx
@@ -106,7 +111,7 @@ build:
     @cargo build --release
 
 # Full strict CI-equivalent local gate.
-ci: fmt-check lint test check
+ci: fmt-check lint test test-scripts check
 
 # Release-readiness checks and validation.
 release-verify:

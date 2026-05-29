@@ -27,7 +27,7 @@ pkgs.rustPlatform.buildRustPackage {
     dontInstall = true;
     dontFixup = true;
 
-    outputHash = "sha256-OyLHuOHvoeZIBTG7mYmzzsa48WaHNaw3SpJDft0dba8=";
+    outputHash = "sha256-b/oXLJZSFAVkt+WW6aVMJkQ9V1gn8hMkxedLFznunG4=";
     outputHashAlgo = "sha256";
     outputHashMode = "recursive";
   };

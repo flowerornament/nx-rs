@@ -7,7 +7,7 @@
 
   outputs = { self, nixpkgs }:
     let
-      nxVersion = "1.5.21";
+      nxVersion = "1.5.22";
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
         inherit system;

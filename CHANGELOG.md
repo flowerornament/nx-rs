@@ -2,9 +2,15 @@
 
 ## Unreleased
 
+## v1.5.22 - 2026-05-29
+
 - excluded Codex session/log directories and Claude file history from default `nx clean-caches` plans so routine cleanup preserves agent resume/history data unless those caches are selected explicitly
 - kept default split Darwin builds quiet by capturing Nix build stderr for diagnostics instead of teeing every `copying path` and `building` line; `--verbose` still streams full build logs
+- fixed quiet split rebuild failures so captured Nix build errors are shown with a bounded, high-signal tail instead of ending at `Rebuild failed`
+- fixed Nix package builds by vendoring Rust dependencies through Cargo instead of relying on crates.io API downloads during evaluation
+- preserved existing passwordless Darwin rebuild setups by checking the exact `darwin-rebuild switch --flake <repo>` sudo rule before prompting
 - removed anonymous dashed native-output separators from rebuild and upgrade output so empty Nix/Darwin phases do not render as stray divider lines
+- made passwordless split fallback output read as an ordinary routing decision instead of two warnings
 - made the release helper work with macOS's system Python by reading the package version without requiring Python 3.11's `tomllib`
 
 ## v1.5.21 - 2026-05-20

@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::fs;
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -668,6 +669,8 @@ fn run_case_with_extra_env(
 
     let home_dir = TempDir::new()?;
     seed_home_state_if_needed(home_dir.path(), case.mode)?;
+    let profile_link = home_dir.path().join("system-profile");
+    symlink("/nix/store/current-system", &profile_link)?;
     let mut command = Command::new(nx_bin);
     command
         .args(["--plain", "--minimal"])
@@ -678,6 +681,7 @@ fn run_case_with_extra_env(
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
         .env("PYTHONDONTWRITEBYTECODE", "1")
+        .env("NX_SYSTEM_PROFILE_PATH", &profile_link)
         .env("NX_SYSTEM_IT_LOG", &log_path)
         .env("NX_SYSTEM_IT_MODE", case.mode)
         .env("NX_SYSTEM_IT_UPGRADE_NEW_LOCK", UPGRADE_FLAKE_LOCK_NEW)

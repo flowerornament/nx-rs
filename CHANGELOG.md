@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- made the upgrade split-rebuild system test deterministic on Linux CI by pinning the test system-profile path
+
 ## v1.5.23 - 2026-05-29
 
 - fixed the Nix package so consumers whose `nx-rs` input follows their own `nixpkgs` no longer hit Cargo-version-sensitive vendor hash mismatches

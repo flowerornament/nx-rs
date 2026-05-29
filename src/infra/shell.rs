@@ -168,6 +168,10 @@ pub fn terminal_stdio_available() -> bool {
     io::stdin().is_terminal() && io::stdout().is_terminal() && io::stderr().is_terminal()
 }
 
+pub fn terminal_stderr_available() -> bool {
+    io::stderr().is_terminal()
+}
+
 pub fn run_native_command_with_env(
     program: &str,
     args: &[&str],
@@ -188,6 +192,38 @@ pub fn run_native_command_with_env(
         .with_context(|| format!("failed to spawn {program}"))?;
 
     Ok(status.code().unwrap_or(1))
+}
+
+pub fn run_stdout_collecting_inherit_stderr_with_env(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: Option<CommandEnv<'_>>,
+) -> anyhow::Result<CapturedCommand> {
+    let mut command = Command::new(program);
+    configure_command(&mut command, args, cwd, env);
+    command
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+
+    let _boundary = NativeOutputBoundary::start();
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("failed to spawn {program}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("failed to capture child stdout")?;
+    let stdout_handle = thread::spawn(move || collect_stream("stdout", stdout));
+    let status = child.wait().context("waiting for child process")?;
+    let stdout = String::from_utf8_lossy(&join_collector("stdout", stdout_handle)?).into_owned();
+
+    Ok(CapturedCommand {
+        code: status.code().unwrap_or(1),
+        stdout,
+        stderr: String::new(),
+    })
 }
 
 pub fn run_stdout_collecting_tee_stderr_with_env(
@@ -578,6 +614,18 @@ mod tests {
         assert_eq!(output.code, 0);
         assert_eq!(output.stdout, "json\n");
         assert!(output.stderr.contains("progress\rprogress done\n"));
+    }
+
+    #[test]
+    fn run_stdout_collecting_inherit_stderr_collects_stdout() {
+        let args = ["-c", "printf 'json\\n'"];
+
+        let output = run_stdout_collecting_inherit_stderr_with_env("sh", &args, None, None)
+            .expect("shell command should run");
+
+        assert_eq!(output.code, 0);
+        assert_eq!(output.stdout, "json\n");
+        assert!(output.stderr.is_empty());
     }
 
     #[test]

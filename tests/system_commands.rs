@@ -213,8 +213,8 @@ const SPLIT_REBUILD_BUILD_CALLS: &[ExpectedCall] = &[
         EXPECTED_CWD_REPO_ROOT,
         &[
             "build",
-            "--json",
             "--no-link",
+            "--print-out-paths",
             "<REPO_ROOT>#darwinConfigurations.test-host.system",
         ],
     ),
@@ -323,8 +323,8 @@ fn split_rebuild_cache_retry_calls() -> Vec<ExpectedCall> {
         EXPECTED_CWD_REPO_ROOT,
         &[
             "build",
-            "--json",
             "--no-link",
+            "--print-out-paths",
             "<REPO_ROOT>#darwinConfigurations.test-host.system",
         ],
     ));

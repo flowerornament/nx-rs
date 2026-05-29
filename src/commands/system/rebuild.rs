@@ -9,8 +9,8 @@ use crate::infra::activation_profile::ActivationPhaseProfiler;
 use crate::infra::shell::{
     StreamName, first_nonempty_output, run_captured_command, run_captured_command_with_env,
     run_indented_command_collecting_with_env, run_indented_command_collecting_with_observer,
-    run_native_command_with_env, run_stdout_collecting_tee_stderr_with_env,
-    terminal_stdio_available,
+    run_native_command_with_env, run_stdout_collecting_inherit_stderr_with_env,
+    terminal_stderr_available, terminal_stdio_available,
 };
 use crate::infra::timing::{
     TimingCommand, TimingPhase, TimingRecord, TimingSession, append_timing, timing_detail_lines,
@@ -70,7 +70,7 @@ impl RebuildOutputMode {
     fn from_args(args: &RebuildArgs) -> Self {
         let native_activation = native_rebuild_output_enabled(args);
         Self {
-            split_build: SplitBuildOutputMode::from_args(args, native_activation),
+            split_build: SplitBuildOutputMode::from_args(args, native_split_build_output_enabled()),
             activation: ActivationOutputMode::from_native_enabled(native_activation),
         }
     }
@@ -78,24 +78,31 @@ impl RebuildOutputMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SplitBuildOutputMode {
-    Quiet,
-    Verbose,
+    Captured,
+    Native,
+    NativeVerbose,
 }
 
 impl SplitBuildOutputMode {
     const fn from_args(args: &RebuildArgs, native_activation: bool) -> Self {
-        if native_activation && args.verbose {
-            Self::Verbose
+        if !native_activation {
+            Self::Captured
+        } else if args.verbose {
+            Self::NativeVerbose
         } else {
-            Self::Quiet
+            Self::Native
         }
     }
 
     pub(super) const fn log_format(self) -> Option<&'static str> {
         match self {
-            Self::Quiet => None,
-            Self::Verbose => Some("bar-with-logs"),
+            Self::Captured | Self::Native => None,
+            Self::NativeVerbose => Some("bar-with-logs"),
         }
+    }
+
+    const fn is_native(self) -> bool {
+        matches!(self, Self::Native | Self::NativeVerbose)
     }
 }
 
@@ -481,7 +488,7 @@ fn should_print_captured_rebuild_failure(
     output_mode: RebuildOutputMode,
     phases: &[TimingPhase],
 ) -> bool {
-    output_mode.split_build == SplitBuildOutputMode::Quiet
+    output_mode.split_build == SplitBuildOutputMode::Captured
         && phases
             .first()
             .is_some_and(|phase| phase.name == "build" && phase.status != "ok")
@@ -713,6 +720,10 @@ fn native_rebuild_output_enabled(args: &RebuildArgs) -> bool {
     !args.timing && terminal_stdio_available()
 }
 
+fn native_split_build_output_enabled() -> bool {
+    terminal_stderr_available()
+}
+
 pub(super) fn should_use_split_darwin(args: &RebuildArgs, manifest: Option<&Manifest>) -> bool {
     if !args.passthrough.is_empty() {
         return false;
@@ -850,8 +861,8 @@ fn build_split_system_config(
     let build_arg_refs: Vec<&str> = build_args.iter().map(String::as_str).collect();
     let (build, mut phase) = timed_phase("build", || {
         ctx.printer.action("Building system configuration");
-        if output_mode.split_build == SplitBuildOutputMode::Verbose {
-            let output = run_stdout_collecting_tee_stderr_with_env(
+        if output_mode.split_build.is_native() {
+            let output = run_stdout_collecting_inherit_stderr_with_env(
                 &build_program,
                 &build_arg_refs,
                 None,
@@ -879,8 +890,8 @@ pub(super) fn split_nix_build_command_with_log_format(
 ) -> (String, Vec<String>) {
     let mut args = vec![
         "build".to_string(),
-        "--json".to_string(),
         "--no-link".to_string(),
+        "--print-out-paths".to_string(),
     ];
     if let Some(log_format) = log_format {
         args.extend(["--log-format".to_string(), log_format.to_string()]);
@@ -1081,6 +1092,10 @@ fn captured_trimmed(program: &str, args: &[&str], cwd: Option<&Path>) -> Option<
 }
 
 pub(super) fn parse_system_config_path(output: &str) -> Option<String> {
+    if let Some(path) = parse_plain_system_config_path(output) {
+        return Some(path);
+    }
+
     let parsed = serde_json::from_str::<serde_json::Value>(output).ok()?;
     let items = parsed.as_array()?;
     if items.len() != 1 {
@@ -1091,6 +1106,18 @@ pub(super) fn parse_system_config_path(output: &str) -> Option<String> {
         .get("out")?
         .as_str()
         .map(str::to_string)
+}
+
+fn parse_plain_system_config_path(output: &str) -> Option<String> {
+    let mut lines = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let path = lines.next()?;
+    if lines.next().is_some() || !path.starts_with("/nix/store/") {
+        return None;
+    }
+    Some(path.to_string())
 }
 
 fn combined_stream_output(stdout: &str, stderr: &str) -> String {

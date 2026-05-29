@@ -284,8 +284,8 @@ const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
         EXPECTED_CWD_REPO_ROOT,
         &[
             "build",
-            "--json",
             "--no-link",
+            "--print-out-paths",
             "<REPO_ROOT>#darwinConfigurations.test-host.system",
         ],
     ),
@@ -334,8 +334,8 @@ const UPGRADE_SPLIT_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
         EXPECTED_CWD_REPO_ROOT,
         &[
             "build",
-            "--json",
             "--no-link",
+            "--print-out-paths",
             "<REPO_ROOT>#darwinConfigurations.test-host.system",
         ],
     ),

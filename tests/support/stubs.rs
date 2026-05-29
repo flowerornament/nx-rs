@@ -167,7 +167,7 @@ case "$program" in
       exit 0
     fi
 
-    if [ "${1:-}" = "build" ] && [ "${2:-}" = "--json" ]; then
+    if [ "${1:-}" = "build" ]; then
       if [ "$mode" = "split_build_cache_corruption" ]; then
         marker="${HOME}/.nx-system-it-split-build-cache-corruption-once"
         if [ ! -f "$marker" ]; then
@@ -193,7 +193,7 @@ case "$program" in
       echo "copying path '/nix/store/split-example-one' from 'https://cache.nixos.org'..." >&2
       echo "building '/nix/store/split-example.drv'..." >&2
       output="${NX_SYSTEM_IT_DARWIN_BUILD_OUTPUT:-/nix/store/new-system}"
-      printf '[{"outputs":{"out":"%s"}}]\n' "$output"
+      printf '%s\n' "$output"
       exit 0
     fi
 

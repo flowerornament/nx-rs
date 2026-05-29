@@ -77,6 +77,14 @@ fn split_darwin_json_parser_extracts_system_output() {
 }
 
 #[test]
+fn split_darwin_parser_extracts_plain_store_path() {
+    assert_eq!(
+        parse_system_config_path("/nix/store/system-config\n"),
+        Some("/nix/store/system-config".to_string())
+    );
+}
+
+#[test]
 fn split_darwin_json_parser_rejects_missing_output() {
     assert_eq!(parse_system_config_path("[]"), None);
     assert_eq!(
@@ -90,13 +98,17 @@ fn split_darwin_json_parser_rejects_missing_output() {
         None
     );
     assert_eq!(parse_system_config_path("not-json"), None);
+    assert_eq!(
+        parse_system_config_path("/nix/store/one\n/nix/store/two\n"),
+        None
+    );
 }
 
 #[test]
 fn split_nix_build_raises_file_descriptor_limit() {
     let (program, args) = split_nix_build_command_with_log_format(
         "git+file:///repo#darwinConfigurations.host.system",
-        SplitBuildOutputMode::Quiet.log_format(),
+        SplitBuildOutputMode::Captured.log_format(),
     );
 
     assert_eq!(
@@ -109,8 +121,8 @@ fn split_nix_build_raises_file_descriptor_limit() {
                 "nx-nix-with-ulimit".to_string(),
                 "nix".to_string(),
                 "build".to_string(),
-                "--json".to_string(),
                 "--no-link".to_string(),
+                "--print-out-paths".to_string(),
                 "git+file:///repo#darwinConfigurations.host.system".to_string(),
             ],
         )
@@ -132,9 +144,10 @@ fn split_nix_build_can_request_native_log_format() {
 
 #[test]
 fn split_build_log_format_is_verbose_only() {
-    assert_eq!(SplitBuildOutputMode::Quiet.log_format(), None);
+    assert_eq!(SplitBuildOutputMode::Captured.log_format(), None);
+    assert_eq!(SplitBuildOutputMode::Native.log_format(), None);
     assert_eq!(
-        SplitBuildOutputMode::Verbose.log_format(),
+        SplitBuildOutputMode::NativeVerbose.log_format(),
         Some("bar-with-logs")
     );
 }

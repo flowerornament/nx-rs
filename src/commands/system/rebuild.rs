@@ -666,7 +666,7 @@ fn do_rebuild_once(
         match do_split_darwin_rebuild(ctx, repo, use_sudo, output_mode) {
             SplitDarwinResult::Handled(result) => return result,
             SplitDarwinResult::Fallback => {
-                ctx.printer.warn("Falling back to darwin-rebuild switch");
+                ctx.printer.action("Running darwin-rebuild switch");
             }
         }
     }
@@ -795,8 +795,7 @@ fn do_split_darwin_rebuild(
 
     let split_activation_needs_auth = split_activation_would_prompt(use_sudo);
     if split_activation_needs_auth && legacy_darwin_rebuild_sudo_available(ctx.repo_root) {
-        ctx.printer
-            .warn("Split activation needs sudo; using passwordless darwin-rebuild fallback");
+        Printer::detail("activation: using passwordless darwin-rebuild");
         return SplitDarwinResult::Fallback;
     }
 

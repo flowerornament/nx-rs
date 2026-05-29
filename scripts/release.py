@@ -6,7 +6,6 @@ import argparse
 import re
 import subprocess
 import sys
-import tomllib
 from datetime import date
 from pathlib import Path
 
@@ -29,8 +28,14 @@ def write_text(path: Path, text: str) -> None:
 
 
 def cargo_version() -> str:
-    data = tomllib.loads(read_text(ROOT / "Cargo.toml"))
-    return data["package"]["version"]
+    text = read_text(ROOT / "Cargo.toml")
+    package = re.search(r"(?ms)^\[package\]\s*(.*?)(?:^\[|\Z)", text)
+    if package is None:
+        fail("could not find [package] section in Cargo.toml")
+    match = re.search(r'(?m)^version = "([^"]+)"$', package.group(1))
+    if match is None:
+        fail("could not find package version in Cargo.toml")
+    return match.group(1)
 
 
 def cargo_lock_version() -> str:

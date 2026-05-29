@@ -724,6 +724,7 @@ fn run_case_with_extra_env(
 
     assert_repo_state(case, &before, &after, &stdout, &stderr);
     assert_home_state(case, home_dir.path(), &stdout, &stderr);
+    assert_no_anonymous_boundaries(case.id, &stdout, &stderr);
 
     Ok(CaseOutput {
         stdout: stdout.into_owned(),
@@ -741,6 +742,14 @@ fn assert_quiet_split_build_output(stdout: &str, stderr: &str) {
             "default split build leaked noisy Nix output '{fragment}'\nstdout:\n{stdout}\nstderr:\n{stderr}"
         );
     }
+}
+
+fn assert_no_anonymous_boundaries(case_id: &str, stdout: &str, stderr: &str) {
+    assert!(
+        !stdout.contains("-------------------------")
+            && !stderr.contains("-------------------------"),
+        "case {case_id}: output included anonymous separator lines\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
 }
 
 fn seed_flake_lock_if_needed(repo_root: &Path, mode: &str) -> Result<(), Box<dyn Error>> {

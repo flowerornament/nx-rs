@@ -186,7 +186,6 @@ pub fn run_native_command_with_env(
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
-    let _boundary = NativeOutputBoundary::start();
     let status = command
         .status()
         .with_context(|| format!("failed to spawn {program}"))?;
@@ -207,7 +206,6 @@ pub fn run_stdout_collecting_inherit_stderr_with_env(
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
 
-    let _boundary = NativeOutputBoundary::start();
     let mut child = command
         .spawn()
         .with_context(|| format!("failed to spawn {program}"))?;
@@ -259,24 +257,6 @@ pub fn run_stdout_collecting_tee_stderr_with_env(
         stdout,
         stderr,
     })
-}
-
-struct NativeOutputBoundary;
-
-impl NativeOutputBoundary {
-    fn start() -> Self {
-        Printer::native_output_boundary();
-        let _ = io::stdout().flush();
-        Self
-    }
-}
-
-impl Drop for NativeOutputBoundary {
-    fn drop(&mut self) {
-        let _ = io::stdout().flush();
-        let _ = io::stderr().flush();
-        Printer::native_output_boundary();
-    }
 }
 
 fn run_streaming_command_with_env(
@@ -393,14 +373,10 @@ fn tee_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Result<V
     let mut buf = [0u8; 8192];
     let mut stderr = io::stderr().lock();
     let should_tee = terminal_stdio_available();
-    let mut boundary = None;
     loop {
         let count = stream.read(&mut buf).context("reading stderr stream")?;
         if count == 0 {
             break;
-        }
-        if should_tee && boundary.is_none() {
-            boundary = Some(NativeOutputBoundary::start());
         }
         if should_tee {
             stderr
@@ -410,7 +386,6 @@ fn tee_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Result<V
         }
         append_tail(&mut bytes, &buf[..count], STDERR_TEE_CAPTURE_LIMIT);
     }
-    drop(boundary);
     Ok(bytes)
 }
 

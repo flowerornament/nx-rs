@@ -4,6 +4,8 @@
 
 - excluded Codex session/log directories and Claude file history from default `nx clean-caches` plans so routine cleanup preserves agent resume/history data unless those caches are selected explicitly
 - kept default split Darwin builds quiet by capturing Nix build stderr for diagnostics instead of teeing every `copying path` and `building` line; `--verbose` still streams full build logs
+- removed anonymous dashed native-output separators from rebuild and upgrade output so empty Nix/Darwin phases do not render as stray divider lines
+- made the release helper work with macOS's system Python by reading the package version without requiring Python 3.11's `tomllib`
 
 ## v1.5.21 - 2026-05-20
 

@@ -634,6 +634,14 @@ fn assert_quiet_split_build_output(stdout: &str, stderr: &str) {
     }
 }
 
+fn assert_no_anonymous_boundaries(case_id: &str, stdout: &str, stderr: &str) {
+    assert!(
+        !stdout.contains("-------------------------")
+            && !stderr.contains("-------------------------"),
+        "case {case_id}: output included anonymous separator lines\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
+
 #[test]
 fn split_darwin_rebuild_skips_activation_when_system_is_current() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -697,7 +705,7 @@ fn split_darwin_rebuild_authorizes_sudo_when_prompt_is_needed() -> Result<(), Bo
         "stdout missing sudo authorization phase\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
-        !stdout.contains("Falling back to darwin-rebuild switch"),
+        !stdout.contains("Running darwin-rebuild switch"),
         "stdout should not fall back after sudo authorization\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
 
@@ -721,12 +729,12 @@ fn split_darwin_rebuild_preserves_passwordless_legacy_sudo() -> Result<(), Box<d
     )?;
 
     assert!(
-        stdout.contains("Split activation needs sudo; using passwordless darwin-rebuild fallback"),
-        "stdout missing passwordless fallback warning\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        stdout.contains("activation: using passwordless darwin-rebuild"),
+        "stdout missing passwordless fallback detail\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
-        stdout.contains("Falling back to darwin-rebuild switch"),
-        "stdout missing generic fallback warning\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        stdout.contains("Running darwin-rebuild switch"),
+        "stdout missing legacy rebuild action\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
         stdout.contains("System rebuilt"),
@@ -887,6 +895,7 @@ fn run_split_rebuild_with_expected_exit(
         before, after,
         "case {case_id} mutated repository files\nstdout:\n{stdout}\nstderr:\n{stderr}",
     );
+    assert_no_anonymous_boundaries(case_id, &stdout, &stderr);
 
     Ok(RunResult {
         home_dir,

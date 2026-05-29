@@ -273,6 +273,22 @@ case "$program" in
       exit 0
     fi
 
+    if [ "${1:-}" = "-n" ] && [ "${2:-}" = "-l" ] && [ "${3:-}" = "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild" ]; then
+      if [ "$mode" = "split_sudo_prompt_legacy_available" ]; then
+        shift
+        shift
+        printf '%s' "$1"
+        shift
+        for arg in "$@"; do
+          printf ' %s' "$arg"
+        done
+        printf '\n'
+        exit 0
+      fi
+      echo "sudo: a password is required" >&2
+      exit 1
+    fi
+
     if [ "${1:-}" = "-n" ] && [ "${2:-}" = "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild" ]; then
       if [ "$mode" = "split_sudo_prompt_legacy_available" ]; then
         echo "darwin-rebuild [--help] {edit | switch | activate | build | check}"

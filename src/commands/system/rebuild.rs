@@ -794,7 +794,7 @@ fn do_split_darwin_rebuild(
     }
 
     let split_activation_needs_auth = split_activation_would_prompt(use_sudo);
-    if split_activation_needs_auth && legacy_darwin_rebuild_sudo_available() {
+    if split_activation_needs_auth && legacy_darwin_rebuild_sudo_available(ctx.repo_root) {
         ctx.printer
             .warn("Split activation needs sudo; using passwordless darwin-rebuild fallback");
         return SplitDarwinResult::Fallback;
@@ -1020,9 +1020,14 @@ fn split_activation_would_prompt(use_sudo: bool) -> bool {
     use_sudo && !sudo_noninteractive_available()
 }
 
-fn legacy_darwin_rebuild_sudo_available() -> bool {
-    run_captured_command("sudo", &["-n", DARWIN_REBUILD, "--help"], None)
-        .is_ok_and(|output| output.code == 0 && !sudo_password_required(&output))
+fn legacy_darwin_rebuild_sudo_available(repo: &Path) -> bool {
+    let repo = repo.display().to_string();
+    run_captured_command(
+        "sudo",
+        &["-n", "-l", DARWIN_REBUILD, "switch", "--flake", &repo],
+        None,
+    )
+    .is_ok_and(|output| output.code == 0 && !sudo_password_required(&output))
 }
 
 pub(super) fn sudo_password_required(output: &crate::infra::shell::CapturedCommand) -> bool {

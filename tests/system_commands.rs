@@ -229,7 +229,14 @@ const SPLIT_REBUILD_SUDO_AUTH_CALL: ExpectedCall =
 const SPLIT_REBUILD_LEGACY_SUDO_PROBE_CALL: ExpectedCall = ExpectedCall::new(
     "sudo",
     EXPECTED_CWD_REPO_ROOT,
-    &["-n", DARWIN_REBUILD_CMD, "--help"],
+    &[
+        "-n",
+        "-l",
+        DARWIN_REBUILD_CMD,
+        "switch",
+        "--flake",
+        REPO_ROOT_TOKEN,
+    ],
 );
 
 const SPLIT_REBUILD_PROFILE_SET_CALL: ExpectedCall = ExpectedCall::new(

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- made default interactive split rebuilds explicitly request Nix's `bar` log format and keep a bounded stderr tail, avoiding Nix's anonymous log separators while preserving diagnostics
 - made the upgrade split-rebuild system test deterministic on Linux CI by pinning the test system-profile path
 
 ## v1.5.23 - 2026-05-29

@@ -143,9 +143,9 @@ fn split_nix_build_can_request_native_log_format() {
 }
 
 #[test]
-fn split_build_log_format_is_verbose_only() {
+fn split_build_log_format_uses_bar_by_default() {
     assert_eq!(SplitBuildOutputMode::Captured.log_format(), None);
-    assert_eq!(SplitBuildOutputMode::Native.log_format(), None);
+    assert_eq!(SplitBuildOutputMode::Native.log_format(), Some("bar"));
     assert_eq!(
         SplitBuildOutputMode::NativeVerbose.log_format(),
         Some("bar-with-logs")

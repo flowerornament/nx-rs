@@ -9,7 +9,7 @@ use crate::infra::activation_profile::ActivationPhaseProfiler;
 use crate::infra::shell::{
     StreamName, first_nonempty_output, run_captured_command, run_captured_command_with_env,
     run_indented_command_collecting_with_env, run_indented_command_collecting_with_observer,
-    run_native_command_with_env, run_stdout_collecting_inherit_stderr_with_env,
+    run_native_command_with_env, run_stdout_collecting_tee_stderr_with_env,
     terminal_stderr_available, terminal_stdio_available,
 };
 use crate::infra::timing::{
@@ -96,7 +96,8 @@ impl SplitBuildOutputMode {
 
     pub(super) const fn log_format(self) -> Option<&'static str> {
         match self {
-            Self::Captured | Self::Native => None,
+            Self::Captured => None,
+            Self::Native => Some("bar"),
             Self::NativeVerbose => Some("bar-with-logs"),
         }
     }
@@ -861,7 +862,7 @@ fn build_split_system_config(
     let (build, mut phase) = timed_phase("build", || {
         ctx.printer.action("Building system configuration");
         if output_mode.split_build.is_native() {
-            let output = run_stdout_collecting_inherit_stderr_with_env(
+            let output = run_stdout_collecting_tee_stderr_with_env(
                 &build_program,
                 &build_arg_refs,
                 None,

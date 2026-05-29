@@ -484,12 +484,12 @@ Experimental split Darwin rebuild:
 - Applies only to Darwin manifests using the default `darwin-rebuild` command and no passthrough args.
 - Falls back to the default rebuild path when the split path cannot confidently preserve behavior.
 - Runs `nix build --json --no-link <repo_root>#darwinConfigurations.<host>.system` under a raised file descriptor limit.
-- In interactive terminals, the split build captures stdout and stderr by default so successful Nix build logs stay quiet while retry/error detection still has diagnostics. `--verbose` streams full split-build stderr with `bar-with-logs`. The retained stderr diagnostic buffer is bounded.
+- In interactive terminals, the split build captures stdout and a bounded stderr tail while teeing Nix's `bar` progress UI so successful build logs stay quiet and retry/error detection still has diagnostics. `--verbose` streams full split-build stderr with `bar-with-logs`.
 - Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get LocalHostName`, then `hostname -s`.
 - If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
 - Otherwise runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
 - If direct split activation would require an interactive sudo prompt but the legacy `sudo darwin-rebuild` path is available non-interactively, falls back to legacy `darwin-rebuild` to preserve passwordless sudoers setups.
-- In interactive terminals, activation output inherits stdio and is bounded by unindented separator lines so child tools preserve native color/progress behavior. Non-interactive runs and `--timing` continue to use captured output.
+- In interactive terminals, activation output inherits stdio directly so child tools preserve native color/progress behavior. Non-interactive runs and `--timing` continue to use captured output.
 - If rebuild fails with a Nix fixed-output hash mismatch, parse the `specified` and `got` hashes. If exactly one tracked `.nix` file contains the exact specified hash string and that file has no pre-existing staged or unstaged changes, update that occurrence to the got hash and retry rebuild. Disable automatic repair when `NX_NO_AUTO_HASH_FIX=1` (also accepting `true`, `yes`, or `on`). Stop automatic repairs after three fixed-output hash mismatches in one command and require manual review.
 - Retries a bounded number of times after clearing Nix git/tarball/fetcher caches when flake check or rebuild output reports lazy source object lookup failures.
 - Retries after file descriptor exhaustion by clearing tarball/fetcher caches; root cache cleanup must be non-interactive.
@@ -590,7 +590,6 @@ Dry-run behavior:
   - carriage-return progress updates are collapsed to the final visible frame before printing, observing, or collecting.
 - `run_native_command`:
   - inherits stdin, stdout, and stderr from the parent process.
-  - prints unindented separator lines before and after child-owned terminal output.
   - is only selected for interactive terminal flows that do not need stream parsing.
 
 ## 13. Output/UX Contracts Backed By Tests

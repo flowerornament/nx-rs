@@ -38,7 +38,7 @@ Pinned toolchain:
 Use `just` as the primary entrypoint:
 
 ```bash
-just help           # show workflows and what they enforce
+just --list         # show grouped workflows and what they enforce
 just doctor         # verify local toolchain and paths
 just hooks-install  # install/update bd git hooks
 just guard          # strict pre-compile checks
@@ -72,6 +72,67 @@ Quality gate enforcement:
 - **Primary**: AGENTS.md instruction to run `just ci` before finishing code changes
 - **Safety net**: Claude Code Stop hook runs `just check` before session ends
 - **Git hooks**: Owned by bd for beads sync (installed via `just hooks-install`)
+
+Justfile conventions:
+- `just` and `just --list` are the discoverable command surface. Keep recipe
+  comments and `[group(...)]` attributes current instead of maintaining a
+  separate hand-written help recipe.
+- `just compile` is the authoritative compile path for agents.
+- Hooks intentionally fail fast on style, lint, and correctness regressions.
+- Release recipes use `just` attributes for safety: `[arg(...)]` validates
+  semver arguments, `quote()` escapes shell interpolation, and `[confirm(...)]`
+  guards the public tagging step.
+
+## Release Flow
+
+Release automation is local-first and tag-driven. Day-to-day work lands on
+`main`; release commits are ordinary commits on `main`; downstream flake
+consumers that want the latest published release should track
+`refs/heads/release`.
+
+The `release` branch is generated state. `just release-tag` moves it to the
+new annotated version tag with `--force-with-lease` after the tag push.
+
+Before bumping, verify shipped behavior is reflected in the docs agents and
+users read. CLI help strings are authoritative, but these must match:
+
+- `CHANGELOG.md` — entry for the target version, scaffolded by `release-bump`
+- `README.md` — command behavior, install examples, and user-facing workflows
+- `.agents/SPEC.md` — behavior-contract changes, when command semantics changed
+- `AGENTS.md` — release/process changes, when agent workflow changed
+
+Write docs as if they were always correct, without "added" or "updated"
+language.
+
+Canonical sequence:
+
+```bash
+just release-bump 1.5.25
+# Fill CHANGELOG.md and update docs for shipped user-facing behavior.
+git add Cargo.toml Cargo.lock flake.nix CHANGELOG.md README.md .agents/SPEC.md AGENTS.md
+git commit -m "Release v1.5.25"
+just release-verify
+git push origin main
+just release-tag 1.5.25
+git ls-remote origin refs/heads/release 'refs/tags/v1.5.25^{}'
+```
+
+`just release-verify` intentionally requires a clean worktree. Commit the
+release-prep changes before running it so the consumer-flake smoke tests see
+the same git-tracked source that will be tagged.
+
+`just release-verify` checks version alignment across `Cargo.toml`,
+`Cargo.lock`, and `flake.nix`; CHANGELOG readiness with no `TODO`/`TBD`
+placeholders; then runs `just ci`, `just test-system`, `just build`, Home
+Manager module smoke tests, Nix package consumer smoke tests, `nix build .`,
+`nix run . -- --help`, and `./target/release/nx --help`.
+
+`just release-tag` creates and pushes `vX.Y.Z`, then publishes
+`origin/release` at the same commit. It prompts before running because this is
+the public release step; use `just --yes release-tag X.Y.Z` only for explicit
+automation. The final `git ls-remote` check should show matching object IDs for
+`refs/heads/release` and the peeled tag. Pushing the version tag triggers
+`.github/workflows/release.yml`.
 
 ## Task Tracking (bd)
 

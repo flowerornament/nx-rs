@@ -92,6 +92,9 @@ nix flake update nx-rs
 sudo /nix/var/nix/profiles/system/sw/bin/darwin-rebuild switch --flake .
 ```
 
+The `release` branch is a moving branch maintained by the release process. It
+points at the latest tagged release; the default branch is for development.
+
 #### Nix + Home Manager
 
 This is the recommended install path for declarative Nix users. The module
@@ -599,7 +602,7 @@ Rust is pinned in `rust-toolchain.toml` (`1.94.0`).
 ### Workflow
 
 ```bash
-just help
+just --list
 just doctor
 just hooks-install
 just compile
@@ -626,6 +629,30 @@ Additional strict checks:
 cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic
 just test-system
 ```
+
+### Release Process
+
+Releases are local-first and tag-driven. The release helper updates all version
+files, verifies the committed release state, pushes the annotated tag, and moves
+`origin/release` to the tagged commit for downstream flake consumers.
+
+```bash
+just release-bump 1.5.25
+# Fill CHANGELOG.md and update user-facing docs for shipped behavior.
+git add Cargo.toml Cargo.lock flake.nix CHANGELOG.md README.md .agents/SPEC.md AGENTS.md
+git commit -m "Release v1.5.25"
+just release-verify
+git push origin main
+just release-tag 1.5.25
+git ls-remote origin refs/heads/release 'refs/tags/v1.5.25^{}'
+```
+
+`just release-verify` must run from a clean worktree, then runs the full CI
+gate, system matrix, release build, Home Manager and package consumer smoke
+tests, and Nix build/run checks. `just release-tag` publishes the version tag
+and updates `origin/release` with `--force-with-lease`; pushing the tag
+triggers the GitHub release workflow. It prompts before running; use
+`just --yes release-tag X.Y.Z` only for explicit automation.
 
 ### Task Tracking
 

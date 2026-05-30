@@ -69,7 +69,7 @@ nix run github:flowerornament/nx-rs -- --help
 Install into your profile:
 
 ```bash
-nix profile install github:flowerornament/nx-rs
+nix profile install github:flowerornament/nx-rs?ref=refs/heads/release
 ```
 
 Add `nx-rs` to your Nix configuration repository:
@@ -77,7 +77,7 @@ Add `nx-rs` to your Nix configuration repository:
 ```nix
 # flake.nix inputs
 nx-rs = {
-  url = "github:flowerornament/nx-rs";
+  url = "github:flowerornament/nx-rs?ref=refs/heads/release";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 
@@ -102,7 +102,7 @@ Add the flake input:
 
 ```nix
 nx-rs = {
-  url = "github:flowerornament/nx-rs";
+  url = "github:flowerornament/nx-rs?ref=refs/heads/release";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 ```

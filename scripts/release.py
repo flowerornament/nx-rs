@@ -172,6 +172,19 @@ def run(cmd: list[str]) -> None:
     subprocess.run(cmd, cwd=ROOT, check=True)
 
 
+def update_release_branch(tag_name: str) -> None:
+    run(["git", "branch", "-f", "release", tag_name])
+    run(
+        [
+            "git",
+            "push",
+            "--force-with-lease",
+            "origin",
+            "refs/heads/release:refs/heads/release",
+        ]
+    )
+
+
 def dirty_worktree_entries(status: str) -> list[str]:
     return [line for line in status.splitlines() if line.strip()]
 
@@ -250,6 +263,7 @@ def tag(version: str) -> None:
 
     run(["git", "tag", "-a", tag_name, "-m", tag_name])
     run(["git", "push", "origin", tag_name])
+    update_release_branch(tag_name)
 
 
 def main() -> None:

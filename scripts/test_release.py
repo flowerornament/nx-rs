@@ -7,6 +7,7 @@ import io
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -65,6 +66,26 @@ some-crate = "9.9.9"
             "## Unreleased\n\n## v1.1.0 - 2026-02-03\n\n"
             "- TODO: summarize release changes.\n\n## v1.0.0",
             updated,
+        )
+
+    def test_update_release_branch_moves_and_pushes_release_ref(self) -> None:
+        calls: list[list[str]] = []
+
+        with patch.object(release, "run", side_effect=calls.append):
+            release.update_release_branch("v1.2.3")
+
+        self.assertEqual(
+            calls,
+            [
+                ["git", "branch", "-f", "release", "v1.2.3"],
+                [
+                    "git",
+                    "push",
+                    "--force-with-lease",
+                    "origin",
+                    "refs/heads/release:refs/heads/release",
+                ],
+            ],
         )
 
 

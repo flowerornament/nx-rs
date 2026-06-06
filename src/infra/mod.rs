@@ -11,5 +11,6 @@ pub mod package_query;
 pub mod query_info;
 pub mod self_refresh;
 pub mod shell;
+pub mod shell_history;
 pub mod sources;
 pub mod timing;

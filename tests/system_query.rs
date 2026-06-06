@@ -11,6 +11,7 @@ use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use insta::assert_json_snapshot;
 use serde_json::Value;
@@ -31,6 +32,10 @@ const INSTALLED_JSON_ARGS: &[&str] = &["installed", "ripgrep", "--json"];
 const INFO_BLEEDING_EDGE_ARGS: &[&str] = &["info", "ripgrep", "--bleeding-edge"];
 const INFO_JSON_HM_MODULE_ARGS: &[&str] = &["info", "git", "--json"];
 const INFO_JSON_DARWIN_SERVICE_ARGS: &[&str] = &["info", "yabai", "--json"];
+const UNUSED_NIX_ARGS: &[&str] = &[
+    "unused", "--source", "nix", "--since", "30d", "--limit", "5",
+];
+const UNUSED_JSON_ARGS: &[&str] = &["unused", "--no-history", "--json"];
 
 const INFO_FOUND_STDOUT: &[&str] = &[
     "ripgrep  installed (nxs)",
@@ -67,6 +72,11 @@ fn run_query_command(
     install_stubs(&stub_dir)?;
     let log_path = tmp.path().join(LOG_FILE_NAME);
     let home_dir = TempDir::new()?;
+    let now_epoch_secs = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    fs::write(
+        home_dir.path().join(".zsh_history"),
+        format!(": {now_epoch_secs}:1;rg nx\n: 100:1;fd Cargo\n"),
+    )?;
 
     let output = Command::new(nx_bin)
         .args(["--plain", "--minimal"])
@@ -292,6 +302,20 @@ fn system_query_surface() -> Result<(), Box<dyn Error>> {
                 stdout_contains: INSTALLED_JSON_GLOBAL_STDOUT,
             },
         ),
+        (
+            "unused_nix_plain_renders_review_candidates",
+            QueryCase {
+                args: UNUSED_NIX_ARGS,
+                expected_exit: 0,
+                stdout_contains: &[
+                    "Package Usage Audit (30d)",
+                    "Review candidates",
+                    "lua5_4",
+                    "fd",
+                    "nx remove --dry-run lua5_4",
+                ],
+            },
+        ),
     ];
 
     for (case_name, case) in &cases {
@@ -340,5 +364,19 @@ fn system_query_list_json_snapshot() -> Result<(), Box<dyn Error>> {
         &nx_bin,
         &repo_base,
         LIST_JSON_ARGS,
+    )
+}
+
+#[test]
+fn system_query_unused_json_snapshot() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+
+    assert_query_json_snapshot(
+        "system_query_unused_json_no_history",
+        &nx_bin,
+        &repo_base,
+        UNUSED_JSON_ARGS,
     )
 }

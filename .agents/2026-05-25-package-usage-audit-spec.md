@@ -1,11 +1,12 @@
 # Package Usage Audit Spec
 
-Status: Proposed
+Status: Implemented MVP
 Date: 2026-05-25
-Scope: Design for an advisory `nx` feature that helps identify declared packages with little local evidence of use.
+Scope: Design background for an advisory `nx` feature that helps identify declared packages with little local evidence of use.
 
-This is a proposal document. The implemented behavior contract remains
-[`SPEC.md`](./SPEC.md) until this feature lands and tests make it normative.
+This document records the design background. The normative behavior contract is
+[`SPEC.md`](./SPEC.md), and day-to-day implementation workflow follows the
+jj-first guidance in [`AGENTS.md`](../AGENTS.md).
 
 ## Research Notes
 
@@ -43,7 +44,7 @@ The feature should reduce clutter without pretending to know intent.
 - Do not claim absence of history means absence of use.
 - Do not audit transitive dependencies; only packages declared in managed config are candidates.
 
-## Proposed Command
+## Implemented Command
 
 Primary command:
 
@@ -51,19 +52,14 @@ Primary command:
 nx unused [OPTIONS]
 ```
 
-Alias:
-
-```text
-nx audit unused
-```
-
-The top-level `unused` command is short for daily use. The `audit unused` alias
-leaves room for future audits without forcing a nested command on the common path.
+The top-level `unused` command is short for daily use. A nested
+`nx audit unused` alias remains future space if more audit commands appear; it
+is not part of the MVP contract.
 
 Options:
 
 - `--since <DURATION>`: usage window, default `90d`. Accepts `30d`, `12w`, `6mo`, `1y`.
-- `--source <SOURCE>`: filter to `nix`, `homebrew`, `cask`, `service`, or `all`.
+- `--source <SOURCE>`: filter to `nix`, `homebrew`, `cask`, `mas`, `service`, or `all`.
 - `--json`: emit machine-readable results.
 - `--verbose/-v`: include all evidence, including weak and protected evidence.
 - `--limit <N>`: cap default output, default `25`.
@@ -115,6 +111,11 @@ Status rules:
 - `protected`: package matches a configurable policy bucket and is hidden unless `--include-protected`.
 
 ## Data Sources
+
+The implemented MVP uses declared packages from existing package discovery and
+timestamped shell history. Spotlight, launchd runtime checks, repo-reference
+evidence, and untimestamped-history confidence remain design space for later
+slices.
 
 ### Declared Packages
 
@@ -262,12 +263,15 @@ All IO should sit at the infra boundary. Scoring should be pure and heavily unit
 
 - `nx unused` audits Nix, Homebrew, cask, and service buckets from existing package discovery.
 - zsh extended history parsing is covered by unit tests.
+- JSON output includes `name`, `source`, `location`, `status`, `last_seen`, `confidence`, and `evidence`.
+- Output never auto-removes and always suggests `nx remove --dry-run`.
+- Anti-drift tests update `.agents/SPEC.md` only when implementation lands.
+
+## Deferred Acceptance Criteria
+
 - Untimestamped history produces medium-confidence evidence but does not mark a package recent.
 - Cask Spotlight lookup is optional and skipped gracefully off macOS.
-- Output never auto-removes and always suggests `nx remove --dry-run`.
-- JSON output includes `name`, `source`, `location`, `status`, `last_seen`, `confidence`, and `evidence`.
 - Manifest drift is reported when present.
-- Anti-drift tests update `.agents/SPEC.md` only when implementation lands.
 
 ## Open Questions
 

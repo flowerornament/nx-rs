@@ -9,3 +9,4 @@ pub(crate) mod repo_scan;
 pub mod routing;
 pub mod source;
 pub mod upgrade;
+pub mod usage;

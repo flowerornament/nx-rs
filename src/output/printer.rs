@@ -81,7 +81,7 @@ impl Printer {
     }
 
     pub fn heading(text: &str) {
-        println!("\n\x1b[1m{}{text}\x1b[0m", LineLayout::Detail.indent());
+        println!("\n{}{text}", LineLayout::Detail.indent());
     }
 
     pub fn body(text: &str) {

@@ -229,6 +229,9 @@ nx where ripgrep
 
 # Show package distribution across nix/homebrew/mas sources
 nx status
+
+# Review packages with little local evidence of recent use
+nx unused
 ```
 
 Package changes:
@@ -257,6 +260,7 @@ nx search ripgrep
 nx info ripgrep
 nx list --plain
 nx installed ripgrep fd
+nx unused --since 30d
 ```
 
 System and host maintenance:
@@ -422,6 +426,20 @@ Shows package metadata plus candidate source information.
 Shows a read-only package distribution summary for the managed repo.
 
 - Supports `--json`.
+
+---
+
+#### `unused`
+
+Runs a read-only advisory audit for declared packages with little local evidence
+of recent use.
+
+- Supports `--since`, `--source`, `--limit`, `--include-protected`, `--json`,
+  `--verbose`, `--history`, `--no-history`, and `--no-spotlight`.
+- Scans timestamped shell history locally; it does not store raw commands, send
+  telemetry, or auto-remove packages.
+- Rows are review candidates, not proof. Use `nx where <name>` and
+  `nx remove --dry-run <name>` before removing anything.
 
 ---
 

@@ -19,6 +19,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "list",
     "info",
     "status",
+    "unused",
     "installed",
     "profile",
     "lint",
@@ -41,6 +42,7 @@ const TYPO_GUARDED_COMMANDS: &[&str] = &[
     "search",
     "where",
     "status",
+    "unused",
     "installed",
     "profile",
     "lint",
@@ -65,6 +67,7 @@ const WHERE_HELP: &str = "Examples:\n  nx where ripgrep\n\nNotes:\n  - `where` s
 const LIST_HELP: &str = "Examples:\n  nx list\n  nx list nix --verbose\n  nx list homebrew --json\n\nNotes:\n  - Source filters are `nix`, `homebrew`, and `mas`.";
 const INFO_HELP: &str = "Examples:\n  nx info ripgrep\n  nx info ripgrep --nur\n  nx info ripgrep --source homebrew\n  nx info ripgrep --verbose\n\nNotes:\n  - `info` shares the package-query pipeline with `search` and install resolution.\n  - Metadata/source collection shows loading feedback while lookups run.\n  - `--verbose` includes query diagnostics in addition to package metadata.";
 const STATUS_HELP: &str = "Examples:\n  nx status\n  nx status --json\n\nNotes:\n  - `status` is a read-only package distribution summary for the managed repo.";
+const UNUSED_HELP: &str = "Examples:\n  nx unused\n  nx unused --since 30d\n  nx unused --source nix --json\n  nx unused --history ~/.zsh_history --verbose\n\nNotes:\n  - `unused` is a read-only advisory audit of declared packages with little local evidence of recent use.\n  - It scans timestamped shell history locally and never reports or stores raw command history.\n  - Absence of evidence is only a review signal; use `nx remove --dry-run <package>` before removing anything.";
 const INSTALLED_HELP: &str = "Examples:\n  nx installed ripgrep fd\n  nx installed ripgrep --show-location\n  nx installed ripgrep fd --json\n\nNotes:\n  - Exit status is success only when every requested package is installed.";
 const PROFILE_HELP: &str = "Examples:\n  nx profile\n  nx profile --limit 20\n  nx profile --json\n\nNotes:\n  - `profile` reads local rebuild timing records from ~/.local/state/nx/timings.jsonl.\n  - Set NX_PROFILE_PATH to override the timing file location.";
 const LINT_HELP: &str = "Examples:\n  nx lint\n  nx lint --json\n\nNotes:\n  - `lint` checks first-line `# nx:` routing metadata and routing keyword overlap.";
@@ -182,6 +185,8 @@ pub enum CommandKind {
     Info(InfoArgs),
     #[command(about = "Show package distribution summary")]
     Status(StatusArgs),
+    #[command(about = "Audit declared packages for weak local usage evidence")]
+    Unused(UnusedArgs),
     #[command(about = "Check whether package(s) are installed")]
     Installed(InstalledArgs),
     #[command(about = "Show recent local rebuild timings")]
@@ -654,6 +659,45 @@ impl InfoArgs {
 pub struct StatusArgs {
     #[arg(long, help = "Emit machine-readable JSON output")]
     pub json: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(after_long_help = UNUSED_HELP)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct UnusedArgs {
+    #[arg(
+        long,
+        default_value = "90d",
+        help = "Usage window such as 30d, 12w, 6mo, or 1y"
+    )]
+    pub since: String,
+    #[arg(
+        long,
+        default_value = "all",
+        help = "Filter source: all, nix, homebrew, cask, mas, or service"
+    )]
+    pub source: String,
+    #[arg(long, default_value_t = 25, help = "Maximum candidate rows to print")]
+    pub limit: usize,
+    #[arg(long, help = "Include protected core packages and services")]
+    pub include_protected: bool,
+    #[arg(long, help = "Emit machine-readable JSON output")]
+    pub json: bool,
+    #[arg(short, long, help = "Show evidence details for each rendered package")]
+    pub verbose: bool,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Read an additional shell history file"
+    )]
+    pub history: Vec<std::path::PathBuf>,
+    #[arg(long, help = "Skip shell history scanning")]
+    pub no_history: bool,
+    #[arg(
+        long,
+        help = "Accepted for compatibility; Spotlight evidence is not collected yet"
+    )]
+    pub no_spotlight: bool,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -1518,6 +1562,43 @@ mod tests {
     }
 
     #[test]
+    fn unused_parses_audit_options() {
+        let cli = Cli::try_parse_from([
+            "nx",
+            "unused",
+            "--since",
+            "30d",
+            "--source",
+            "nix",
+            "--limit",
+            "10",
+            "--include-protected",
+            "--json",
+            "--verbose",
+            "--history",
+            "~/.zsh_history",
+            "--no-history",
+            "--no-spotlight",
+        ])
+        .expect("parse unused options");
+        let CommandKind::Unused(args) = cli.command else {
+            panic!("expected unused command");
+        };
+        assert_eq!(args.since, "30d");
+        assert_eq!(args.source, "nix");
+        assert_eq!(args.limit, 10);
+        assert!(args.include_protected);
+        assert!(args.json);
+        assert!(args.verbose);
+        assert_eq!(
+            args.history,
+            vec![std::path::PathBuf::from("~/.zsh_history")]
+        );
+        assert!(args.no_history);
+        assert!(args.no_spotlight);
+    }
+
+    #[test]
     fn rebuild_parses_verbose_option() {
         let cli =
             Cli::try_parse_from(["nx", "rebuild", "--verbose"]).expect("parse rebuild verbose");
@@ -1627,6 +1708,20 @@ mod tests {
         assert_subcommand_local_long_flags("remove", &["yes", "dry-run", "model"]);
         assert_subcommand_local_long_flags("where", &[]);
         assert_subcommand_local_long_flags("installed", &["json", "show-location"]);
+        assert_subcommand_local_long_flags(
+            "unused",
+            &[
+                "since",
+                "source",
+                "limit",
+                "include-protected",
+                "json",
+                "verbose",
+                "history",
+                "no-history",
+                "no-spotlight",
+            ],
+        );
         assert_subcommand_local_long_flags("lint", &["json"]);
         assert_subcommand_local_long_flags("status", &["json"]);
         assert_subcommand_local_long_flags("undo", &["yes"]);

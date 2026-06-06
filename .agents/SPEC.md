@@ -49,6 +49,7 @@ Known commands:
 - `list`
 - `info`
 - `status`
+- `unused`
 - `installed`
 - `profile`
 - `lint`
@@ -104,6 +105,8 @@ Defined at root callback:
   - options: `--json`, `--bleeding-edge`, `--nur`, `--source`, `--verbose`
 - `status`
   - options: `--json`
+- `unused`
+  - options: `--since`, `--source`, `--limit`, `--include-protected`, `--json`, `--verbose/-v`, `--history`, `--no-history`, `--no-spotlight`
 - `installed`
   - args: `<packages...>`
   - options: `--json`, `--show-location`
@@ -155,6 +158,7 @@ Defined at root callback:
 - `list`: `1` for invalid source filter; otherwise `0`.
 - `info`: `0` (including not-found); clap usage errors exit `2`.
 - `status`: `0`.
+- `unused`: `0` when audit renders; `1` on package scan/render failure; invalid filters or durations exit `2`.
 - `installed`: `0` only if all requested packages are installed; clap usage errors exit `2`.
 - `profile`: `0` when timing records render successfully; `1` on timing file read/render failure.
 - `lint`: `0` when routing metadata passes; otherwise `1`.
@@ -434,7 +438,18 @@ Network behavior:
 
 - Produces total count + per-source distribution table.
 
-## 9.5 `installed`
+## 9.5 `unused`
+
+- Read-only advisory audit for declared packages with little local evidence of recent use.
+- Scans timestamped shell history from `HISTFILE`, common shell history files under `HOME`, and explicit `--history <PATH>` files unless `--no-history` is set.
+- Does not store raw commands, send telemetry, or auto-remove packages.
+- `--since <DURATION>` accepts `d`, `w`, `mo`, and `y` units; default `90d`.
+- `--source` accepts `all`, `nix`, `homebrew`, `cask`, `mas`, and `service` aliases.
+- Human output says "review candidates" and suggests `nx where <name>` plus `nx remove --dry-run <name>`.
+- JSON output includes stable `records[]` with `name`, `source`, `location`, `status`, `last_seen`, `confidence`, `evidence[]`, and `suggestions[]`.
+- Protected services and core shell/editor/package-manager tools are hidden unless `--include-protected` is set.
+
+## 9.6 `installed`
 
 - Supports fuzzy package match.
 - JSON output format (query strings as top-level keys):
@@ -605,6 +620,7 @@ Dry-run behavior:
 - Rebuild flow invokes streaming command path when preflight and flake-check pass.
 - `list --plain` includes discovered package names.
 - `info --json` includes package name and source metadata.
+- `unused --json` includes stable records and never includes raw shell commands.
 - `installed --json` includes queried package key.
 
 ## 14. Legacy Compatibility Notes

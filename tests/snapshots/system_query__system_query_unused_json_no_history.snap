@@ -1,0 +1,102 @@
+---
+source: tests/system_query.rs
+assertion_line: 150
+expression: value
+---
+{
+  "since": "90d",
+  "since_seconds": 7776000,
+  "records": [
+    {
+      "name": "ripgrep",
+      "source": "nix",
+      "location": "packages/nix/cli.nix:5",
+      "status": "unknown",
+      "last_seen": null,
+      "confidence": "none",
+      "evidence": [],
+      "suggestions": [
+        "nx where ripgrep",
+        "nx remove --dry-run ripgrep"
+      ]
+    },
+    {
+      "name": "fd",
+      "source": "nix",
+      "location": "packages/nix/cli.nix:6",
+      "status": "unknown",
+      "last_seen": null,
+      "confidence": "none",
+      "evidence": [],
+      "suggestions": [
+        "nx where fd",
+        "nx remove --dry-run fd"
+      ]
+    },
+    {
+      "name": "lua5_4",
+      "source": "nix",
+      "location": "packages/nix/cli.nix:7",
+      "status": "unknown",
+      "last_seen": null,
+      "confidence": "none",
+      "evidence": [],
+      "suggestions": [
+        "nx where lua5_4",
+        "nx remove --dry-run lua5_4"
+      ]
+    },
+    {
+      "name": "python3",
+      "source": "nix",
+      "location": "packages/nix/languages.nix:5",
+      "status": "unknown",
+      "last_seen": null,
+      "confidence": "none",
+      "evidence": [],
+      "suggestions": [
+        "nx where python3",
+        "nx remove --dry-run python3"
+      ]
+    },
+    {
+      "name": "htop",
+      "source": "homebrew",
+      "location": "packages/homebrew/brews.nix:5",
+      "status": "unknown",
+      "last_seen": null,
+      "confidence": "none",
+      "evidence": [],
+      "suggestions": [
+        "nx where htop",
+        "nx remove --dry-run htop"
+      ]
+    },
+    {
+      "name": "raycast",
+      "source": "cask",
+      "location": "packages/homebrew/casks.nix:5",
+      "status": "unknown",
+      "last_seen": null,
+      "confidence": "none",
+      "evidence": [],
+      "suggestions": [
+        "nx where raycast",
+        "nx remove --dry-run raycast"
+      ]
+    },
+    {
+      "name": "Xcode",
+      "source": "mas",
+      "location": "system/darwin.nix:5",
+      "status": "unknown",
+      "last_seen": null,
+      "confidence": "none",
+      "evidence": [],
+      "suggestions": [
+        "nx where Xcode",
+        "nx remove --dry-run Xcode"
+      ]
+    }
+  ]
+}

@@ -441,11 +441,12 @@ Network behavior:
 ## 9.5 `unused`
 
 - Read-only advisory audit for declared packages with little local evidence of recent use.
-- Scans timestamped shell history from `HISTFILE`, common shell history files under `HOME`, and explicit `--history <PATH>` files unless `--no-history` is set.
+- Scans shell history from `HISTFILE`, common shell history files under `HOME`, and explicit `--history <PATH>` files unless `--no-history` is set.
+- Timestamped history produces strong evidence and can mark packages `recent` or `old`; untimestamped history produces medium evidence but keeps status `unknown`.
 - Does not store raw commands, send telemetry, or auto-remove packages.
 - `--since <DURATION>` accepts `d`, `w`, `mo`, and `y` units; default `90d`.
 - `--source` accepts `all`, `nix`, `homebrew`, `cask`, `mas`, and `service` aliases.
-- Human output says "review candidates" and suggests `nx where <name>` plus `nx remove --dry-run <name>`.
+- Human output says "review candidates" and distinguishes "no command evidence found" from "command evidence has no timestamp"; it suggests `nx where <name>` plus `nx remove --dry-run <name>`.
 - JSON output includes stable `records[]` with `name`, `source`, `location`, `status`, `last_seen`, `confidence`, `evidence[]`, and `suggestions[]`.
 - Protected services and core shell/editor/package-manager tools are hidden unless `--include-protected` is set.
 

@@ -73,8 +73,10 @@ fn run_query_command(
     let log_path = tmp.path().join(LOG_FILE_NAME);
     let home_dir = TempDir::new()?;
     let now_epoch_secs = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    let zsh_state_dir = home_dir.path().join(".local/state/zsh");
+    fs::create_dir_all(&zsh_state_dir)?;
     fs::write(
-        home_dir.path().join(".zsh_history"),
+        zsh_state_dir.join("history"),
         format!(": {now_epoch_secs}:1;rg nx\n: 100:1;fd Cargo\n"),
     )?;
 

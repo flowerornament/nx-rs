@@ -13,6 +13,14 @@ impl ShellHistoryEntry {
             duration_secs,
         }
     }
+
+    fn untimestamped(command: &str) -> Self {
+        Self {
+            command: command.to_string(),
+            started_at_epoch_secs: None,
+            duration_secs: None,
+        }
+    }
 }
 
 pub fn parse_zsh_extended_history(text: &str) -> Vec<ShellHistoryEntry> {
@@ -47,6 +55,38 @@ pub fn parse_timestamped_shell_history(text: &str) -> Vec<ShellHistoryEntry> {
     entries
 }
 
+pub fn parse_shell_history(text: &str) -> Vec<ShellHistoryEntry> {
+    let mut entries = parse_timestamped_shell_history(text);
+    entries.extend(parse_untimestamped_shell_history(text));
+    entries
+}
+
+fn parse_untimestamped_shell_history(text: &str) -> Vec<ShellHistoryEntry> {
+    let mut entries = Vec::new();
+    let mut skip_next_command = false;
+
+    for line in text.lines() {
+        let command = line.trim();
+        let is_bash_timestamp = command
+            .strip_prefix('#')
+            .is_some_and(|comment| parse_bash_timestamp_comment(comment).is_some());
+        if is_bash_timestamp {
+            skip_next_command = true;
+            continue;
+        }
+        if command.is_empty() || command.starts_with(": ") {
+            continue;
+        }
+        if skip_next_command {
+            skip_next_command = false;
+            continue;
+        }
+        entries.push(ShellHistoryEntry::untimestamped(command));
+    }
+
+    entries
+}
+
 fn parse_zsh_extended_line(line: &str) -> Option<ShellHistoryEntry> {
     let rest = line.strip_prefix(": ")?;
     let (epoch, rest) = rest.split_once(':')?;
@@ -71,8 +111,8 @@ fn parse_bash_timestamp_comment(line: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ShellHistoryEntry, parse_bash_timestamped_history, parse_timestamped_shell_history,
-        parse_zsh_extended_history,
+        ShellHistoryEntry, parse_bash_timestamped_history, parse_shell_history,
+        parse_timestamped_shell_history, parse_zsh_extended_history,
     };
 
     #[test]
@@ -168,6 +208,33 @@ mod tests {
                 ShellHistoryEntry {
                     command: "fd src".to_string(),
                     started_at_epoch_secs: Some(1_760_000_010),
+                    duration_secs: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_shell_history_includes_untimestamped_commands_without_duplicates() {
+        let entries =
+            parse_shell_history(": 1760000000:3;rg package\n#1760000010\nfd src\nbat README.md\n");
+
+        assert_eq!(
+            entries,
+            vec![
+                ShellHistoryEntry {
+                    command: "rg package".to_string(),
+                    started_at_epoch_secs: Some(1_760_000_000),
+                    duration_secs: Some(3),
+                },
+                ShellHistoryEntry {
+                    command: "fd src".to_string(),
+                    started_at_epoch_secs: Some(1_760_000_010),
+                    duration_secs: None,
+                },
+                ShellHistoryEntry {
+                    command: "bat README.md".to_string(),
+                    started_at_epoch_secs: None,
                     duration_secs: None,
                 },
             ]

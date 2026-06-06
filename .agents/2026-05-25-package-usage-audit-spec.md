@@ -113,9 +113,9 @@ Status rules:
 ## Data Sources
 
 The implemented MVP uses declared packages from existing package discovery and
-timestamped shell history. Spotlight, launchd runtime checks, repo-reference
-evidence, and untimestamped-history confidence remain design space for later
-slices.
+shell history. Timestamped history is strong evidence; untimestamped history is
+medium evidence that does not imply recency. Spotlight, launchd runtime checks,
+and repo-reference evidence remain design space for later slices.
 
 ### Declared Packages
 
@@ -129,7 +129,7 @@ Use existing finder/list plumbing:
 
 Scan shell history files:
 
-- default: `$HISTFILE` when set, then `~/.zsh_history`, `~/.bash_history`, `~/.config/fish/fish_history` if present.
+- default: `$HISTFILE` when set, then `~/.zsh_history`, `~/.local/state/zsh/history`, `~/.bash_history`, `~/.config/fish/fish_history` if present.
 - parse zsh extended history records of the form `: <epoch>:<duration>;<command>`.
 - parse fish YAML-ish history entries with timestamps when feasible.
 - parse bash history as untimestamped unless timestamp comments are present.
@@ -263,13 +263,13 @@ All IO should sit at the infra boundary. Scoring should be pure and heavily unit
 
 - `nx unused` audits Nix, Homebrew, cask, and service buckets from existing package discovery.
 - zsh extended history parsing is covered by unit tests.
+- Untimestamped history produces medium-confidence evidence but does not mark a package recent.
 - JSON output includes `name`, `source`, `location`, `status`, `last_seen`, `confidence`, and `evidence`.
 - Output never auto-removes and always suggests `nx remove --dry-run`.
 - Anti-drift tests update `.agents/SPEC.md` only when implementation lands.
 
 ## Deferred Acceptance Criteria
 
-- Untimestamped history produces medium-confidence evidence but does not mark a package recent.
 - Cask Spotlight lookup is optional and skipped gracefully off macOS.
 - Manifest drift is reported when present.
 

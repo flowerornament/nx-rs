@@ -10,12 +10,12 @@ use crate::cli::UnusedArgs;
 use crate::commands::context::QueryContext;
 use crate::commands::shared::relative_location;
 use crate::domain::usage::{
-    DeclaredPackage, UsageAuditOptions, UsageRecord, UsageSource, UsageStatus, audit_usage_records,
-    parse_since_seconds,
+    DeclaredPackage, EvidenceConfidence, UsageAuditOptions, UsageRecord, UsageSource, UsageStatus,
+    audit_usage_records, parse_since_seconds,
 };
 use crate::infra::config_scan::{PackageBuckets, scan_packages};
 use crate::infra::finder::find_package;
-use crate::infra::shell_history::{ShellHistoryEntry, parse_timestamped_shell_history};
+use crate::infra::shell_history::{ShellHistoryEntry, parse_shell_history};
 use crate::output::printer::Printer;
 
 const PACKAGE_COLUMN_WIDTH: usize = 24;
@@ -139,7 +139,12 @@ fn history_paths(args: &UnusedArgs) -> Vec<PathBuf> {
         push_history_path(&mut out, &mut seen, expand_home(path));
     }
     if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
-        for rel in [".zsh_history", ".bash_history", ".config/fish/fish_history"] {
+        for rel in [
+            ".zsh_history",
+            ".local/state/zsh/history",
+            ".bash_history",
+            ".config/fish/fish_history",
+        ] {
             push_history_path(&mut out, &mut seen, home.join(rel));
         }
     }
@@ -168,8 +173,11 @@ fn expand_home(path: PathBuf) -> PathBuf {
 fn load_shell_history(paths: &[PathBuf], printer: Option<&Printer>) -> Vec<ShellHistoryEntry> {
     let mut entries = Vec::new();
     for path in paths {
-        match fs::read_to_string(path) {
-            Ok(text) => entries.extend(parse_timestamped_shell_history(&text)),
+        match fs::read(path) {
+            Ok(bytes) => {
+                let text = String::from_utf8_lossy(&bytes);
+                entries.extend(parse_shell_history(&text));
+            }
             Err(err) if path.exists() => {
                 let Some(printer) = printer else {
                     continue;
@@ -202,6 +210,9 @@ fn render_human(records: &[UsageRecord], args: &UnusedArgs, hidden_protected: us
     if rendered.is_empty() {
         Printer::detail("No review candidates found with the selected filters.");
     } else {
+        if let Some(summary) = candidate_evidence_summary(&candidates) {
+            Printer::detail(&summary);
+        }
         Printer::body(&format!(
             "{:<24} {:<10} {:<18} Why",
             "Package", "Source", "Last evidence"
@@ -290,6 +301,7 @@ fn candidate_records(records: &[UsageRecord]) -> Vec<&UsageRecord> {
     out.sort_by_key(|record| {
         (
             record.status != UsageStatus::Unknown,
+            record.confidence,
             record.last_seen.unwrap_or(i64::MIN),
             record.name.clone(),
         )
@@ -297,10 +309,45 @@ fn candidate_records(records: &[UsageRecord]) -> Vec<&UsageRecord> {
     out
 }
 
+fn candidate_evidence_summary(records: &[&UsageRecord]) -> Option<String> {
+    let no_evidence = records
+        .iter()
+        .filter(|record| record.confidence == EvidenceConfidence::None)
+        .count();
+    let untimestamped = records
+        .iter()
+        .filter(|record| record.confidence > EvidenceConfidence::None && record.last_seen.is_none())
+        .count();
+    let timestamped = records
+        .iter()
+        .filter(|record| record.last_seen.is_some())
+        .count();
+
+    if no_evidence == 0 && untimestamped == 0 && timestamped == 0 {
+        return None;
+    }
+
+    let mut parts = Vec::new();
+    if no_evidence > 0 {
+        parts.push(format!("{no_evidence} without command evidence"));
+    }
+    if untimestamped > 0 {
+        parts.push(format!(
+            "{untimestamped} with untimestamped command evidence"
+        ));
+    }
+    if timestamped > 0 {
+        parts.push(format!("{timestamped} with timestamped command evidence"));
+    }
+    Some(parts.join("; "))
+}
+
 fn last_evidence(record: &UsageRecord) -> String {
-    record
-        .last_seen
-        .map_or_else(|| "none".to_string(), |timestamp| timestamp.to_string())
+    match (record.last_seen, record.confidence) {
+        (Some(timestamp), _) => timestamp.to_string(),
+        (None, EvidenceConfidence::None) => "none".to_string(),
+        (None, _) => "untimestamped".to_string(),
+    }
 }
 
 fn package_cell(name: &str) -> String {
@@ -318,7 +365,10 @@ fn package_cell(name: &str) -> String {
 
 fn reason(record: &UsageRecord) -> &'static str {
     match record.status {
-        UsageStatus::Unknown => "no command evidence found",
+        UsageStatus::Unknown if record.confidence == EvidenceConfidence::None => {
+            "no command evidence found"
+        }
+        UsageStatus::Unknown => "command evidence has no timestamp",
         UsageStatus::Old => "last command evidence is outside the window",
         UsageStatus::Recent => "recent command evidence found",
         UsageStatus::Protected => "protected by policy",
@@ -327,8 +377,14 @@ fn reason(record: &UsageRecord) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{SourceFilter, candidate_records, package_cell};
-    use crate::domain::usage::{UsageRecord, UsageSource, UsageStatus};
+    use std::fs;
+
+    use super::{
+        SourceFilter, candidate_evidence_summary, candidate_records, last_evidence,
+        load_shell_history, package_cell,
+    };
+    use crate::domain::usage::{EvidenceConfidence, UsageRecord, UsageSource, UsageStatus};
+    use tempfile::TempDir;
 
     #[test]
     fn source_filter_accepts_aliases() {
@@ -355,6 +411,49 @@ mod tests {
     }
 
     #[test]
+    fn candidate_evidence_summary_counts_evidence_shapes() {
+        let no_evidence = record("none", UsageStatus::Unknown, None);
+        let untimestamped = record_with_confidence(
+            "untimestamped",
+            UsageStatus::Unknown,
+            None,
+            EvidenceConfidence::Medium,
+        );
+        let timestamped = record_with_confidence(
+            "timestamped",
+            UsageStatus::Old,
+            Some(10),
+            EvidenceConfidence::Strong,
+        );
+        let records = [&no_evidence, &untimestamped, &timestamped];
+
+        assert_eq!(
+            candidate_evidence_summary(&records),
+            Some(
+                "1 without command evidence; 1 with untimestamped command evidence; 1 with timestamped command evidence"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn last_evidence_distinguishes_absent_and_untimestamped_evidence() {
+        assert_eq!(
+            last_evidence(&record("none", UsageStatus::Unknown, None)),
+            "none"
+        );
+        assert_eq!(
+            last_evidence(&record_with_confidence(
+                "medium",
+                UsageStatus::Unknown,
+                None,
+                EvidenceConfidence::Medium,
+            )),
+            "untimestamped"
+        );
+    }
+
+    #[test]
     fn package_cell_truncates_long_names_to_table_width() {
         assert_eq!(
             package_cell("beam27Packages.elixir_1_20"),
@@ -362,14 +461,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn load_shell_history_decodes_lossy_history_files() {
+        let tmp = TempDir::new().expect("tempdir");
+        let path = tmp.path().join("history");
+        fs::write(&path, b"bat README.md\n\xFF\n").expect("write history");
+
+        let entries = load_shell_history(&[path], None);
+
+        assert_eq!(entries[0].command, "bat README.md");
+    }
+
     fn record(name: &str, status: UsageStatus, last_seen: Option<i64>) -> UsageRecord {
+        record_with_confidence(name, status, last_seen, EvidenceConfidence::None)
+    }
+
+    fn record_with_confidence(
+        name: &str,
+        status: UsageStatus,
+        last_seen: Option<i64>,
+        confidence: EvidenceConfidence,
+    ) -> UsageRecord {
         UsageRecord {
             name: name.to_string(),
             source: UsageSource::Nix,
             location: None,
             status,
             last_seen,
-            confidence: crate::domain::usage::EvidenceConfidence::None,
+            confidence,
             evidence: Vec::new(),
             suggestions: Vec::new(),
         }

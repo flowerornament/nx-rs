@@ -166,12 +166,24 @@ fn shell_history_evidence(
             let command = command_word(&entry.command)?;
             aliases.contains(command).then(|| EvidenceItem {
                 kind: EvidenceKind::ShellHistory,
-                summary: format!("command `{command}` appeared in shell history"),
+                summary: shell_history_summary(command, entry.started_at_epoch_secs),
                 timestamp: entry.started_at_epoch_secs,
-                confidence: EvidenceConfidence::Strong,
+                confidence: if entry.started_at_epoch_secs.is_some() {
+                    EvidenceConfidence::Strong
+                } else {
+                    EvidenceConfidence::Medium
+                },
             })
         })
         .collect()
+}
+
+fn shell_history_summary(command: &str, timestamp: Option<i64>) -> String {
+    if timestamp.is_some() {
+        format!("command `{command}` appeared in timestamped shell history")
+    } else {
+        format!("command `{command}` appeared in untimestamped shell history")
+    }
 }
 
 fn command_word(command: &str) -> Option<&str> {
@@ -188,9 +200,24 @@ fn command_word(command: &str) -> Option<&str> {
 }
 
 fn command_aliases(package: &str) -> HashSet<&str> {
-    let bare = package.rsplit('.').next().unwrap_or(package);
-    let mut aliases = HashSet::from([package, bare]);
-    match package {
+    let slash_bare = package.rsplit('/').next().unwrap_or(package);
+    let bare = slash_bare.rsplit('.').next().unwrap_or(slash_bare);
+    let mut aliases = HashSet::from([package, slash_bare, bare]);
+
+    if let Some(cli_name) = bare.strip_suffix("-cli") {
+        aliases.insert(cli_name);
+    }
+
+    match bare {
+        "ast-grep" => {
+            aliases.insert("sg");
+        }
+        "claude-code" => {
+            aliases.insert("claude");
+        }
+        "codex-cli" => {
+            aliases.insert("codex");
+        }
         "ripgrep" => {
             aliases.insert("rg");
         }
@@ -207,6 +234,9 @@ fn command_aliases(package: &str) -> HashSet<&str> {
         "python3" => {
             aliases.insert("python");
             aliases.insert("python3");
+        }
+        "vercel-cli" => {
+            aliases.insert("vercel");
         }
         _ => {}
     }
@@ -316,6 +346,69 @@ mod tests {
         assert_eq!(records[0].confidence, EvidenceConfidence::Strong);
         assert_eq!(records[1].status, UsageStatus::Old);
         assert_eq!(records[2].status, UsageStatus::Unknown);
+    }
+
+    #[test]
+    fn untimestamped_shell_history_is_medium_evidence_but_not_recent() {
+        let records = audit_usage_records(
+            &[package("bat")],
+            &[ShellHistoryEntry {
+                command: "bat README.md".to_string(),
+                started_at_epoch_secs: None,
+                duration_secs: None,
+            }],
+            1_000,
+            UsageAuditOptions { since_seconds: 200 },
+        );
+
+        assert_eq!(records[0].status, UsageStatus::Unknown);
+        assert_eq!(records[0].confidence, EvidenceConfidence::Medium);
+        assert_eq!(
+            records[0].evidence[0].summary,
+            "command `bat` appeared in untimestamped shell history"
+        );
+    }
+
+    #[test]
+    fn package_aliases_match_common_command_names() {
+        let records = audit_usage_records(
+            &[
+                package("steveyegge/beads/bd"),
+                package("codex-cli"),
+                package("claude-code"),
+                package("ast-grep"),
+            ],
+            &[
+                ShellHistoryEntry {
+                    command: "bd ready".to_string(),
+                    started_at_epoch_secs: None,
+                    duration_secs: None,
+                },
+                ShellHistoryEntry {
+                    command: "codex --version".to_string(),
+                    started_at_epoch_secs: None,
+                    duration_secs: None,
+                },
+                ShellHistoryEntry {
+                    command: "claude -p status".to_string(),
+                    started_at_epoch_secs: None,
+                    duration_secs: None,
+                },
+                ShellHistoryEntry {
+                    command: "sg run --pattern TODO".to_string(),
+                    started_at_epoch_secs: None,
+                    duration_secs: None,
+                },
+            ],
+            1_000,
+            UsageAuditOptions { since_seconds: 200 },
+        );
+
+        assert!(records.iter().all(|record| {
+            record.status == UsageStatus::Unknown
+                && record.confidence == EvidenceConfidence::Medium
+                && !record.evidence.is_empty()
+        }));
     }
 
     #[test]

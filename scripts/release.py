@@ -204,8 +204,8 @@ def require_clean_worktree() -> None:
     preview = "\n".join(f"  {entry}" for entry in entries[:10])
     suffix = "" if len(entries) <= 10 else f"\n  ... and {len(entries) - 10} more"
     fail(
-        "release verification must run from a clean git worktree; "
-        "commit release-prep changes first\n"
+        "release verification must run from a clean jj working copy; "
+        "commit release-prep changes with `jj commit` first\n"
         f"{preview}{suffix}"
     )
 

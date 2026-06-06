@@ -16,7 +16,7 @@ doctor:
     @echo "just:    $(just --version)"
     @echo "cwd:     $(pwd)"
 
-# Install/update bd git hooks and ensure agent scripts are executable.
+# Install/update bd hooks and ensure agent scripts are executable.
 [group('bootstrap')]
 hooks-install:
     @bd hooks install --force

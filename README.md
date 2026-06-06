@@ -601,6 +601,29 @@ Rust is pinned in `rust-toolchain.toml` (`1.94.0`).
 
 ### Workflow
 
+This repo is jj-first for local development. Git remains the GitHub, CI, and
+release-tag transport layer, but day-to-day work uses Jujutsu:
+
+```bash
+jj git fetch
+jj new main -m "task: short description"
+jj status
+jj diff
+just ci
+jj commit -m "area: describe the change"
+jj git push --change @-
+```
+
+For direct publication to `main`, move the bookmark explicitly after committing:
+
+```bash
+jj bookmark move main --to @-
+jj git push --bookmark main
+```
+
+See `AGENTS.md` for the full jj workflow, agent workspace guidance, and
+recovery commands.
+
 ```bash
 just --list
 just doctor
@@ -637,22 +660,26 @@ files, verifies the committed release state, pushes the annotated tag, and moves
 `origin/release` to the tagged commit for downstream flake consumers.
 
 ```bash
+jj git fetch
+jj new main -m "release: prepare v1.5.25"
 just release-bump 1.5.25
 # Fill CHANGELOG.md and update user-facing docs for shipped behavior.
-git add Cargo.toml Cargo.lock flake.nix CHANGELOG.md README.md .agents/SPEC.md AGENTS.md
-git commit -m "Release v1.5.25"
+jj status
+jj diff
+jj commit -m "Release v1.5.25"
 just release-verify
-git push origin main
+jj bookmark move main --to @-
+jj git push --bookmark main
 just release-tag 1.5.25
 git ls-remote origin refs/heads/release 'refs/tags/v1.5.25^{}'
 ```
 
-`just release-verify` must run from a clean worktree, then runs the full CI
-gate, system matrix, release build, Home Manager and package consumer smoke
-tests, and Nix build/run checks. `just release-tag` publishes the version tag
-and updates `origin/release` with `--force-with-lease`; pushing the tag
-triggers the GitHub release workflow. It prompts before running; use
-`just --yes release-tag X.Y.Z` only for explicit automation.
+`just release-verify` must run from a clean jj working copy, then runs the full
+CI gate, system matrix, release build, Home Manager and package consumer smoke
+tests, and Nix build/run checks. `just release-tag` still uses Git internally
+for the annotated tag and `origin/release` update because GitHub release
+publishing is tag-driven. It prompts before running; use `just --yes
+release-tag X.Y.Z` only for explicit automation.
 
 ### Task Tracking
 

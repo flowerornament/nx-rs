@@ -28,6 +28,79 @@ Primary priorities:
 - Behavior contract: `.agents/SPEC.md`
 - Managed repo root override: `NX_REPO_ROOT`
 
+## Version Control With jj
+
+This repo is jj-first. Use Jujutsu for local work; treat Git as the
+GitHub/CI/release transport layer. The repo is intentionally colocated, so
+`.jj/` and `.git/` live side by side and GitHub still sees ordinary Git commits
+and tags.
+
+Do not use Git for day-to-day local work. Use Git commands only when a script
+or documented release step needs Git-specific behavior, such as annotated tags
+or `ls-remote` verification.
+
+Core model:
+
+- Every task starts as a jj change.
+- `main`, `release`, and `beads-sync` are tracked jj bookmarks for the matching
+  remote Git branches.
+- There is no current branch in jj. Git may report detached HEAD in a colocated
+  workspace; that is normal.
+- Publishing is explicit. Move or create a bookmark, then `jj git push`.
+- Recovery is first-class. Use `jj op log` and `jj undo` before reaching for
+  destructive file or history operations.
+
+Daily workflow:
+
+```bash
+jj git fetch
+jj new main -m "task: short description"
+jj status
+jj diff
+just ci
+jj commit -m "area: describe the change"
+jj git push --change @-
+```
+
+`jj git push --change @-` follows the GitHub-oriented jj workflow: it publishes
+the completed change under a generated remote bookmark for review or handoff
+without moving `main`.
+
+Direct `main` publication:
+
+```bash
+jj git fetch
+jj new main -m "task: short description"
+# edit, test, and review
+jj commit -m "area: describe the change"
+jj bookmark move main --to @-
+jj git push --bookmark main
+```
+
+Use direct `main` publication only when the task is complete, gates have passed,
+and pushing `main` is explicitly intended.
+
+Agent/concurrent workspaces:
+
+```bash
+jj workspace add ../nx-rs-agent-name --name agent-name -r main -m "agent: task"
+```
+
+Prefer one jj workspace per active agent/session when work might overlap. This
+keeps each agent's work in a separate recoverable working-copy commit while
+sharing the same repository store.
+
+Useful recovery and cleanup commands:
+
+```bash
+jj log
+jj log -r 'remote_bookmarks()..@'
+jj op log
+jj undo
+jj diff --summary
+jj abandon @      # only for an unwanted empty/current change
+```
+
 ## Toolchain And Workflow
 
 Pinned toolchain:
@@ -40,7 +113,7 @@ Use `just` as the primary entrypoint:
 ```bash
 just --list         # show grouped workflows and what they enforce
 just doctor         # verify local toolchain and paths
-just hooks-install  # install/update bd git hooks
+just hooks-install  # install/update bd hooks
 just guard          # strict pre-compile checks
 just compile        # strict checks + cargo check
 just ci             # fmt-check + clippy + test + script tests + check
@@ -71,7 +144,7 @@ Agent hook pipeline (`just compile` runs this full sequence):
 Quality gate enforcement:
 - **Primary**: AGENTS.md instruction to run `just ci` before finishing code changes
 - **Safety net**: Claude Code Stop hook runs `just check` before session ends
-- **Git hooks**: Owned by bd for beads sync (installed via `just hooks-install`)
+- **bd hooks**: Owned by bd for beads sync (installed via `just hooks-install`)
 
 Justfile conventions:
 - `just` and `just --list` are the discoverable command surface. Keep recipe
@@ -107,19 +180,23 @@ language.
 Canonical sequence:
 
 ```bash
+jj git fetch
+jj new main -m "release: prepare v1.5.25"
 just release-bump 1.5.25
 # Fill CHANGELOG.md and update docs for shipped user-facing behavior.
-git add Cargo.toml Cargo.lock flake.nix CHANGELOG.md README.md .agents/SPEC.md AGENTS.md
-git commit -m "Release v1.5.25"
+jj status
+jj diff
+jj commit -m "Release v1.5.25"
 just release-verify
-git push origin main
+jj bookmark move main --to @-
+jj git push --bookmark main
 just release-tag 1.5.25
 git ls-remote origin refs/heads/release 'refs/tags/v1.5.25^{}'
 ```
 
-`just release-verify` intentionally requires a clean worktree. Commit the
-release-prep changes before running it so the consumer-flake smoke tests see
-the same git-tracked source that will be tagged.
+`just release-verify` intentionally requires a clean working copy. Commit the
+release-prep change with `jj commit` before running it so the consumer-flake
+smoke tests see the same Git-compatible source that will be tagged.
 
 `just release-verify` checks version alignment across `Cargo.toml`,
 `Cargo.lock`, and `flake.nix`; CHANGELOG readiness with no `TODO`/`TBD`
@@ -168,10 +245,12 @@ Full ref: `bd prime`
 
 Before ending a session:
 1. Run `just ci` if code changed.
-2. Commit with a clear message.
-3. `bd dolt push && git push`
+2. Commit with a clear jj message.
+3. Publish intentionally with `jj git push --change @-` or by moving `main`
+   and running `jj git push --bookmark main`.
+4. `bd dolt push`
 
-Work is not complete until `git push` succeeds.
+Work is not complete until the relevant `jj git push` succeeds.
 
 ## Rust Guidelines
 

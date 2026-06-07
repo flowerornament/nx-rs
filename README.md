@@ -439,6 +439,8 @@ of recent use.
 - Scans shell history locally; timestamped entries are stronger evidence, while
   untimestamped entries are shown as evidence without claiming recency. It does
   not store raw commands, send telemetry, or auto-remove packages.
+- Uses `.nx/manifest.toml` `[aliases]` as local command evidence hints. For
+  example, `rg = "ripgrep"` makes `rg ...` count as evidence for `ripgrep`.
 - Rows are review candidates, not proof. Use `nx where <name>` and
   `nx remove --dry-run <name>` before removing anything.
 

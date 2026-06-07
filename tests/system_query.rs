@@ -9,6 +9,7 @@ use std::cmp::Reverse;
 use std::env;
 use std::error::Error;
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -65,8 +66,21 @@ fn run_query_command(
     repo_base: &std::path::Path,
     args: &[&str],
 ) -> Result<QueryRun, Box<dyn Error>> {
+    run_query_command_with_setup(nx_bin, repo_base, args, |_| Ok(()))
+}
+
+fn run_query_command_with_setup<F>(
+    nx_bin: &std::path::Path,
+    repo_base: &std::path::Path,
+    args: &[&str],
+    setup_repo: F,
+) -> Result<QueryRun, Box<dyn Error>>
+where
+    F: FnOnce(&Path) -> Result<(), Box<dyn Error>>,
+{
     let tmp = TempDir::new()?;
     copy_tree(repo_base, tmp.path())?;
+    setup_repo(tmp.path())?;
     let stub_dir = tmp.path().join(STUB_DIR_NAME);
     fs::create_dir_all(&stub_dir)?;
     install_stubs(&stub_dir)?;
@@ -381,4 +395,53 @@ fn system_query_unused_json_snapshot() -> Result<(), Box<dyn Error>> {
         &repo_base,
         UNUSED_JSON_ARGS,
     )
+}
+
+#[test]
+fn system_query_unused_uses_manifest_aliases_as_command_evidence() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+
+    let run = run_query_command_with_setup(
+        &nx_bin,
+        &repo_base,
+        &["unused", "--source", "nix", "--since", "30d", "--json"],
+        |repo_root| {
+            let nx_dir = repo_root.join(".nx");
+            fs::create_dir_all(&nx_dir)?;
+            fs::write(
+                nx_dir.join("manifest.toml"),
+                r#"schema_version = 1
+
+[aliases]
+rg = "ripgrep"
+"#,
+            )?;
+            Ok(())
+        },
+    )?;
+    let stdout = String::from_utf8_lossy(&run.output.stdout);
+    let stderr = String::from_utf8_lossy(&run.output.stderr);
+
+    assert_eq!(
+        run.output.status.code().unwrap_or(-1),
+        0,
+        "unexpected exit code\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let output: Value = serde_json::from_slice(&run.output.stdout)?;
+    let ripgrep = output["records"]
+        .as_array()
+        .and_then(|records| records.iter().find(|record| record["name"] == "ripgrep"))
+        .expect("ripgrep record");
+
+    assert_eq!(ripgrep["status"], "recent");
+    assert_eq!(ripgrep["confidence"], "strong");
+    assert_eq!(
+        ripgrep["evidence"][0]["summary"],
+        "command `rg` appeared in timestamped shell history"
+    );
+
+    Ok(())
 }

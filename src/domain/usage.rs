@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use serde::Serialize;
 
@@ -100,23 +100,26 @@ pub fn parse_since_seconds(value: &str) -> Option<u64> {
 pub fn audit_usage_records(
     packages: &[DeclaredPackage],
     shell_history: &[ShellHistoryEntry],
+    package_aliases: &HashMap<String, String>,
     now_epoch_secs: i64,
     options: UsageAuditOptions,
 ) -> Vec<UsageRecord> {
     let since_seconds = i64::try_from(options.since_seconds).unwrap_or(i64::MAX);
     let cutoff = now_epoch_secs.saturating_sub(since_seconds);
+    let history_index = ShellHistoryIndex::new(shell_history);
     packages
         .iter()
-        .map(|package| audit_package(package, shell_history, cutoff))
+        .map(|package| audit_package(package, &history_index, package_aliases, cutoff))
         .collect()
 }
 
 fn audit_package(
     package: &DeclaredPackage,
-    shell_history: &[ShellHistoryEntry],
+    history_index: &ShellHistoryIndex<'_>,
+    package_aliases: &HashMap<String, String>,
     cutoff_epoch_secs: i64,
 ) -> UsageRecord {
-    let mut evidence = shell_history_evidence(package, shell_history);
+    let mut evidence = history_index.evidence_for_package(package, package_aliases);
     let protected_reason = protection_reason(package);
     if let Some(reason) = protected_reason {
         evidence.push(EvidenceItem {
@@ -155,27 +158,47 @@ fn audit_package(
     }
 }
 
-fn shell_history_evidence(
-    package: &DeclaredPackage,
-    shell_history: &[ShellHistoryEntry],
-) -> Vec<EvidenceItem> {
-    let aliases = command_aliases(&package.name);
-    shell_history
-        .iter()
-        .filter_map(|entry| {
-            let command = command_word(&entry.command)?;
-            aliases.contains(command).then(|| EvidenceItem {
-                kind: EvidenceKind::ShellHistory,
-                summary: shell_history_summary(command, entry.started_at_epoch_secs),
-                timestamp: entry.started_at_epoch_secs,
-                confidence: if entry.started_at_epoch_secs.is_some() {
-                    EvidenceConfidence::Strong
-                } else {
-                    EvidenceConfidence::Medium
-                },
+struct ShellHistoryIndex<'a> {
+    by_command: HashMap<&'a str, Vec<&'a ShellHistoryEntry>>,
+}
+
+impl<'a> ShellHistoryIndex<'a> {
+    fn new(shell_history: &'a [ShellHistoryEntry]) -> Self {
+        let mut by_command: HashMap<&'a str, Vec<&'a ShellHistoryEntry>> = HashMap::new();
+        for entry in shell_history {
+            if let Some(command) = command_word(&entry.command) {
+                by_command.entry(command).or_default().push(entry);
+            }
+        }
+        Self { by_command }
+    }
+
+    fn evidence_for_package(
+        &self,
+        package: &DeclaredPackage,
+        package_aliases: &HashMap<String, String>,
+    ) -> Vec<EvidenceItem> {
+        command_aliases(&package.name, package_aliases)
+            .into_iter()
+            .filter_map(|command| {
+                self.by_command
+                    .get(command.as_str())
+                    .map(|entries| (command, entries))
             })
-        })
-        .collect()
+            .flat_map(|(command, entries)| {
+                entries.iter().map(move |entry| EvidenceItem {
+                    kind: EvidenceKind::ShellHistory,
+                    summary: shell_history_summary(&command, entry.started_at_epoch_secs),
+                    timestamp: entry.started_at_epoch_secs,
+                    confidence: if entry.started_at_epoch_secs.is_some() {
+                        EvidenceConfidence::Strong
+                    } else {
+                        EvidenceConfidence::Medium
+                    },
+                })
+            })
+            .collect()
+    }
 }
 
 fn shell_history_summary(command: &str, timestamp: Option<i64>) -> String {
@@ -187,11 +210,19 @@ fn shell_history_summary(command: &str, timestamp: Option<i64>) -> String {
 }
 
 fn command_word(command: &str) -> Option<&str> {
-    for token in command.split_whitespace() {
+    let mut tokens = command.split_whitespace().peekable();
+    while let Some(token) = tokens.next() {
         if token.contains('=') && !token.starts_with('-') {
             continue;
         }
-        if matches!(token, "command" | "env" | "noglob" | "sudo" | "time") {
+        if matches!(token, "command" | "noglob") {
+            continue;
+        }
+        if matches!(token, "env" | "sudo" | "time") {
+            skip_wrapper_options(token, &mut tokens);
+            continue;
+        }
+        if token.starts_with('-') {
             continue;
         }
         return Some(token.rsplit('/').next().unwrap_or(token));
@@ -199,48 +230,109 @@ fn command_word(command: &str) -> Option<&str> {
     None
 }
 
-fn command_aliases(package: &str) -> HashSet<&str> {
+fn skip_wrapper_options<'a>(
+    wrapper: &str,
+    tokens: &mut std::iter::Peekable<impl Iterator<Item = &'a str>>,
+) {
+    while let Some(option) = tokens.next_if(|token| token.starts_with('-')) {
+        if wrapper_option_takes_value(wrapper, option)
+            && !option.contains('=')
+            && !short_option_has_inline_value(option)
+        {
+            tokens.next();
+        }
+    }
+}
+
+fn wrapper_option_takes_value(wrapper: &str, option: &str) -> bool {
+    match wrapper {
+        "env" => matches!(
+            option,
+            "-u" | "--unset" | "-C" | "--chdir" | "-S" | "--split-string"
+        ),
+        "sudo" => matches!(
+            option,
+            "-A" | "-a"
+                | "-b"
+                | "-C"
+                | "-c"
+                | "-D"
+                | "-g"
+                | "-h"
+                | "-p"
+                | "-R"
+                | "-r"
+                | "-T"
+                | "-t"
+                | "-U"
+                | "-u"
+                | "--askpass"
+                | "--auth-type"
+                | "--background"
+                | "--close-from"
+                | "--chdir"
+                | "--group"
+                | "--host"
+                | "--prompt"
+                | "--chroot"
+                | "--role"
+                | "--command-timeout"
+                | "--type"
+                | "--other-user"
+                | "--user"
+        ),
+        _ => false,
+    }
+}
+
+fn short_option_has_inline_value(option: &str) -> bool {
+    option.starts_with('-') && !option.starts_with("--") && option.len() > 2
+}
+
+fn command_aliases(package: &str, package_aliases: &HashMap<String, String>) -> Vec<String> {
     let slash_bare = package.rsplit('/').next().unwrap_or(package);
     let bare = slash_bare.rsplit('.').next().unwrap_or(slash_bare);
-    let mut aliases = HashSet::from([package, slash_bare, bare]);
+    let mut aliases = Vec::new();
+    let package_names = package_match_names(package);
+    push_alias(&mut aliases, package);
+    push_alias(&mut aliases, slash_bare);
+    push_alias(&mut aliases, bare);
 
     if let Some(cli_name) = bare.strip_suffix("-cli") {
-        aliases.insert(cli_name);
+        push_alias(&mut aliases, cli_name);
     }
 
-    match bare {
-        "ast-grep" => {
-            aliases.insert("sg");
+    for (alias, target) in package_aliases {
+        if package_names
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(target))
+        {
+            push_alias(&mut aliases, alias);
         }
-        "claude-code" => {
-            aliases.insert("claude");
-        }
-        "codex-cli" => {
-            aliases.insert("codex");
-        }
-        "ripgrep" => {
-            aliases.insert("rg");
-        }
-        "fd" => {
-            aliases.insert("fdfind");
-        }
-        "neovim" => {
-            aliases.insert("nvim");
-            aliases.insert("vim");
-        }
-        "nodejs" => {
-            aliases.insert("node");
-        }
-        "python3" => {
-            aliases.insert("python");
-            aliases.insert("python3");
-        }
-        "vercel-cli" => {
-            aliases.insert("vercel");
-        }
-        _ => {}
     }
     aliases
+}
+
+fn package_match_names(package: &str) -> Vec<&str> {
+    let slash_bare = package.rsplit('/').next().unwrap_or(package);
+    let bare = slash_bare.rsplit('.').next().unwrap_or(slash_bare);
+    let mut names = Vec::new();
+    push_borrowed_unique(&mut names, package);
+    push_borrowed_unique(&mut names, slash_bare);
+    push_borrowed_unique(&mut names, bare);
+    names
+}
+
+fn push_borrowed_unique<'a>(values: &mut Vec<&'a str>, value: &'a str) {
+    if !values.contains(&value) {
+        values.push(value);
+    }
+}
+
+fn push_alias(aliases: &mut Vec<String>, alias: &str) {
+    if !aliases.iter().any(|existing| existing == alias) {
+        aliases.push(alias.to_string());
+    }
 }
 
 fn protection_reason(package: &DeclaredPackage) -> Option<&'static str> {
@@ -286,6 +378,8 @@ fn split_duration(value: &str) -> Option<(u64, &str)> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::{
         DeclaredPackage, EvidenceConfidence, UsageAuditOptions, UsageSource, UsageStatus,
         audit_usage_records, command_word, parse_since_seconds,
@@ -313,6 +407,10 @@ mod tests {
             command_word("RUST_LOG=debug sudo /opt/bin/rg foo"),
             Some("rg")
         );
+        assert_eq!(command_word("sudo -E rg src"), Some("rg"));
+        assert_eq!(command_word("sudo -u root rg src"), Some("rg"));
+        assert_eq!(command_word("env -u FOO rg src"), Some("rg"));
+        assert_eq!(command_word("time -p rg src"), Some("rg"));
         assert_eq!(
             command_word("env FOO=bar command nvim README.md"),
             Some("nvim")
@@ -338,6 +436,7 @@ mod tests {
         let records = audit_usage_records(
             &packages,
             &history,
+            &HashMap::from([("rg".to_string(), "ripgrep".to_string())]),
             1_000,
             UsageAuditOptions { since_seconds: 200 },
         );
@@ -357,6 +456,7 @@ mod tests {
                 started_at_epoch_secs: None,
                 duration_secs: None,
             }],
+            &package_aliases(),
             1_000,
             UsageAuditOptions { since_seconds: 200 },
         );
@@ -370,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn package_aliases_match_common_command_names() {
+    fn manifest_aliases_match_common_command_names() {
         let records = audit_usage_records(
             &[
                 package("steveyegge/beads/bd"),
@@ -400,6 +500,12 @@ mod tests {
                     duration_secs: None,
                 },
             ],
+            &HashMap::from([
+                ("bd".to_string(), "steveyegge/beads/bd".to_string()),
+                ("codex".to_string(), "codex-cli".to_string()),
+                ("claude".to_string(), "claude-code".to_string()),
+                ("sg".to_string(), "ast-grep".to_string()),
+            ]),
             1_000,
             UsageAuditOptions { since_seconds: 200 },
         );
@@ -420,6 +526,7 @@ mod tests {
                 location: None,
             }],
             &[],
+            &package_aliases(),
             1_000,
             UsageAuditOptions { since_seconds: 200 },
         );
@@ -434,5 +541,9 @@ mod tests {
             source: UsageSource::Nix,
             location: None,
         }
+    }
+
+    fn package_aliases() -> HashMap<String, String> {
+        HashMap::new()
     }
 }

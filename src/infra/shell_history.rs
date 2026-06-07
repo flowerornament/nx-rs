@@ -57,6 +57,7 @@ pub fn parse_timestamped_shell_history(text: &str) -> Vec<ShellHistoryEntry> {
 
 pub fn parse_shell_history(text: &str) -> Vec<ShellHistoryEntry> {
     let mut entries = parse_timestamped_shell_history(text);
+    entries.extend(parse_fish_history(text));
     entries.extend(parse_untimestamped_shell_history(text));
     entries
 }
@@ -77,6 +78,9 @@ fn parse_untimestamped_shell_history(text: &str) -> Vec<ShellHistoryEntry> {
         if command.is_empty() || command.starts_with(": ") {
             continue;
         }
+        if is_fish_history_metadata(command) {
+            continue;
+        }
         if skip_next_command {
             skip_next_command = false;
             continue;
@@ -85,6 +89,50 @@ fn parse_untimestamped_shell_history(text: &str) -> Vec<ShellHistoryEntry> {
     }
 
     entries
+}
+
+pub fn parse_fish_history(text: &str) -> Vec<ShellHistoryEntry> {
+    let mut entries = Vec::new();
+    let mut pending_command: Option<String> = None;
+    let mut pending_timestamp: Option<i64> = None;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(command) = trimmed.strip_prefix("- cmd:") {
+            push_fish_entry(
+                &mut entries,
+                pending_command.take(),
+                pending_timestamp.take(),
+            );
+            pending_command = Some(command.trim().to_string());
+            continue;
+        }
+        if let Some(timestamp) = trimmed.strip_prefix("when:") {
+            pending_timestamp = timestamp.trim().parse().ok();
+        }
+    }
+
+    push_fish_entry(&mut entries, pending_command, pending_timestamp);
+    entries
+}
+
+fn push_fish_entry(
+    entries: &mut Vec<ShellHistoryEntry>,
+    command: Option<String>,
+    timestamp: Option<i64>,
+) {
+    let Some(command) = command.filter(|command| !command.trim().is_empty()) else {
+        return;
+    };
+    entries.push(ShellHistoryEntry {
+        command,
+        started_at_epoch_secs: timestamp,
+        duration_secs: None,
+    });
+}
+
+fn is_fish_history_metadata(command: &str) -> bool {
+    command.starts_with("- cmd:") || command.starts_with("when:") || command.starts_with("paths:")
 }
 
 fn parse_zsh_extended_line(line: &str) -> Option<ShellHistoryEntry> {
@@ -111,7 +159,7 @@ fn parse_bash_timestamp_comment(line: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ShellHistoryEntry, parse_bash_timestamped_history, parse_shell_history,
+        ShellHistoryEntry, parse_bash_timestamped_history, parse_fish_history, parse_shell_history,
         parse_timestamped_shell_history, parse_zsh_extended_history,
     };
 
@@ -215,9 +263,38 @@ mod tests {
     }
 
     #[test]
+    fn parses_fish_history_records() {
+        let entries = parse_fish_history(
+            "- cmd: rg package\n  when: 1760000000\n- cmd: bat README.md\n- cmd: fd src\n  when: nope\n",
+        );
+
+        assert_eq!(
+            entries,
+            vec![
+                ShellHistoryEntry {
+                    command: "rg package".to_string(),
+                    started_at_epoch_secs: Some(1_760_000_000),
+                    duration_secs: None,
+                },
+                ShellHistoryEntry {
+                    command: "bat README.md".to_string(),
+                    started_at_epoch_secs: None,
+                    duration_secs: None,
+                },
+                ShellHistoryEntry {
+                    command: "fd src".to_string(),
+                    started_at_epoch_secs: None,
+                    duration_secs: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn parse_shell_history_includes_untimestamped_commands_without_duplicates() {
-        let entries =
-            parse_shell_history(": 1760000000:3;rg package\n#1760000010\nfd src\nbat README.md\n");
+        let entries = parse_shell_history(
+            ": 1760000000:3;rg package\n#1760000010\nfd src\nbat README.md\n- cmd: nx unused\n  when: 1760000020\n",
+        );
 
         assert_eq!(
             entries,
@@ -230,6 +307,11 @@ mod tests {
                 ShellHistoryEntry {
                     command: "fd src".to_string(),
                     started_at_epoch_secs: Some(1_760_000_010),
+                    duration_secs: None,
+                },
+                ShellHistoryEntry {
+                    command: "nx unused".to_string(),
+                    started_at_epoch_secs: Some(1_760_000_020),
                     duration_secs: None,
                 },
                 ShellHistoryEntry {

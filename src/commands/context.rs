@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::domain::config::ConfigFiles;
 use crate::domain::drift::ManifestHealth;
+use crate::domain::manifest::Manifest;
 use crate::domain::manifest_scan::ScannedRepo;
 use crate::output::printer::Printer;
 
@@ -24,6 +25,7 @@ pub struct QueryContext<'a> {
     pub repo_root: &'a Path,
     pub printer: &'a Printer,
     pub manifest_health: &'a ManifestHealth,
+    pub manifest: Option<&'a Manifest>,
 }
 
 pub struct SystemContext<'a> {
@@ -82,6 +84,7 @@ impl AppContext {
             repo_root: &self.repo_root,
             printer: &self.printer,
             manifest_health: &self.manifest_health,
+            manifest: self.manifest_health.routing_manifest(),
         }
     }
 

@@ -1,6 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -40,19 +41,20 @@ pub fn cmd_unused(args: &UnusedArgs, ctx: &QueryContext<'_>) -> i32 {
         }
     };
 
-    let declared = declared_packages(&buckets, ctx.repo_root)
-        .into_iter()
-        .filter(|package| source_filter.matches(package.source))
-        .collect::<Vec<_>>();
+    let declared = declared_packages(&buckets, ctx.repo_root, source_filter);
     let shell_history = if args.no_history {
         Vec::new()
     } else {
         load_shell_history(&history_paths(args), (!args.json).then_some(ctx.printer))
     };
     let now_epoch_secs = current_epoch_secs();
+    let manifest_aliases = ctx
+        .manifest
+        .map_or_else(HashMap::new, |manifest| manifest.aliases.clone());
     let all_records = audit_usage_records(
         &declared,
         &shell_history,
+        &manifest_aliases,
         now_epoch_secs,
         UsageAuditOptions { since_seconds },
     );
@@ -100,13 +102,47 @@ impl SourceFilter {
     }
 }
 
-fn declared_packages(buckets: &PackageBuckets, repo_root: &Path) -> Vec<DeclaredPackage> {
+fn declared_packages(
+    buckets: &PackageBuckets,
+    repo_root: &Path,
+    source_filter: SourceFilter,
+) -> Vec<DeclaredPackage> {
     let mut out = Vec::new();
-    push_declared(&mut out, &buckets.nxs, UsageSource::Nix, repo_root);
-    push_declared(&mut out, &buckets.brews, UsageSource::Homebrew, repo_root);
-    push_declared(&mut out, &buckets.casks, UsageSource::Cask, repo_root);
-    push_declared(&mut out, &buckets.mas, UsageSource::Mas, repo_root);
-    push_declared(&mut out, &buckets.services, UsageSource::Service, repo_root);
+    push_declared(
+        &mut out,
+        &buckets.nxs,
+        UsageSource::Nix,
+        repo_root,
+        source_filter,
+    );
+    push_declared(
+        &mut out,
+        &buckets.brews,
+        UsageSource::Homebrew,
+        repo_root,
+        source_filter,
+    );
+    push_declared(
+        &mut out,
+        &buckets.casks,
+        UsageSource::Cask,
+        repo_root,
+        source_filter,
+    );
+    push_declared(
+        &mut out,
+        &buckets.mas,
+        UsageSource::Mas,
+        repo_root,
+        source_filter,
+    );
+    push_declared(
+        &mut out,
+        &buckets.services,
+        UsageSource::Service,
+        repo_root,
+        source_filter,
+    );
     out
 }
 
@@ -115,7 +151,12 @@ fn push_declared(
     names: &[String],
     source: UsageSource,
     repo_root: &Path,
+    source_filter: SourceFilter,
 ) {
+    if !source_filter.matches(source) {
+        return;
+    }
+
     for name in names {
         let location = find_package(name, repo_root)
             .ok()
@@ -178,7 +219,7 @@ fn load_shell_history(paths: &[PathBuf], printer: Option<&Printer>) -> Vec<Shell
                 let text = String::from_utf8_lossy(&bytes);
                 entries.extend(parse_shell_history(&text));
             }
-            Err(err) if path.exists() => {
+            Err(err) if err.kind() != ErrorKind::NotFound => {
                 let Some(printer) = printer else {
                     continue;
                 };
@@ -214,16 +255,20 @@ fn render_human(records: &[UsageRecord], args: &UnusedArgs, hidden_protected: us
             Printer::detail(&summary);
         }
         Printer::body(&format!(
-            "{:<24} {:<10} {:<18} Why",
-            "Package", "Source", "Last evidence"
+            "{:<package_width$} {:<10} {:<18} Why",
+            "Package",
+            "Source",
+            "Last evidence",
+            package_width = PACKAGE_COLUMN_WIDTH
         ));
         for record in &rendered {
             Printer::body(&format!(
-                "{:<24} {:<10} {:<18} {}",
+                "{:<package_width$} {:<10} {:<18} {}",
                 package_cell(&record.name),
                 record.source.as_str(),
                 last_evidence(record),
-                reason(record)
+                reason(record),
+                package_width = PACKAGE_COLUMN_WIDTH
             ));
             if args.verbose {
                 for item in &record.evidence {

@@ -137,7 +137,8 @@ Scan shell history files:
 Command matching:
 
 - Build a command alias set for each package.
-- Use explicit package aliases first, then discovered binaries from current profile paths where cheap.
+- Use `.nx/manifest.toml` `[aliases]` first, interpreted as `command = "package"` evidence hints.
+- Use discovered binaries from current profile paths where cheap.
 - Match only command words, not arbitrary substrings.
 - Treat aliases and shell functions as medium confidence unless the resolved executable is known.
 

@@ -27,6 +27,7 @@ Primary priorities:
 
 - Behavior contract: `.agents/SPEC.md`
 - Managed repo root override: `NX_REPO_ROOT`
+- On the maintainer's machine, `main` runs as `nx-dev` beside release `nx`, sharing `NX_*` env + `~/.local/state/nx/` (timings, undo). Keep on-disk state formats backward-compatible or migrate, else the release binary breaks.
 
 ## Version Control With jj
 

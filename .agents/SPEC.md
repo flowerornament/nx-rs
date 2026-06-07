@@ -443,6 +443,7 @@ Network behavior:
 - Read-only advisory audit for declared packages with little local evidence of recent use.
 - Scans shell history from `HISTFILE`, common shell history files under `HOME`, and explicit `--history <PATH>` files unless `--no-history` is set.
 - Timestamped history produces strong evidence and can mark packages `recent` or `old`; untimestamped history produces medium evidence but keeps status `unknown`.
+- Command evidence uses generic package-name forms plus `.nx/manifest.toml` `[aliases]` entries inverted from `alias = "package"` to package evidence aliases.
 - Does not store raw commands, send telemetry, or auto-remove packages.
 - `--since <DURATION>` accepts `d`, `w`, `mo`, and `y` units; default `90d`.
 - `--source` accepts `all`, `nix`, `homebrew`, `cask`, `mas`, and `service` aliases.

@@ -1,6 +1,8 @@
 target/
 result
 .jj/
+__pycache__/
+*.py[cod]
 
 # bd sync-branch artifacts are tracked in beads-sync, not main.
 .beads/issues.jsonl

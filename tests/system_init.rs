@@ -121,6 +121,51 @@ fn init_creates_valid_manifest() -> Result<(), Box<dyn Error>> {
         "no slot has default_for = [\"install\"]"
     );
 
+    let aliases = doc
+        .get("aliases")
+        .and_then(toml_edit::Item::as_table)
+        .expect("missing generated [aliases]");
+    assert_eq!(
+        aliases.get("rg").and_then(toml_edit::Item::as_str),
+        Some("ripgrep")
+    );
+
+    Ok(())
+}
+
+#[test]
+fn init_refresh_preserves_user_alias_over_generated_default() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+
+    let tmp = TempDir::new()?;
+    copy_tree(&repo_base, tmp.path())?;
+    let home_dir = TempDir::new()?;
+
+    let out1 = run_nx(&nx_bin, tmp.path(), home_dir.path(), &["init"]);
+    assert_eq!(out1.status.code().unwrap_or(-1), 0, "first init failed");
+
+    let manifest_path = tmp.path().join(".nx/manifest.toml");
+    let raw = fs::read_to_string(&manifest_path)?;
+    fs::write(
+        &manifest_path,
+        raw.replace("rg = \"ripgrep\"", "rg = \"custom-ripgrep\""),
+    )?;
+
+    let out2 = run_nx(&nx_bin, tmp.path(), home_dir.path(), &["init", "--refresh"]);
+    let stdout2 = String::from_utf8_lossy(&out2.stdout);
+    let stderr2 = String::from_utf8_lossy(&out2.stderr);
+    assert_eq!(
+        out2.status.code().unwrap_or(-1),
+        0,
+        "refresh failed\nstdout:\n{stdout2}\nstderr:\n{stderr2}"
+    );
+
+    let refreshed = fs::read_to_string(&manifest_path)?;
+    assert!(refreshed.contains("rg = \"custom-ripgrep\""));
+    assert!(!refreshed.contains("rg = \"ripgrep\""));
+
     Ok(())
 }
 

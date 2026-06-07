@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- made `nx init` seed verified package alias hints into `.nx/manifest.toml` for declared packages, while keeping `nx init --refresh` respectful of hand-edited aliases
+
 ## v1.5.25 - 2026-06-07
 
 - added `nx unused`, a read-only package usage audit that ranks review candidates from declared Nix/Homebrew/service packages, local shell history evidence, protected-package policy, and JSON output for automation

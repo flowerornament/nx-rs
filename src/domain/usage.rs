@@ -1,8 +1,91 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
 use crate::infra::shell_history::ShellHistoryEntry;
+
+const DEFAULT_USAGE_ALIAS_CATALOG: &[(&str, &str)] = &[
+    ("awk", "gawk"),
+    ("aws", "awscli2"),
+    ("aws", "awscli"),
+    ("bd", "steveyegge/beads/bd"),
+    ("bq", "google-cloud-sdk"),
+    ("btm", "bottom"),
+    ("claude", "claude-code"),
+    ("cmp", "diffutils"),
+    ("codex", "codex-cli"),
+    ("compare", "imagemagick"),
+    ("composite", "imagemagick"),
+    ("convert", "imagemagick"),
+    ("createdb", "postgresql"),
+    ("createuser", "postgresql"),
+    ("diff", "diffutils"),
+    ("diff3", "diffutils"),
+    ("difft", "difftastic"),
+    ("display", "imagemagick"),
+    ("docker", "docker-client"),
+    ("dropdb", "postgresql"),
+    ("dropuser", "postgresql"),
+    ("egrep", "gnugrep"),
+    ("ffplay", "ffmpeg"),
+    ("ffprobe", "ffmpeg"),
+    ("fgrep", "gnugrep"),
+    ("find", "findutils"),
+    ("gcloud", "google-cloud-sdk"),
+    ("grep", "gnugrep"),
+    ("gpg", "gnupg"),
+    ("gpg-agent", "gnupg"),
+    ("gpg2", "gnupg"),
+    ("gs", "ghostscript"),
+    ("gsutil", "google-cloud-sdk"),
+    ("helm", "kubernetes-helm"),
+    ("http", "httpie"),
+    ("https", "httpie"),
+    ("identify", "imagemagick"),
+    ("import", "imagemagick"),
+    ("magick", "imagemagick"),
+    ("make", "gnumake"),
+    ("mogrify", "imagemagick"),
+    ("montage", "imagemagick"),
+    ("node", "nodejs"),
+    ("npm", "nodejs"),
+    ("npx", "nodejs"),
+    ("nvim", "neovim"),
+    ("pdfinfo", "poppler-utils"),
+    ("pdfseparate", "poppler-utils"),
+    ("pdftocairo", "poppler-utils"),
+    ("pdftoppm", "poppler-utils"),
+    ("pdftotext", "poppler-utils"),
+    ("pdfunite", "poppler-utils"),
+    ("pg_dump", "postgresql"),
+    ("pg_isready", "postgresql"),
+    ("pg_restore", "postgresql"),
+    ("ps2pdf", "ghostscript"),
+    ("psql", "postgresql"),
+    ("python", "python3"),
+    ("rga", "ripgrep-all"),
+    ("rg", "ripgrep"),
+    ("scp", "openssh"),
+    ("sdiff", "diffutils"),
+    ("sed", "gnused"),
+    ("sftp", "openssh"),
+    ("sqlite3", "sqlite"),
+    ("ssh", "openssh"),
+    ("ssh-add", "openssh"),
+    ("ssh-agent", "openssh"),
+    ("ssh-keygen", "openssh"),
+    ("tar", "gnutar"),
+    ("tldr", "tealdeer"),
+    ("tofu", "opentofu"),
+    ("vercel", "vercel-cli"),
+    ("wg", "wireguard-tools"),
+    ("wg-quick", "wireguard-tools"),
+    ("xdg-mime", "xdg-utils"),
+    ("xdg-open", "xdg-utils"),
+    ("xdg-settings", "xdg-utils"),
+    ("xargs", "findutils"),
+    ("yq", "yq-go"),
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeclaredPackage {
@@ -95,6 +178,26 @@ pub fn parse_since_seconds(value: &str) -> Option<u64> {
         _ => return None,
     };
     amount.checked_mul(multiplier)
+}
+
+pub fn default_usage_aliases_for_packages<'a>(
+    packages: impl IntoIterator<Item = &'a str>,
+) -> HashMap<String, String> {
+    let package_match_names = packages
+        .into_iter()
+        .flat_map(package_match_names)
+        .map(str::to_ascii_lowercase)
+        .collect::<HashSet<_>>();
+
+    let mut aliases = HashMap::new();
+    for (alias, package) in DEFAULT_USAGE_ALIAS_CATALOG {
+        if package_match_names.contains(*package) {
+            aliases
+                .entry((*alias).to_string())
+                .or_insert_with(|| (*package).to_string());
+        }
+    }
+    aliases
 }
 
 pub fn audit_usage_records(
@@ -382,7 +485,7 @@ mod tests {
 
     use super::{
         DeclaredPackage, EvidenceConfidence, UsageAuditOptions, UsageSource, UsageStatus,
-        audit_usage_records, command_word, parse_since_seconds,
+        audit_usage_records, command_word, default_usage_aliases_for_packages, parse_since_seconds,
     };
     use crate::infra::shell_history::ShellHistoryEntry;
 
@@ -399,6 +502,67 @@ mod tests {
         assert_eq!(parse_since_seconds("90"), None);
         assert_eq!(parse_since_seconds("d90"), None);
         assert_eq!(parse_since_seconds("2h"), None);
+    }
+
+    #[test]
+    fn default_usage_aliases_include_verified_catalog_entries_for_declared_packages() {
+        let aliases = default_usage_aliases_for_packages([
+            "ripgrep",
+            "nodejs",
+            "python3",
+            "imagemagick",
+            "gnugrep",
+            "neovim",
+            "yq-go",
+            "sqlite",
+            "postgresql",
+            "docker-client",
+            "wireguard-tools",
+            "gnupg",
+            "openssh",
+            "gawk",
+            "diffutils",
+            "ffmpeg",
+            "ghostscript",
+            "poppler-utils",
+        ]);
+
+        assert_eq!(aliases.get("rg").map(String::as_str), Some("ripgrep"));
+        assert_eq!(aliases.get("node").map(String::as_str), Some("nodejs"));
+        assert_eq!(aliases.get("npm").map(String::as_str), Some("nodejs"));
+        assert_eq!(aliases.get("python").map(String::as_str), Some("python3"));
+        assert_eq!(
+            aliases.get("magick").map(String::as_str),
+            Some("imagemagick")
+        );
+        assert_eq!(aliases.get("grep").map(String::as_str), Some("gnugrep"));
+        assert_eq!(aliases.get("nvim").map(String::as_str), Some("neovim"));
+        assert_eq!(aliases.get("yq").map(String::as_str), Some("yq-go"));
+        assert_eq!(aliases.get("sqlite3").map(String::as_str), Some("sqlite"));
+        assert_eq!(aliases.get("psql").map(String::as_str), Some("postgresql"));
+        assert_eq!(
+            aliases.get("docker").map(String::as_str),
+            Some("docker-client")
+        );
+        assert_eq!(
+            aliases.get("wg-quick").map(String::as_str),
+            Some("wireguard-tools")
+        );
+        assert_eq!(aliases.get("gpg").map(String::as_str), Some("gnupg"));
+        assert_eq!(aliases.get("ssh").map(String::as_str), Some("openssh"));
+        assert_eq!(aliases.get("awk").map(String::as_str), Some("gawk"));
+        assert_eq!(aliases.get("diff").map(String::as_str), Some("diffutils"));
+        assert_eq!(aliases.get("ffprobe").map(String::as_str), Some("ffmpeg"));
+        assert_eq!(
+            aliases.get("ps2pdf").map(String::as_str),
+            Some("ghostscript")
+        );
+        assert_eq!(
+            aliases.get("pdftotext").map(String::as_str),
+            Some("poppler-utils")
+        );
+        assert!(!aliases.contains_key("vim"));
+        assert!(!aliases.contains_key("sg"));
     }
 
     #[test]

@@ -138,6 +138,7 @@ Command matching:
 
 - Build a command alias set for each package.
 - Use `.nx/manifest.toml` `[aliases]` first, interpreted as `command = "package"` evidence hints.
+- Seed known alias hints during `nx init` for declared packages; preserve user edits during `nx init --refresh`.
 - Use discovered binaries from current profile paths where cheap.
 - Match only command words, not arbitrary substrings.
 - Treat aliases and shell functions as medium confidence unless the resolved executable is known.

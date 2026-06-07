@@ -1,6 +1,11 @@
+use std::collections::hash_map::Entry;
+use std::path::Path;
+
 use crate::commands::context::InitContext;
 use crate::domain::manifest::{Manifest, SlotKind};
 use crate::domain::manifest_scan::manifest_from_scan;
+use crate::domain::usage::default_usage_aliases_for_packages;
+use crate::infra::config_scan::{PackageBuckets, scan_packages};
 use crate::output::printer::Printer;
 
 pub fn cmd_init(refresh: bool, ctx: &InitContext<'_>) -> i32 {
@@ -23,7 +28,12 @@ pub fn cmd_init(refresh: bool, ctx: &InitContext<'_>) -> i32 {
         None
     };
 
-    let manifest = manifest_from_scan(ctx.scanned_repo.clone(), ctx.repo_root, existing.as_ref());
+    let mut manifest =
+        manifest_from_scan(ctx.scanned_repo.clone(), ctx.repo_root, existing.as_ref());
+    if let Err(err) = seed_usage_alias_hints(&mut manifest, ctx.repo_root) {
+        ctx.printer
+            .warn(&format!("package alias hints skipped: {err:#}"));
+    }
 
     print_summary(&manifest, ctx.printer);
 
@@ -40,6 +50,31 @@ pub fn cmd_init(refresh: bool, ctx: &InitContext<'_>) -> i32 {
 
     ctx.printer.success("Manifest written to .nx/manifest.toml");
     0
+}
+
+fn seed_usage_alias_hints(manifest: &mut Manifest, repo_root: &Path) -> anyhow::Result<usize> {
+    let buckets = scan_packages(repo_root)?;
+    let mut added = 0;
+
+    for (alias, package) in default_usage_aliases_for_packages(package_names(&buckets)) {
+        if let Entry::Vacant(entry) = manifest.aliases.entry(alias) {
+            entry.insert(package);
+            added += 1;
+        }
+    }
+
+    Ok(added)
+}
+
+fn package_names(buckets: &PackageBuckets) -> impl Iterator<Item = &str> {
+    buckets
+        .nxs
+        .iter()
+        .chain(&buckets.brews)
+        .chain(&buckets.casks)
+        .chain(&buckets.mas)
+        .chain(&buckets.services)
+        .map(String::as_str)
 }
 
 fn print_summary(manifest: &Manifest, printer: &Printer) {
@@ -98,6 +133,12 @@ fn print_summary(manifest: &Manifest, printer: &Printer) {
         Printer::detail(&format!(
             "  Default install target: {}",
             default.file.display()
+        ));
+    }
+    if !manifest.aliases.is_empty() {
+        Printer::detail(&format!(
+            "  {} package alias hint(s)",
+            manifest.aliases.len()
         ));
     }
 

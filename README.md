@@ -33,7 +33,9 @@ want to target a different repo.
 
 Run `nx init` once to scan the repo and write `.nx/manifest.toml`. The manifest
 records the files `nx` should use for package lists, services, Homebrew
-manifests, and rebuild behavior. Run `nx init --refresh` after moving files.
+manifests, rebuild behavior, and local package alias hints. Run
+`nx init --refresh` after moving files; refresh preserves hand-edited alias
+entries while filling in known defaults for newly discovered packages.
 
 Host maintenance commands under `nx generations` and `nx clean-caches` are
 intentionally host-scoped and can run from any directory.
@@ -340,7 +342,8 @@ Diagnoses repo and host prerequisites that affect normal `nx` usage.
 #### `init`
 
 Scans the current repo and writes `.nx/manifest.toml`. Use `--refresh` to
-rescan and merge with an existing manifest.
+rescan and merge with an existing manifest. Init also seeds known package alias
+hints, such as `rg = "ripgrep"`, when matching packages are declared.
 
 ---
 
@@ -439,7 +442,8 @@ of recent use.
 - Scans shell history locally; timestamped entries are stronger evidence, while
   untimestamped entries are shown as evidence without claiming recency. It does
   not store raw commands, send telemetry, or auto-remove packages.
-- Uses `.nx/manifest.toml` `[aliases]` as local command evidence hints. For
+- Uses `.nx/manifest.toml` `[aliases]` as local command evidence hints. `nx init`
+  seeds known aliases, and hand-written entries are preserved on refresh. For
   example, `rg = "ripgrep"` makes `rg ...` count as evidence for `ripgrep`.
 - Rows are review candidates, not proof. Use `nx where <name>` and
   `nx remove --dry-run <name>` before removing anything.

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v1.5.25 - 2026-06-07
+
+- added `nx unused`, a read-only package usage audit that ranks review candidates from declared Nix/Homebrew/service packages, local shell history evidence, protected-package policy, and JSON output for automation
+- reads zsh extended history, bash timestamp comments, fish history, and untimestamped history while keeping raw command lines local and treating timestamp confidence explicitly
+- uses `.nx/manifest.toml` `[aliases]` as command evidence hints, so repo-local shorthands like `rg = "ripgrep"` control usage matching instead of hidden compiled-in command lore
+- documented the jj-first development and release workflow, including release verification, release-branch publication, and maintainer state compatibility expectations
+
 ## v1.5.24 - 2026-05-29
 
 - publish a moving `release` branch from the release script so downstream flake inputs can track the latest tagged nx-rs release with vanilla `nix flake update`

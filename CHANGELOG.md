@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- made rebuild and upgrade apply Nix `bar` log formatting through legacy `darwin-rebuild` fallback and activation-time Nix subprocesses, while captured activation output suppresses repetitive fetch/build chatter
-- made `nx init` seed verified package alias hints into `.nx/manifest.toml` for declared packages, while keeping `nx init --refresh` respectful of hand-edited aliases
+## v1.5.26 - 2026-06-07
+
+- keeps default `nx rebuild` and `nx upgrade` output closer to native Nix progress by applying `bar` log formatting through legacy `darwin-rebuild` fallback and activation-time Nix subprocesses
+- suppresses repetitive Nix fetch/build chatter from captured activation output while retaining diagnostics for retry and failure handling; `--verbose` still uses full logs
+- seeds verified package alias hints into `.nx/manifest.toml` during `nx init`, with `nx init --refresh` preserving hand-edited aliases and filling missing generated defaults
 
 ## v1.5.25 - 2026-06-07
 

@@ -687,17 +687,17 @@ files, verifies the committed release state, pushes the annotated tag, and moves
 
 ```bash
 jj git fetch
-jj new main -m "release: prepare v1.5.25"
-just release-bump 1.5.25
+jj new main -m "release: prepare vX.Y.Z"
+just release-bump X.Y.Z
 # Fill CHANGELOG.md and update user-facing docs for shipped behavior.
 jj status
 jj diff
-jj commit -m "Release v1.5.25"
+jj commit -m "Release vX.Y.Z"
 just release-verify
 jj bookmark move main --to @-
 jj git push --bookmark main
-just release-tag 1.5.25
-git ls-remote origin refs/heads/release 'refs/tags/v1.5.25^{}'
+just release-tag X.Y.Z
+git ls-remote origin refs/heads/release 'refs/tags/vX.Y.Z^{}'
 ```
 
 `just release-verify` must run from a clean jj working copy, then runs the full

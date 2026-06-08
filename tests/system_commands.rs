@@ -31,6 +31,7 @@ use support_stubs::{LOG_FILE_NAME, STUB_DIR_NAME, install_stubs, prepend_path};
 use support_tree::copy_tree;
 
 const DARWIN_REBUILD_CMD: &str = "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild";
+const RUN_CURRENT_DARWIN_REBUILD_CMD: &str = "/run/current-system/sw/bin/darwin-rebuild";
 const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
     "-C",
     REPO_ROOT_TOKEN,
@@ -277,6 +278,19 @@ const SPLIT_REBUILD_LEGACY_SUDO_PROBE_CALL: ExpectedCall = ExpectedCall::new(
     ],
 );
 
+const SPLIT_REBUILD_RUN_CURRENT_LEGACY_SUDO_PROBE_CALL: ExpectedCall = ExpectedCall::new(
+    "sudo",
+    EXPECTED_CWD_REPO_ROOT,
+    &[
+        "-n",
+        "-l",
+        RUN_CURRENT_DARWIN_REBUILD_CMD,
+        "switch",
+        "--flake",
+        REPO_ROOT_TOKEN,
+    ],
+);
+
 const SPLIT_REBUILD_PROFILE_SET_CALL: ExpectedCall = ExpectedCall::new(
     "sudo",
     EXPECTED_CWD_REPO_ROOT,
@@ -328,6 +342,7 @@ fn split_rebuild_calls(authorizes_sudo: bool) -> Vec<ExpectedCall> {
     calls.push(SPLIT_REBUILD_SUDO_CHECK_CALL);
     if authorizes_sudo {
         calls.push(SPLIT_REBUILD_LEGACY_SUDO_PROBE_CALL);
+        calls.push(SPLIT_REBUILD_RUN_CURRENT_LEGACY_SUDO_PROBE_CALL);
         calls.push(SPLIT_REBUILD_SUDO_AUTH_CALL);
     }
     calls.push(SPLIT_REBUILD_PROFILE_SET_CALL);
@@ -345,6 +360,32 @@ fn split_rebuild_legacy_fallback_calls() -> Vec<ExpectedCall> {
         EXPECTED_CWD_REPO_ROOT,
         &[
             DARWIN_REBUILD_CMD,
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "bar",
+        ],
+    ));
+    calls.push(ExpectedCall::new(
+        "darwin-rebuild",
+        EXPECTED_CWD_REPO_ROOT,
+        &["switch", "--flake", REPO_ROOT_TOKEN, "--log-format", "bar"],
+    ));
+    calls
+}
+
+fn split_rebuild_run_current_legacy_fallback_calls() -> Vec<ExpectedCall> {
+    let mut calls = Vec::with_capacity(SPLIT_REBUILD_BUILD_CALLS.len() + 5);
+    calls.extend_from_slice(SPLIT_REBUILD_BUILD_CALLS);
+    calls.push(SPLIT_REBUILD_SUDO_CHECK_CALL);
+    calls.push(SPLIT_REBUILD_LEGACY_SUDO_PROBE_CALL);
+    calls.push(SPLIT_REBUILD_RUN_CURRENT_LEGACY_SUDO_PROBE_CALL);
+    calls.push(ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            RUN_CURRENT_DARWIN_REBUILD_CMD,
             "switch",
             "--flake",
             REPO_ROOT_TOKEN,
@@ -788,6 +829,44 @@ fn split_darwin_rebuild_preserves_passwordless_legacy_sudo() -> Result<(), Box<d
     assert!(
         stdout.contains("System rebuilt"),
         "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert_quiet_split_build_output(&stdout, &stderr);
+
+    Ok(())
+}
+
+#[test]
+fn split_darwin_rebuild_preserves_run_current_passwordless_legacy_sudo()
+-> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+    let expected_calls = split_rebuild_run_current_legacy_fallback_calls();
+
+    let RunResult { stdout, stderr, .. } = run_split_rebuild(
+        &nx_bin,
+        &repo_base,
+        "split_rebuild_run_current_passwordless_legacy_sudo",
+        "split_sudo_prompt_run_current_legacy_available",
+        &[("NX_SPLIT_DARWIN", "1")],
+        &expected_calls,
+    )?;
+
+    assert!(
+        stdout.contains("activation: using passwordless darwin-rebuild"),
+        "stdout missing passwordless fallback detail\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("Running darwin-rebuild switch"),
+        "stdout missing legacy rebuild action\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("System rebuilt"),
+        "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        !stdout.contains("Authorizing sudo for system profile update and activation"),
+        "stdout should not prompt when /run/current-system darwin-rebuild is passwordless\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert_quiet_split_build_output(&stdout, &stderr);
 

@@ -34,6 +34,7 @@ use support_system::{changed_paths, fetcher_cache_path};
 use support_tree::copy_tree;
 
 const DARWIN_REBUILD_CMD: &str = "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild";
+const RUN_CURRENT_DARWIN_REBUILD_CMD: &str = "/run/current-system/sw/bin/darwin-rebuild";
 const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
     "-C",
     REPO_ROOT_TOKEN,
@@ -349,6 +350,71 @@ const UPGRADE_SPLIT_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
     ),
 ];
 
+const UPGRADE_SPLIT_REBUILD_RUN_CURRENT_LEGACY_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
+    ExpectedCall::new(
+        "scutil",
+        EXPECTED_CWD_REPO_ROOT,
+        &["--get", "LocalHostName"],
+    ),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "build",
+            "--no-link",
+            "--print-out-paths",
+            "<REPO_ROOT>#darwinConfigurations.test-host.system",
+        ],
+    ),
+    ExpectedCall::new("sudo", EXPECTED_CWD_REPO_ROOT, &["-n", "true"]),
+    ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "-n",
+            "-l",
+            DARWIN_REBUILD_CMD,
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+        ],
+    ),
+    ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "-n",
+            "-l",
+            RUN_CURRENT_DARWIN_REBUILD_CMD,
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+        ],
+    ),
+    ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            RUN_CURRENT_DARWIN_REBUILD_CMD,
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "bar",
+        ],
+    ),
+    ExpectedCall::new(
+        "darwin-rebuild",
+        EXPECTED_CWD_REPO_ROOT,
+        &["switch", "--flake", REPO_ROOT_TOKEN, "--log-format", "bar"],
+    ),
+];
+
 const UPGRADE_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
@@ -638,6 +704,40 @@ fn upgrade_split_rebuild_keeps_nix_build_output_quiet() -> Result<(), Box<dyn Er
 
     let output = run_case_with_extra_env(&nx_bin, &repo_base, &case, &[("NX_SPLIT_DARWIN", "1")])?;
 
+    assert_quiet_split_build_output(&output.stdout, &output.stderr);
+
+    Ok(())
+}
+
+#[test]
+fn upgrade_split_rebuild_preserves_run_current_passwordless_legacy_sudo()
+-> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+    let case = UpgradeCase {
+        id: "upgrade_split_rebuild_run_current_passwordless_legacy_sudo",
+        cli_args: UPGRADE_REBUILD_ARGS,
+        mode: "split_sudo_prompt_run_current_legacy_available",
+        expected_exit: 0,
+        expected_calls: UPGRADE_SPLIT_REBUILD_RUN_CURRENT_LEGACY_CALLS,
+        stdout_contains: &[
+            "activation: using passwordless darwin-rebuild",
+            "Running darwin-rebuild switch",
+            "System rebuilt",
+        ],
+    };
+
+    let output = run_case_with_extra_env(&nx_bin, &repo_base, &case, &[("NX_SPLIT_DARWIN", "1")])?;
+
+    assert!(
+        !output
+            .stdout
+            .contains("Authorizing sudo for system profile update and activation"),
+        "stdout should not prompt when /run/current-system darwin-rebuild is passwordless\nstdout:\n{}\nstderr:\n{}",
+        output.stdout,
+        output.stderr
+    );
     assert_quiet_split_build_output(&output.stdout, &output.stderr);
 
     Ok(())

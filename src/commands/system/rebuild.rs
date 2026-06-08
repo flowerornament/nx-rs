@@ -32,6 +32,7 @@ const SPLIT_DARWIN_ENV: &str = "NX_SPLIT_DARWIN";
 const DARWIN_HOST_ENV: &str = "NX_DARWIN_HOST";
 const SYSTEM_PROFILE_PATH_ENV: &str = "NX_SYSTEM_PROFILE_PATH";
 const SYSTEM_PROFILE: &str = "/nix/var/nix/profiles/system";
+const RUN_CURRENT_DARWIN_REBUILD: &str = "/run/current-system/sw/bin/darwin-rebuild";
 const SUDO_SET_HOME_ARG: &str = "-H";
 const ROOT_HOME_ENV: &str = "HOME=/var/root";
 const NIX_REMOTE_DAEMON_ENV: &str = "NIX_REMOTE=daemon";
@@ -716,13 +717,24 @@ fn do_rebuild_once(
     if should_use_split_darwin(args, manifest) {
         match do_split_darwin_rebuild(ctx, repo, use_sudo, output_mode) {
             SplitDarwinResult::Handled(result) => return result,
-            SplitDarwinResult::Fallback => {
+            SplitDarwinResult::Fallback(rebuild_command_override) => {
                 ctx.printer.action("Running darwin-rebuild switch");
+                let (code, output) = run_legacy_rebuild(
+                    args,
+                    manifest,
+                    repo,
+                    use_sudo,
+                    output_mode,
+                    profiler,
+                    rebuild_command_override.as_deref(),
+                )?;
+                return Ok((code, output, Vec::new(), RebuildOutcome::Rebuilt));
             }
         }
     }
 
-    let (code, output) = run_legacy_rebuild(args, manifest, repo, use_sudo, output_mode, profiler)?;
+    let (code, output) =
+        run_legacy_rebuild(args, manifest, repo, use_sudo, output_mode, profiler, None)?;
     Ok((code, output, Vec::new(), RebuildOutcome::Rebuilt))
 }
 
@@ -739,9 +751,15 @@ fn run_legacy_rebuild(
     use_sudo: bool,
     output_mode: RebuildOutputMode,
     profiler: &mut ActivationPhaseProfiler,
+    rebuild_command_override: Option<&str>,
 ) -> anyhow::Result<(i32, String)> {
-    let rebuild_cmd =
-        build_rebuild_command_with_manifest_and_log_format(repo, args, manifest, output_mode);
+    let rebuild_cmd = build_rebuild_command_with_manifest_and_log_format(
+        repo,
+        args,
+        manifest,
+        output_mode,
+        rebuild_command_override,
+    );
 
     let (runner, runner_args): (&str, Vec<&str>) = if use_sudo {
         let arg_refs: Vec<&str> = rebuild_cmd.iter().map(String::as_str).collect();
@@ -811,7 +829,7 @@ fn do_split_darwin_rebuild(
     let Some(host) = darwin_host(ctx) else {
         ctx.printer
             .warn("Split darwin rebuild could not determine host; falling back");
-        return SplitDarwinResult::Fallback;
+        return SplitDarwinResult::Fallback(None);
     };
 
     let attr = format!("{repo}#darwinConfigurations.{host}.system");
@@ -833,7 +851,7 @@ fn do_split_darwin_rebuild(
     let Some(system_config) = parse_system_config_path(&build.stdout) else {
         ctx.printer
             .warn("Split darwin rebuild could not parse nix build output; falling back");
-        return SplitDarwinResult::Fallback;
+        return SplitDarwinResult::Fallback(None);
     };
 
     let (current_system, compare_phase) =
@@ -854,9 +872,11 @@ fn do_split_darwin_rebuild(
     }
 
     let split_activation_needs_auth = split_activation_would_prompt(use_sudo);
-    if split_activation_needs_auth && legacy_darwin_rebuild_sudo_available(ctx.repo_root) {
+    if split_activation_needs_auth
+        && let Some(rebuild_command) = legacy_darwin_rebuild_sudo_command(ctx.repo_root)
+    {
         Printer::detail("activation: using passwordless darwin-rebuild");
-        return SplitDarwinResult::Fallback;
+        return SplitDarwinResult::Fallback(Some(rebuild_command.to_string()));
     }
 
     let sudo_auth = match authorize_split_sudo(ctx, split_activation_needs_auth) {
@@ -957,7 +977,7 @@ pub(super) fn split_nix_build_command_with_log_format(
 
 enum SplitDarwinResult {
     Handled(anyhow::Result<(i32, String, Vec<TimingPhase>, RebuildOutcome)>),
-    Fallback,
+    Fallback(Option<String>),
 }
 
 fn set_system_profile(
@@ -1157,11 +1177,17 @@ fn split_activation_would_prompt(use_sudo: bool) -> bool {
     use_sudo && !sudo_noninteractive_available()
 }
 
-fn legacy_darwin_rebuild_sudo_available(repo: &Path) -> bool {
+fn legacy_darwin_rebuild_sudo_command(repo: &Path) -> Option<&'static str> {
+    [DARWIN_REBUILD, RUN_CURRENT_DARWIN_REBUILD]
+        .into_iter()
+        .find(|command| legacy_darwin_rebuild_sudo_available(repo, command))
+}
+
+fn legacy_darwin_rebuild_sudo_available(repo: &Path, rebuild_command: &str) -> bool {
     let repo = repo.display().to_string();
     run_captured_command(
         "sudo",
-        &["-n", "-l", DARWIN_REBUILD, "switch", "--flake", &repo],
+        &["-n", "-l", rebuild_command, "switch", "--flake", &repo],
         None,
     )
     .is_ok_and(|output| output.code == 0 && !sudo_password_required(&output))
@@ -1340,6 +1366,7 @@ pub(super) fn build_rebuild_command_with_manifest(
         args,
         manifest,
         RebuildOutputMode::from_args(args),
+        None,
     )
 }
 
@@ -1348,8 +1375,11 @@ fn build_rebuild_command_with_manifest_and_log_format(
     args: &RebuildArgs,
     manifest: Option<&Manifest>,
     output_mode: RebuildOutputMode,
+    rebuild_command_override: Option<&str>,
 ) -> Vec<String> {
-    let rebuild_bin = manifest.map_or(DARWIN_REBUILD, |m| m.platform.rebuild_command.as_str());
+    let rebuild_bin = rebuild_command_override
+        .or_else(|| manifest.map(|m| m.platform.rebuild_command.as_str()))
+        .unwrap_or(DARWIN_REBUILD);
 
     let mut rebuild_args = vec![
         rebuild_bin.to_string(),

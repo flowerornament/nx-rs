@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- preserves passwordless Darwin rebuild setups whose sudoers rule allows `/run/current-system/sw/bin/darwin-rebuild`, even when the manifest uses the canonical `/nix/var/nix/profiles/system/sw/bin/darwin-rebuild` path
+
 ## v1.5.26 - 2026-06-07
 
 - keeps default `nx rebuild` and `nx upgrade` output closer to native Nix progress by applying `bar` log formatting through legacy `darwin-rebuild` fallback and activation-time Nix subprocesses

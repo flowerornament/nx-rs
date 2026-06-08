@@ -12,6 +12,7 @@ use crate::output::printer::Printer;
 
 type CommandEnv<'a> = &'a [(&'a str, &'a str)];
 type StreamObserver<'a> = &'a mut dyn FnMut(StreamName, &str);
+type StreamFilter<'a> = &'a mut dyn FnMut(StreamName, &str) -> bool;
 const STDERR_TEE_CAPTURE_LIMIT: usize = 256 * 1024;
 
 pub struct CapturedCommand {
@@ -49,6 +50,12 @@ pub fn first_nonempty_output(output: &CapturedCommand) -> &str {
 struct StreamedCommand {
     code: i32,
     collected: Option<String>,
+}
+
+struct StreamingOptions<'a> {
+    collect_output: bool,
+    observer: Option<StreamObserver<'a>>,
+    should_render: Option<StreamFilter<'a>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,7 +139,19 @@ pub fn run_indented_command_with_env(
     _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<i32> {
-    Ok(run_streaming_command_with_env(program, args, cwd, env, indent, false, None)?.code)
+    Ok(run_streaming_command_with_env(
+        program,
+        args,
+        cwd,
+        env,
+        indent,
+        StreamingOptions {
+            collect_output: false,
+            observer: None,
+            should_render: None,
+        },
+    )?
+    .code)
 }
 
 pub fn run_indented_command_collecting_with_env(
@@ -143,7 +162,18 @@ pub fn run_indented_command_collecting_with_env(
     _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<(i32, String)> {
-    let streamed = run_streaming_command_with_env(program, args, cwd, env, indent, true, None)?;
+    let streamed = run_streaming_command_with_env(
+        program,
+        args,
+        cwd,
+        env,
+        indent,
+        StreamingOptions {
+            collect_output: true,
+            observer: None,
+            should_render: None,
+        },
+    )?;
     Ok((streamed.code, streamed.collected.unwrap_or_default()))
 }
 
@@ -159,8 +189,46 @@ pub fn run_indented_command_collecting_with_observer<F>(
 where
     F: FnMut(StreamName, &str),
 {
-    let streamed =
-        run_streaming_command_with_env(program, args, cwd, env, indent, true, Some(&mut observer))?;
+    let streamed = run_streaming_command_with_env(
+        program,
+        args,
+        cwd,
+        env,
+        indent,
+        StreamingOptions {
+            collect_output: true,
+            observer: Some(&mut observer),
+            should_render: None,
+        },
+    )?;
+    Ok((streamed.code, streamed.collected.unwrap_or_default()))
+}
+
+pub fn run_indented_command_collecting_filtered_with_observer<F, G>(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: Option<CommandEnv<'_>>,
+    indent: &str,
+    mut observer: F,
+    mut should_render: G,
+) -> anyhow::Result<(i32, String)>
+where
+    F: FnMut(StreamName, &str),
+    G: FnMut(StreamName, &str) -> bool,
+{
+    let streamed = run_streaming_command_with_env(
+        program,
+        args,
+        cwd,
+        env,
+        indent,
+        StreamingOptions {
+            collect_output: true,
+            observer: Some(&mut observer),
+            should_render: Some(&mut should_render),
+        },
+    )?;
     Ok((streamed.code, streamed.collected.unwrap_or_default()))
 }
 
@@ -234,9 +302,13 @@ fn run_streaming_command_with_env(
     cwd: Option<&Path>,
     env: Option<CommandEnv<'_>>,
     indent: &str,
-    collect_output: bool,
-    mut observer: Option<StreamObserver<'_>>,
+    options: StreamingOptions<'_>,
 ) -> anyhow::Result<StreamedCommand> {
+    let StreamingOptions {
+        collect_output,
+        mut observer,
+        mut should_render,
+    } = options;
     let mut command = Command::new(program);
     configure_command(&mut command, args, cwd, env);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -271,10 +343,15 @@ fn run_streaming_command_with_env(
             }
             collected.push_str(trimmed);
         }
-        if trimmed.is_empty() {
-            println!();
-        } else {
-            Printer::stream_line(trimmed, indent, 80);
+        let render = should_render
+            .as_deref_mut()
+            .is_none_or(|filter| filter(event.stream, trimmed));
+        if render {
+            if trimmed.is_empty() {
+                println!();
+            } else {
+                Printer::stream_line(trimmed, indent, 80);
+            }
         }
     }
 

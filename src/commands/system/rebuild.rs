@@ -8,6 +8,7 @@ use crate::domain::manifest::{Manifest, PlatformKind};
 use crate::infra::activation_profile::ActivationPhaseProfiler;
 use crate::infra::shell::{
     StreamName, first_nonempty_output, run_captured_command, run_captured_command_with_env,
+    run_indented_command_collecting_filtered_with_observer,
     run_indented_command_collecting_with_env, run_indented_command_collecting_with_observer,
     run_native_command_with_env, run_stdout_collecting_tee_stderr_with_env,
     terminal_stderr_available, terminal_stdio_available,
@@ -34,7 +35,12 @@ const SYSTEM_PROFILE: &str = "/nix/var/nix/profiles/system";
 const SUDO_SET_HOME_ARG: &str = "-H";
 const ROOT_HOME_ENV: &str = "HOME=/var/root";
 const NIX_REMOTE_DAEMON_ENV: &str = "NIX_REMOTE=daemon";
-const ROOT_ENV_WRAPPER: &[&str] = &["/usr/bin/env", ROOT_HOME_ENV, NIX_REMOTE_DAEMON_ENV];
+const ENV_WRAPPER: &str = "/usr/bin/env";
+const NIX_CONFIG_ENV_KEY: &str = "NIX_CONFIG";
+const NIX_CONFIG_BAR: &str = "log-format = bar";
+const NIX_CONFIG_BAR_WITH_LOGS: &str = "log-format = bar-with-logs";
+const NIX_CONFIG_BAR_ASSIGNMENT: &str = "NIX_CONFIG=log-format = bar";
+const NIX_CONFIG_BAR_WITH_LOGS_ASSIGNMENT: &str = "NIX_CONFIG=log-format = bar-with-logs";
 const NO_AUTO_HASH_FIX_ENV: &str = "NX_NO_AUTO_HASH_FIX";
 const MAX_AUTO_HASH_FIXES: usize = 3;
 const MAX_REBUILD_ATTEMPTS: usize = 8;
@@ -71,7 +77,7 @@ impl RebuildOutputMode {
         let native_activation = native_rebuild_output_enabled(args);
         Self {
             split_build: SplitBuildOutputMode::from_args(args, native_split_build_output_enabled()),
-            activation: ActivationOutputMode::from_native_enabled(native_activation),
+            activation: ActivationOutputMode::from_args(args, native_activation),
         }
     }
 }
@@ -110,20 +116,64 @@ impl SplitBuildOutputMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActivationOutputMode {
     Captured,
-    Native,
+    Native(NixLogFormat),
 }
 
 impl ActivationOutputMode {
-    const fn from_native_enabled(native_enabled: bool) -> Self {
+    const fn from_args(args: &RebuildArgs, native_enabled: bool) -> Self {
         if native_enabled {
-            Self::Native
+            Self::Native(NixLogFormat::from_verbose(args.verbose))
         } else {
             Self::Captured
         }
     }
 
     const fn is_native(self) -> bool {
-        matches!(self, Self::Native)
+        matches!(self, Self::Native(_))
+    }
+
+    const fn nix_log_format(self) -> Option<NixLogFormat> {
+        match self {
+            Self::Captured => None,
+            Self::Native(format) => Some(format),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum NixLogFormat {
+    Bar,
+    BarWithLogs,
+}
+
+impl NixLogFormat {
+    const fn from_verbose(verbose: bool) -> Self {
+        if verbose {
+            Self::BarWithLogs
+        } else {
+            Self::Bar
+        }
+    }
+
+    pub(super) const fn as_arg(self) -> &'static str {
+        match self {
+            Self::Bar => "bar",
+            Self::BarWithLogs => "bar-with-logs",
+        }
+    }
+
+    const fn as_config(self) -> &'static str {
+        match self {
+            Self::Bar => NIX_CONFIG_BAR,
+            Self::BarWithLogs => NIX_CONFIG_BAR_WITH_LOGS,
+        }
+    }
+
+    const fn as_sudo_env_assignment(self) -> &'static str {
+        match self {
+            Self::Bar => NIX_CONFIG_BAR_ASSIGNMENT,
+            Self::BarWithLogs => NIX_CONFIG_BAR_WITH_LOGS_ASSIGNMENT,
+        }
     }
 }
 
@@ -672,7 +722,7 @@ fn do_rebuild_once(
         }
     }
 
-    let (code, output) = run_legacy_rebuild(args, ctx, manifest, repo, use_sudo, profiler)?;
+    let (code, output) = run_legacy_rebuild(args, manifest, repo, use_sudo, output_mode, profiler)?;
     Ok((code, output, Vec::new(), RebuildOutcome::Rebuilt))
 }
 
@@ -684,13 +734,14 @@ enum RebuildOutcome {
 
 fn run_legacy_rebuild(
     args: &RebuildArgs,
-    ctx: &SystemContext<'_>,
     manifest: Option<&Manifest>,
     repo: &str,
     use_sudo: bool,
+    output_mode: RebuildOutputMode,
     profiler: &mut ActivationPhaseProfiler,
 ) -> anyhow::Result<(i32, String)> {
-    let rebuild_cmd = build_rebuild_command_with_manifest(repo, args, manifest);
+    let rebuild_cmd =
+        build_rebuild_command_with_manifest_and_log_format(repo, args, manifest, output_mode);
 
     let (runner, runner_args): (&str, Vec<&str>) = if use_sudo {
         let arg_refs: Vec<&str> = rebuild_cmd.iter().map(String::as_str).collect();
@@ -702,18 +753,26 @@ fn run_legacy_rebuild(
         (first.as_str(), rest.iter().map(String::as_str).collect())
     };
 
-    run_indented_command_collecting_with_observer(
+    if output_mode.activation.is_native() {
+        let output = run_stdout_collecting_tee_stderr_with_env(runner, &runner_args, None, None)?;
+        return Ok((
+            output.code,
+            combined_stream_output(&output.stdout, &output.stderr),
+        ));
+    }
+
+    run_indented_command_collecting_filtered_with_observer(
         runner,
         &runner_args,
         None,
         None,
-        ctx.printer,
         "  ",
         |stream, line| {
             if stream == StreamName::Stderr {
                 profiler.observe_stderr_line(line);
             }
         },
+        quiet_activation_line,
     )
 }
 
@@ -825,15 +884,11 @@ fn do_split_darwin_rebuild(
         )));
     }
 
-    let (activate, activate_phase) = match activate_system(
-        ctx,
-        use_sudo,
-        output_mode.activation.is_native(),
-        &system_config,
-    ) {
-        Ok(result) => result,
-        Err(err) => return SplitDarwinResult::Handled(Err(err)),
-    };
+    let (activate, activate_phase) =
+        match activate_system(ctx, use_sudo, output_mode.activation, &system_config) {
+            Ok(result) => result,
+            Err(err) => return SplitDarwinResult::Handled(Err(err)),
+        };
     phases.push(activate_phase);
     SplitDarwinResult::Handled(Ok((
         activate.0,
@@ -926,27 +981,33 @@ fn set_system_profile(
 fn activate_system(
     ctx: &SystemContext<'_>,
     use_sudo: bool,
-    native_output: bool,
+    output_mode: ActivationOutputMode,
     system_config: &str,
 ) -> anyhow::Result<((i32, String), TimingPhase)> {
     let mut profiler = ActivationPhaseProfiler::new();
     let (output, mut phase) = timed_phase("activate", || {
         ctx.printer.action("Activating system");
-        if native_output {
-            let code =
-                run_split_command_native(use_sudo, &format!("{system_config}/activate"), &[], ctx)?;
+        if let Some(log_format) = output_mode.nix_log_format() {
+            let code = run_split_command_native(
+                use_sudo,
+                &format!("{system_config}/activate"),
+                &[],
+                ctx,
+                Some(log_format),
+            )?;
             return Ok((code, String::new()));
         }
-        run_split_command_with_observer(
+        run_split_command_filtered_with_observer(
             use_sudo,
             &format!("{system_config}/activate"),
             &[],
-            ctx,
+            None,
             |stream, line| {
                 if stream == StreamName::Stderr {
                     profiler.observe_stderr_line(line);
                 }
             },
+            quiet_activation_line,
         )
     })?;
     phase.status = exit_status(output.0);
@@ -959,9 +1020,20 @@ fn run_split_command_native(
     program: &str,
     args: &[&str],
     ctx: &SystemContext<'_>,
+    log_format: Option<NixLogFormat>,
 ) -> anyhow::Result<i32> {
-    let (runner, runner_args) = split_command_invocation(use_sudo, program, args);
-    run_native_command_with_env(runner, &runner_args, None, None, ctx.printer)
+    let (runner, runner_args) = split_command_invocation(use_sudo, program, args, log_format);
+    let env = (!use_sudo)
+        .then_some(log_format)
+        .flatten()
+        .map(|format| [(NIX_CONFIG_ENV_KEY, format.as_config())]);
+    run_native_command_with_env(
+        runner,
+        &runner_args,
+        None,
+        env.as_ref().map(<[(&str, &str); 1]>::as_slice),
+        ctx.printer,
+    )
 }
 
 fn run_split_command(
@@ -983,7 +1055,7 @@ fn run_split_command_with_observer<F>(
 where
     F: FnMut(StreamName, &str),
 {
-    let (runner, runner_args) = split_command_invocation(use_sudo, program, args);
+    let (runner, runner_args) = split_command_invocation(use_sudo, program, args, None);
     run_indented_command_collecting_with_observer(
         runner,
         &runner_args,
@@ -995,18 +1067,83 @@ where
     )
 }
 
+fn run_split_command_filtered_with_observer<F, G>(
+    use_sudo: bool,
+    program: &str,
+    args: &[&str],
+    log_format: Option<NixLogFormat>,
+    mut observer: F,
+    should_render: G,
+) -> anyhow::Result<(i32, String)>
+where
+    F: FnMut(StreamName, &str),
+    G: FnMut(StreamName, &str) -> bool,
+{
+    let (runner, runner_args) = split_command_invocation(use_sudo, program, args, log_format);
+    let env = (!use_sudo)
+        .then_some(log_format)
+        .flatten()
+        .map(|format| [(NIX_CONFIG_ENV_KEY, format.as_config())]);
+    run_indented_command_collecting_filtered_with_observer(
+        runner,
+        &runner_args,
+        None,
+        env.as_ref().map(<[(&str, &str); 1]>::as_slice),
+        "  ",
+        |stream, line| observer(stream, line),
+        should_render,
+    )
+}
+
+pub(super) fn quiet_activation_line(stream: StreamName, line: &str) -> bool {
+    if stream != StreamName::Stderr {
+        return true;
+    }
+
+    let line = line.trim_start();
+    if line.starts_with("copying path ") {
+        return false;
+    }
+    if line.starts_with("building '/nix/store/")
+        || line.starts_with("building /nix/store/")
+        || line.starts_with("building path(s) ")
+    {
+        return false;
+    }
+    if line.starts_with("these ") && line.contains(" paths will be fetched") {
+        return false;
+    }
+    if line.starts_with("these ") && line.contains(" derivations will be built") {
+        return false;
+    }
+    if line.starts_with("this derivation will be built") {
+        return false;
+    }
+    if line.starts_with("/nix/store/") {
+        return false;
+    }
+
+    true
+}
+
 fn split_command_invocation<'a>(
     use_sudo: bool,
     program: &'a str,
     args: &'a [&'a str],
+    log_format: Option<NixLogFormat>,
 ) -> (&'a str, Vec<&'a str>) {
     if !use_sudo {
         return (program, args.to_vec());
     }
 
-    let mut sudo_args = Vec::with_capacity(args.len() + ROOT_ENV_WRAPPER.len() + 2);
+    let mut sudo_args = Vec::with_capacity(args.len() + 6);
     sudo_args.push(SUDO_SET_HOME_ARG);
-    sudo_args.extend(ROOT_ENV_WRAPPER);
+    sudo_args.push(ENV_WRAPPER);
+    sudo_args.push(ROOT_HOME_ENV);
+    sudo_args.push(NIX_REMOTE_DAEMON_ENV);
+    if let Some(format) = log_format {
+        sudo_args.push(format.as_sudo_env_assignment());
+    }
     sudo_args.push(program);
     sudo_args.extend(args.iter().copied());
     ("sudo", sudo_args)
@@ -1192,10 +1329,25 @@ pub(super) fn build_rebuild_command(repo: &str, args: &RebuildArgs) -> Vec<Strin
     build_rebuild_command_with_manifest(repo, args, None)
 }
 
+#[cfg(test)]
 pub(super) fn build_rebuild_command_with_manifest(
     repo: &str,
     args: &RebuildArgs,
     manifest: Option<&Manifest>,
+) -> Vec<String> {
+    build_rebuild_command_with_manifest_and_log_format(
+        repo,
+        args,
+        manifest,
+        RebuildOutputMode::from_args(args),
+    )
+}
+
+fn build_rebuild_command_with_manifest_and_log_format(
+    repo: &str,
+    args: &RebuildArgs,
+    manifest: Option<&Manifest>,
+    output_mode: RebuildOutputMode,
 ) -> Vec<String> {
     let rebuild_bin = manifest.map_or(DARWIN_REBUILD, |m| m.platform.rebuild_command.as_str());
 
@@ -1205,8 +1357,23 @@ pub(super) fn build_rebuild_command_with_manifest(
         "--flake".to_string(),
         repo.to_string(),
     ];
+    if rebuild_supports_nix_log_format(rebuild_bin) && !has_log_format_arg(&args.passthrough) {
+        let format = output_mode
+            .activation
+            .nix_log_format()
+            .unwrap_or_else(|| NixLogFormat::from_verbose(args.verbose));
+        rebuild_args.extend(["--log-format".to_string(), format.as_arg().to_string()]);
+    }
     rebuild_args.extend(args.passthrough.iter().cloned());
     rebuild_args
+}
+
+fn rebuild_supports_nix_log_format(rebuild_bin: &str) -> bool {
+    rebuild_bin.rsplit('/').next() == Some("darwin-rebuild")
+}
+
+fn has_log_format_arg(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "--log-format")
 }
 
 /// Clear root's nix tarball pack cache to reduce open file pressure during rebuild.

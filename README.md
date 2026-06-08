@@ -495,18 +495,19 @@ Runs `darwin-rebuild switch` for the managed repo.
 
 - Use `--preflight` to stop after lint, git, and flake checks without switching.
 - Use `--timing` to print phase timings after recording them locally.
-- Use `--verbose` to stream full split-build logs in interactive terminals.
+- Use `--verbose` to ask Nix for `bar-with-logs` output during rebuild phases.
 - Darwin split rebuilds raise Nix's file descriptor limit and retry bounded
   source-cache failures before surfacing an error.
-- Interactive split builds capture Nix build stdout and a bounded stderr tail,
-  while teeing Nix's `bar` progress UI. Successful builder logs stay quiet and
-  retry/error detection still works. `--verbose` streams full build logs with
-  `bar-with-logs`.
+- Interactive split builds capture Nix build stdout and a bounded stderr tail
+  while teeing Nix's `bar` progress UI. Legacy `darwin-rebuild` fallback also
+  receives `--log-format bar` by default. `--verbose` uses `bar-with-logs`.
 - If split activation would need an interactive sudo prompt and passwordless
   `sudo darwin-rebuild` is available, `nx` falls back to that path.
-- Interactive activation output passes through directly so Nix, Homebrew, and
-  Home Manager keep their own colors and progress UI. Non-interactive runs and
-  `--timing` keep captured output for parsing and timing detail.
+- Interactive activation output passes through directly with `NIX_CONFIG`
+  setting Nix's log format, so Nix, Homebrew, and Home Manager keep native
+  progress behavior. Non-interactive runs and `--timing` capture output for
+  parsing and suppress repetitive Nix fetch/build chatter while keeping
+  activation milestones visible.
 - If rebuild reports a fixed-output hash mismatch, `nx rebuild` updates the
   unique clean matching hash in a tracked `.nix` file and retries. It prints the
   file, line, old hash, and new hash. Set `NX_NO_AUTO_HASH_FIX=1` to require a

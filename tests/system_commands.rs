@@ -99,6 +99,8 @@ const REBUILD_SUCCESS_CALLS: &[ExpectedCall] = &[
             "switch",
             "--flake",
             REPO_ROOT_TOKEN,
+            "--log-format",
+            "bar",
             "--show-trace",
             "foo",
         ],
@@ -106,7 +108,15 @@ const REBUILD_SUCCESS_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new(
         "darwin-rebuild",
         EXPECTED_CWD_REPO_ROOT,
-        &["switch", "--flake", REPO_ROOT_TOKEN, "--show-trace", "foo"],
+        &[
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "bar",
+            "--show-trace",
+            "foo",
+        ],
     ),
 ];
 
@@ -144,6 +154,8 @@ const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
             "switch",
             "--flake",
             REPO_ROOT_TOKEN,
+            "--log-format",
+            "bar",
             "--show-trace",
             "foo",
         ],
@@ -151,7 +163,15 @@ const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new(
         "darwin-rebuild",
         EXPECTED_CWD_REPO_ROOT,
-        &["switch", "--flake", REPO_ROOT_TOKEN, "--show-trace", "foo"],
+        &[
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "bar",
+            "--show-trace",
+            "foo",
+        ],
     ),
 ];
 
@@ -167,13 +187,22 @@ const REBUILD_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
             "switch",
             "--flake",
             REPO_ROOT_TOKEN,
+            "--log-format",
+            "bar",
             "--show-trace",
         ],
     ),
     ExpectedCall::new(
         "darwin-rebuild",
         EXPECTED_CWD_REPO_ROOT,
-        &["switch", "--flake", REPO_ROOT_TOKEN, "--show-trace"],
+        &[
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "bar",
+            "--show-trace",
+        ],
     ),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, &["ls-files", "--", "*.nix"]),
     ExpectedCall::new(
@@ -189,13 +218,22 @@ const REBUILD_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
             "switch",
             "--flake",
             REPO_ROOT_TOKEN,
+            "--log-format",
+            "bar",
             "--show-trace",
         ],
     ),
     ExpectedCall::new(
         "darwin-rebuild",
         EXPECTED_CWD_REPO_ROOT,
-        &["switch", "--flake", REPO_ROOT_TOKEN, "--show-trace"],
+        &[
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "bar",
+            "--show-trace",
+        ],
     ),
 ];
 
@@ -305,12 +343,19 @@ fn split_rebuild_legacy_fallback_calls() -> Vec<ExpectedCall> {
     calls.push(ExpectedCall::new(
         "sudo",
         EXPECTED_CWD_REPO_ROOT,
-        &[DARWIN_REBUILD_CMD, "switch", "--flake", REPO_ROOT_TOKEN],
+        &[
+            DARWIN_REBUILD_CMD,
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "bar",
+        ],
     ));
     calls.push(ExpectedCall::new(
         "darwin-rebuild",
         EXPECTED_CWD_REPO_ROOT,
-        &["switch", "--flake", REPO_ROOT_TOKEN],
+        &["switch", "--flake", REPO_ROOT_TOKEN, "--log-format", "bar"],
     ));
     calls
 }
@@ -625,11 +670,15 @@ fn split_darwin_rebuild_runs_explicit_phases() -> Result<(), Box<dyn Error>> {
 fn assert_quiet_split_build_output(stdout: &str, stderr: &str) {
     for fragment in [
         "copying path '/nix/store/split-example-one'",
+        "copying path '/nix/store/activation-example'",
+        "copying path '/nix/store/example-one'",
         "building '/nix/store/split-example.drv'",
+        "building /nix/store/activation-example.drv",
+        "building /nix/store/example.drv",
     ] {
         assert!(
             !stdout.contains(fragment) && !stderr.contains(fragment),
-            "default split build leaked noisy Nix output '{fragment}'\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            "default rebuild leaked noisy Nix output '{fragment}'\nstdout:\n{stdout}\nstderr:\n{stderr}"
         );
     }
 }
@@ -740,6 +789,7 @@ fn split_darwin_rebuild_preserves_passwordless_legacy_sudo() -> Result<(), Box<d
         stdout.contains("System rebuilt"),
         "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
+    assert_quiet_split_build_output(&stdout, &stderr);
 
     Ok(())
 }

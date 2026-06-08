@@ -344,6 +344,8 @@ case "$program" in
           echo "stub activate failed" >&2
           exit 1
         fi
+        echo "copying path '/nix/store/activation-example' from 'https://cache.nixos.org'" >&2
+        echo "building /nix/store/activation-example.drv" >&2
         echo "setting up /etc..." >&2
         echo "Homebrew bundle..." >&2
         echo "Activating home-manager configuration for test" >&2

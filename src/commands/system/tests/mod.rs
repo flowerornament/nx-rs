@@ -14,8 +14,8 @@ use super::fixed_output_hash::{
 use super::rebuild::{
     FailureOutputExcerpt, SplitBuildOutputMode, build_rebuild_command,
     build_rebuild_command_with_manifest, failure_output_excerpt, has_nix_extension,
-    parse_system_config_path, should_use_split_darwin, split_nix_build_command_with_log_format,
-    sudo_password_required,
+    parse_system_config_path, quiet_activation_line, should_use_split_darwin,
+    split_nix_build_command_with_log_format, sudo_password_required,
 };
 use super::undo::{git_diff_stat, git_modified_files};
 use super::upgrade::{

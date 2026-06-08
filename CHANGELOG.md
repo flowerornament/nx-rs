@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- made rebuild and upgrade apply Nix `bar` log formatting through legacy `darwin-rebuild` fallback and activation-time Nix subprocesses, while captured activation output suppresses repetitive fetch/build chatter
 - made `nx init` seed verified package alias hints into `.nx/manifest.toml` for declared packages, while keeping `nx init --refresh` respectful of hand-edited aliases
 
 ## v1.5.25 - 2026-06-07

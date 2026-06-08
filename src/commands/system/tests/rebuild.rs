@@ -1,4 +1,5 @@
 use super::*;
+use crate::infra::shell::StreamName;
 
 #[test]
 fn rebuild_command_includes_base_args() {
@@ -13,6 +14,8 @@ fn rebuild_command_includes_base_args() {
     assert_eq!(result[1], "switch");
     assert_eq!(result[2], "--flake");
     assert_eq!(result[3], "/Users/test/.nix-config");
+    assert_eq!(result[4], "--log-format");
+    assert_eq!(result[5], "bar");
 }
 
 #[test]
@@ -31,6 +34,8 @@ fn rebuild_command_includes_passthrough_args() {
             "switch".to_string(),
             "--flake".to_string(),
             "/test".to_string(),
+            "--log-format".to_string(),
+            "bar".to_string(),
             "--show-trace".to_string(),
         ]
     );
@@ -65,6 +70,29 @@ fn rebuild_command_uses_manifest_rebuild_command() {
     let result = build_rebuild_command_with_manifest("/test", &args, Some(&manifest));
     assert_eq!(result[0], "nixos-rebuild");
     assert_eq!(result[1], "switch");
+    assert!(!result.contains(&"--log-format".to_string()));
+}
+
+#[test]
+fn rebuild_command_respects_passthrough_log_format() {
+    let args = RebuildArgs {
+        preflight: false,
+        timing: false,
+        verbose: false,
+        passthrough: vec!["--log-format".into(), "raw".into()],
+    };
+    let result = build_rebuild_command("/test", &args);
+    assert_eq!(
+        result,
+        vec![
+            DARWIN_REBUILD.to_string(),
+            "switch".to_string(),
+            "--flake".to_string(),
+            "/test".to_string(),
+            "--log-format".to_string(),
+            "raw".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -150,6 +178,27 @@ fn split_build_log_format_uses_bar_by_default() {
         SplitBuildOutputMode::NativeVerbose.log_format(),
         Some("bar-with-logs")
     );
+}
+
+#[test]
+fn quiet_activation_line_hides_nix_fetch_and_build_chatter() {
+    for line in [
+        "copying path '/nix/store/example' from 'https://cache.nixos.org'",
+        "these 184 paths will be fetched (14.7 MiB download)",
+        "these 13 derivations will be built:",
+        "  /nix/store/example.drv",
+        "building /nix/store/example.drv",
+    ] {
+        assert!(!quiet_activation_line(StreamName::Stderr, line), "{line}");
+    }
+
+    for line in [
+        "setting up /etc...",
+        "Homebrew bundle...",
+        "Activating home-manager configuration for morgan",
+    ] {
+        assert!(quiet_activation_line(StreamName::Stderr, line), "{line}");
+    }
 }
 
 #[test]

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.5.27 - 2026-06-09
+
 - preserves passwordless Darwin rebuild setups whose sudoers rule allows `/run/current-system/sw/bin/darwin-rebuild`, even when the manifest uses the canonical `/nix/var/nix/profiles/system/sw/bin/darwin-rebuild` path
 
 ## v1.5.26 - 2026-06-07

@@ -291,9 +291,9 @@ fn layout_line_with_prefix(prefix: &str, layout: LineLayout, glyph: &str, text: 
 impl LineLayout {
     const fn indent(self) -> &'static str {
         match self {
-            LineLayout::TopLevel => "",
-            LineLayout::Detail => "  ",
-            LineLayout::SubDetail => "    ",
+            Self::TopLevel => "",
+            Self::Detail => "  ",
+            Self::SubDetail => "    ",
         }
     }
 }

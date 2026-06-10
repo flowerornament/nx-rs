@@ -49,7 +49,7 @@ pub struct TimingPhase {
     pub duration_ms: u128,
     pub status: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub children: Vec<TimingPhase>,
+    pub children: Vec<Self>,
 }
 
 #[derive(Debug)]

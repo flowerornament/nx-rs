@@ -94,9 +94,15 @@ check:
 build:
     @cargo build --release
 
-# Full strict CI-equivalent local gate.
+# Full strict CI-equivalent local gate with per-step timing.
 [group('check')]
-ci: fmt-check lint test test-scripts check
+ci:
+    @scripts/quality-gate.sh
+
+# Full strict CI-equivalent local gate and append timings to .nx/gate-times.csv.
+[group('check')]
+ci-record:
+    @scripts/quality-gate.sh record
 
 # Update release versions and scaffold changelog.
 [group('release')]

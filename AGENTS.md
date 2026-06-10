@@ -117,7 +117,8 @@ just doctor         # verify local toolchain and paths
 just hooks-install  # install/update bd hooks
 just guard          # strict pre-compile checks
 just compile        # strict checks + cargo check
-just ci             # fmt-check + clippy + test + script tests + check
+just ci             # timed fmt-check + clippy + test + script tests + check
+just ci-record      # same gate, appending timings to .nx/gate-times.csv
 ```
 
 Quality gates:
@@ -129,12 +130,13 @@ Quality gates:
 | Test | `just test` | `cargo test`, all targets/features |
 | Script tests | `just test-scripts` | Python helper/release tests |
 | Check | `just check` | `cargo check`, all targets/features |
-| **Full CI gate** | **`just ci`** | fmt-check + lint + test + test-scripts + check in sequence |
+| **Full CI gate** | **`just ci`** | Timed fmt-check + lint + test + test-scripts + check in sequence |
+| Gate timing ledger | `just ci-record` | Same gate, appending a local ignored CSV row to `.nx/gate-times.csv` |
 | System tests | `just test-system` | Integration matrix with deterministic stubs |
 
-All flags use `--workspace --all-targets --all-features`. Clippy treats warnings as errors.
+All flags use `--workspace --all-targets --all-features`. Clippy treats warnings as errors. The lint policy enables `clippy::all`, `clippy::pedantic`, and a curated low-noise subset of `clippy::nursery`; do not enable the whole nursery group without first proving the new warnings improve the loop more than they add churn.
 
-Run `just ci` before finishing any code change. For release-adjacent changes, also run `just test-system`.
+Run `just ci` before finishing any code change. Use `just ci-record` when tuning the development loop or comparing gate cost over time. For release-adjacent changes, also run `just test-system`.
 
 Agent hook pipeline (`just compile` runs this full sequence):
 

@@ -16,3 +16,4 @@ __pycache__/
 .vercel
 .agents/reports/
 .desloppify/
+.nx/gate-times.csv

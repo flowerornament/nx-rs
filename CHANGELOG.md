@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.5.28 - 2026-06-20
+
 - adopts a curated low-noise subset of `clippy::nursery` lints and makes `just ci` report per-step timings, with `just ci-record` available for local gate trend tracking
 - compacts default `nx rebuild` and `nx upgrade` Nix fetch/build chatter into a live status line while keeping bounded stderr diagnostics; `--verbose` still streams full Nix logs
 

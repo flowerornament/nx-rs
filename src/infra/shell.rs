@@ -8,6 +8,7 @@ use std::thread;
 use anyhow::{Context, anyhow};
 use serde_json::Value;
 
+use crate::infra::nix_output::{CompactNixProgress, tee_quiet_nix_chunk, tee_quiet_nix_record};
 use crate::output::printer::Printer;
 
 type CommandEnv<'a> = &'a [(&'a str, &'a str)];
@@ -68,6 +69,12 @@ pub enum StreamName {
 struct StreamedLine {
     stream: StreamName,
     line: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StderrTeeMode {
+    Raw,
+    QuietNix,
 }
 
 /// Run a command and parse stdout as JSON while suppressing stderr noise.
@@ -267,6 +274,25 @@ pub fn run_stdout_collecting_tee_stderr_with_env(
     cwd: Option<&Path>,
     env: Option<CommandEnv<'_>>,
 ) -> anyhow::Result<CapturedCommand> {
+    run_stdout_collecting_stderr_with_env(program, args, cwd, env, StderrTeeMode::Raw)
+}
+
+pub fn run_stdout_collecting_quiet_nix_stderr_with_env(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: Option<CommandEnv<'_>>,
+) -> anyhow::Result<CapturedCommand> {
+    run_stdout_collecting_stderr_with_env(program, args, cwd, env, StderrTeeMode::QuietNix)
+}
+
+fn run_stdout_collecting_stderr_with_env(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: Option<CommandEnv<'_>>,
+    stderr_mode: StderrTeeMode,
+) -> anyhow::Result<CapturedCommand> {
     let mut command = Command::new(program);
     configure_command(&mut command, args, cwd, env);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -284,7 +310,7 @@ pub fn run_stdout_collecting_tee_stderr_with_env(
         .context("failed to capture child stderr")?;
 
     let stdout_handle = thread::spawn(move || collect_stream("stdout", stdout));
-    let stderr_handle = thread::spawn(move || tee_stderr_stream(stderr));
+    let stderr_handle = thread::spawn(move || collect_stderr_stream(stderr, stderr_mode));
     let status = child.wait().context("waiting for child process")?;
     let stdout = String::from_utf8_lossy(&join_collector("stdout", stdout_handle)?).into_owned();
     let stderr = String::from_utf8_lossy(&join_collector("stderr", stderr_handle)?).into_owned();
@@ -414,6 +440,16 @@ fn collect_stream(
     Ok(bytes)
 }
 
+fn collect_stderr_stream(
+    stream: impl Read + Send + 'static,
+    mode: StderrTeeMode,
+) -> anyhow::Result<Vec<u8>> {
+    match mode {
+        StderrTeeMode::Raw => tee_stderr_stream(stream),
+        StderrTeeMode::QuietNix => tee_quiet_nix_stderr_stream(stream),
+    }
+}
+
 fn tee_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     let mut buf = [0u8; 8192];
@@ -431,6 +467,37 @@ fn tee_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Result<V
             stderr.flush().context("flushing child stderr")?;
         }
         append_tail(&mut bytes, &buf[..count], STDERR_TEE_CAPTURE_LIMIT);
+    }
+    Ok(bytes)
+}
+
+fn tee_quiet_nix_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut buf = [0u8; 8192];
+    let mut pending = Vec::new();
+    let mut stderr = io::stderr().lock();
+    let should_tee = terminal_stdio_available();
+    let mut progress = CompactNixProgress::default();
+
+    loop {
+        let count = stream.read(&mut buf).context("reading stderr stream")?;
+        if count == 0 {
+            break;
+        }
+        append_tail(&mut bytes, &buf[..count], STDERR_TEE_CAPTURE_LIMIT);
+
+        if !should_tee {
+            continue;
+        }
+
+        tee_quiet_nix_chunk(&buf[..count], &mut pending, &mut progress, &mut stderr)?;
+    }
+
+    if should_tee {
+        if !pending.is_empty() {
+            tee_quiet_nix_record(&pending, &mut progress, &mut stderr)?;
+        }
+        progress.clear(&mut stderr)?;
     }
     Ok(bytes)
 }
@@ -486,6 +553,7 @@ mod tests {
     use std::fs;
     use std::io;
 
+    use crate::infra::nix_output::{NixStatusLine, classify_nix_chatter_line};
     use crate::output::style::OutputStyle;
 
     struct FailingReader;
@@ -635,6 +703,103 @@ mod tests {
         assert_eq!(output.code, 0);
         assert_eq!(output.stdout, "json\n");
         assert!(output.stderr.contains("progress\rprogress done\n"));
+    }
+
+    #[test]
+    fn quiet_nix_status_line_classifies_repetitive_build_chatter() {
+        for (line, expected) in [
+            (
+                "copying path '/nix/store/example' from 'https://cache.nixos.org'...",
+                Some(NixStatusLine::StoreCopy),
+            ),
+            (
+                "building '/nix/store/example.drv'...",
+                Some(NixStatusLine::Build),
+            ),
+            (
+                "building /nix/store/example.drv",
+                Some(NixStatusLine::Build),
+            ),
+            (
+                "unpacking 'github:flowerornament/nx-rs/abc123' into the Git cache...",
+                Some(NixStatusLine::SourceFetch),
+            ),
+            (
+                "these 184 paths will be fetched (14.7 MiB download, 142.1 MiB unpacked):",
+                Some(NixStatusLine::Plan),
+            ),
+            (
+                "these 172 derivations will be built:",
+                Some(NixStatusLine::Plan),
+            ),
+            ("/nix/store/example-package", Some(NixStatusLine::StorePath)),
+            ("error: Cannot build '/nix/store/example.drv'.", None),
+        ] {
+            assert_eq!(classify_nix_chatter_line(line), expected, "{line}");
+        }
+    }
+
+    #[test]
+    fn run_stdout_collecting_quiet_nix_stderr_keeps_diagnostic_tail() {
+        let args = [
+            "-c",
+            "printf 'json\\n'; printf \"copying path '/nix/store/example' from 'https://cache.nixos.org'...\\n\" >&2; printf \"building '/nix/store/example.drv'...\\n\" >&2; printf \"error: Cannot build '/nix/store/example.drv'.\\n\" >&2",
+        ];
+
+        let output = run_stdout_collecting_quiet_nix_stderr_with_env("sh", &args, None, None)
+            .expect("shell command should run");
+
+        assert_eq!(output.code, 0);
+        assert_eq!(output.stdout, "json\n");
+        assert!(output.stderr.contains("copying path '/nix/store/example'"));
+        assert!(output.stderr.contains("building '/nix/store/example.drv'"));
+        assert!(output.stderr.contains("error: Cannot build"));
+    }
+
+    #[test]
+    fn compact_nix_progress_summarizes_counts() {
+        let mut progress = CompactNixProgress::default();
+        let mut sink = Vec::new();
+
+        progress
+            .observe(NixStatusLine::SourceFetch, &mut sink)
+            .expect("write should succeed");
+        progress
+            .observe(NixStatusLine::StoreCopy, &mut sink)
+            .expect("write should succeed");
+        progress
+            .observe(NixStatusLine::StoreCopy, &mut sink)
+            .expect("write should succeed");
+        progress
+            .observe(NixStatusLine::Build, &mut sink)
+            .expect("write should succeed");
+
+        assert_eq!(
+            progress.summary(),
+            "realized 1 sources, copied 2 paths, building 1 derivations"
+        );
+        assert!(String::from_utf8_lossy(&sink).contains("nix:"));
+    }
+
+    #[test]
+    fn quiet_nix_chunk_splits_carriage_return_records() {
+        let mut pending = Vec::new();
+        let mut progress = CompactNixProgress::default();
+        let mut sink = Vec::new();
+
+        tee_quiet_nix_chunk(
+            b"copying path '/nix/store/example' from 'https://cache.nixos.org'...\rbuilding '/nix/store/example.drv'...\rerror: boom\n",
+            &mut pending,
+            &mut progress,
+            &mut sink,
+        )
+        .expect("quiet tee should handle carriage-return records");
+
+        let rendered = String::from_utf8_lossy(&sink);
+        assert!(rendered.contains("nix: copied 1 paths"));
+        assert!(rendered.contains("building 1 derivations"));
+        assert!(rendered.contains("error: boom"));
+        assert!(pending.is_empty());
     }
 
     #[test]

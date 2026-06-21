@@ -495,12 +495,14 @@ Runs `darwin-rebuild switch` for the managed repo.
 
 - Use `--preflight` to stop after lint, git, and flake checks without switching.
 - Use `--timing` to print phase timings after recording them locally.
-- Use `--verbose` to ask Nix for `bar-with-logs` output during rebuild phases.
+- Use `--verbose` to ask Nix for full build logs during rebuild phases.
 - Darwin split rebuilds raise Nix's file descriptor limit and retry bounded
   source-cache failures before surfacing an error.
-- Interactive split builds capture Nix build stdout and a bounded stderr tail
-  while teeing Nix's `bar` progress UI. Legacy `darwin-rebuild` fallback also
-  receives `--log-format bar` by default. `--verbose` uses `bar-with-logs`.
+- Interactive split builds capture Nix build stdout and a bounded stderr tail,
+  compacting repetitive fetch/build chatter into a single live status line while
+  preserving diagnostics for retry and failure handling. Legacy
+  `darwin-rebuild` fallback also receives `--log-format bar` by default.
+  `--verbose` uses `bar-with-logs` and streams full logs.
 - If split activation would need an interactive sudo prompt and passwordless
   `sudo darwin-rebuild` is available, `nx` falls back to that path.
 - Interactive activation output passes through directly with `NIX_CONFIG`

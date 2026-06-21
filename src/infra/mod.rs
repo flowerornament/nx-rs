@@ -7,6 +7,7 @@ pub mod finder;
 pub mod flake_input;
 pub mod generations;
 pub mod hash;
+pub mod nix_output;
 pub mod package_query;
 pub mod query_info;
 pub mod self_refresh;

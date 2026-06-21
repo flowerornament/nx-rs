@@ -9,7 +9,8 @@ use crate::domain::upgrade::{
 use crate::infra::ai_engine::DEFAULT_CODEX_MODEL;
 use crate::infra::shell::{
     first_nonempty_output, run_captured_command, run_captured_command_with_env,
-    run_indented_command, run_stdout_collecting_tee_stderr_with_env, terminal_stdio_available,
+    run_indented_command, run_stdout_collecting_quiet_nix_stderr_with_env,
+    run_stdout_collecting_tee_stderr_with_env, terminal_stdio_available,
 };
 use crate::output::printer::Printer;
 
@@ -804,12 +805,21 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext, nix_env: &NixCommandE
         let (program, cmd_args) = build_nix_command(&nix_args, raise_nofile);
         let arg_refs: Vec<&str> = cmd_args.iter().map(String::as_str).collect();
         let output = match nix_env.with_command_env(|env| {
-            run_stdout_collecting_tee_stderr_with_env(
-                &program,
-                &arg_refs,
-                Some(&ctx.repo_root),
-                env,
-            )
+            if args.flow.verbose {
+                run_stdout_collecting_tee_stderr_with_env(
+                    &program,
+                    &arg_refs,
+                    Some(&ctx.repo_root),
+                    env,
+                )
+            } else {
+                run_stdout_collecting_quiet_nix_stderr_with_env(
+                    &program,
+                    &arg_refs,
+                    Some(&ctx.repo_root),
+                    env,
+                )
+            }
         }) {
             Ok(result) => result,
             Err(err) => {

@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use crate::infra::nix_output::{NixStatusLine, classify_nix_chatter_line};
 use crate::infra::timing::TimingPhase;
 
 #[derive(Debug)]
@@ -127,20 +128,14 @@ fn pre_activation_marker(line: &str) -> Option<ActivationMarker> {
         return Some(ActivationMarker::new("build"));
     }
 
-    if line.starts_with("these ") && line.contains(" derivations will be built") {
-        return Some(ActivationMarker::new("nix-build"));
-    }
-
-    if line.starts_with("this derivation will be built") {
-        return Some(ActivationMarker::new("nix-build"));
-    }
-
-    if line.starts_with("copying path ") {
-        return Some(ActivationMarker::new("fetches"));
-    }
-
-    if line.starts_with("building ") || line.starts_with("building path") {
-        return Some(ActivationMarker::new("nix-build"));
+    match classify_nix_chatter_line(line) {
+        Some(NixStatusLine::SourceFetch | NixStatusLine::StoreCopy) => {
+            return Some(ActivationMarker::new("fetches"));
+        }
+        Some(NixStatusLine::Build | NixStatusLine::Plan | NixStatusLine::BarProgress) => {
+            return Some(ActivationMarker::new("nix-build"));
+        }
+        Some(NixStatusLine::StorePath) | None => {}
     }
 
     None

@@ -6,12 +6,13 @@ use crate::cli::RebuildArgs;
 use crate::commands::context::SystemContext;
 use crate::domain::manifest::{Manifest, PlatformKind};
 use crate::infra::activation_profile::ActivationPhaseProfiler;
+use crate::infra::nix_output::classify_nix_chatter_line;
 use crate::infra::shell::{
     StreamName, first_nonempty_output, run_captured_command, run_captured_command_with_env,
     run_indented_command_collecting_filtered_with_observer,
     run_indented_command_collecting_with_env, run_indented_command_collecting_with_observer,
-    run_native_command_with_env, run_stdout_collecting_tee_stderr_with_env,
-    terminal_stderr_available, terminal_stdio_available,
+    run_native_command_with_env, run_stdout_collecting_quiet_nix_stderr_with_env,
+    run_stdout_collecting_tee_stderr_with_env, terminal_stderr_available, terminal_stdio_available,
 };
 use crate::infra::timing::{
     TimingCommand, TimingPhase, TimingRecord, TimingSession, append_timing, timing_detail_lines,
@@ -772,7 +773,14 @@ fn run_legacy_rebuild(
     };
 
     if output_mode.activation.is_native() {
-        let output = run_stdout_collecting_tee_stderr_with_env(runner, &runner_args, None, None)?;
+        let output = run_nix_native_output(
+            runner,
+            &runner_args,
+            matches!(
+                output_mode.activation,
+                ActivationOutputMode::Native(NixLogFormat::BarWithLogs)
+            ),
+        )?;
         return Ok((
             output.code,
             combined_stream_output(&output.stdout, &output.stderr),
@@ -937,11 +945,10 @@ fn build_split_system_config(
     let (build, mut phase) = timed_phase("build", || {
         ctx.printer.action("Building system configuration");
         if output_mode.split_build.is_native() {
-            let output = run_stdout_collecting_tee_stderr_with_env(
+            let output = run_nix_native_output(
                 &build_program,
                 &build_arg_refs,
-                None,
-                None,
+                output_mode.split_build == SplitBuildOutputMode::NativeVerbose,
             )?;
             build_stderr = output.stderr;
             return Ok((output.code, output.stdout));
@@ -957,6 +964,18 @@ fn build_split_system_config(
         stderr: build_stderr,
         phase,
     })
+}
+
+fn run_nix_native_output(
+    program: &str,
+    args: &[&str],
+    verbose: bool,
+) -> anyhow::Result<crate::infra::shell::CapturedCommand> {
+    if verbose {
+        run_stdout_collecting_tee_stderr_with_env(program, args, None, None)
+    } else {
+        run_stdout_collecting_quiet_nix_stderr_with_env(program, args, None, None)
+    }
 }
 
 pub(super) fn split_nix_build_command_with_log_format(
@@ -1116,34 +1135,7 @@ where
 }
 
 pub(super) fn quiet_activation_line(stream: StreamName, line: &str) -> bool {
-    if stream != StreamName::Stderr {
-        return true;
-    }
-
-    let line = line.trim_start();
-    if line.starts_with("copying path ") {
-        return false;
-    }
-    if line.starts_with("building '/nix/store/")
-        || line.starts_with("building /nix/store/")
-        || line.starts_with("building path(s) ")
-    {
-        return false;
-    }
-    if line.starts_with("these ") && line.contains(" paths will be fetched") {
-        return false;
-    }
-    if line.starts_with("these ") && line.contains(" derivations will be built") {
-        return false;
-    }
-    if line.starts_with("this derivation will be built") {
-        return false;
-    }
-    if line.starts_with("/nix/store/") {
-        return false;
-    }
-
-    true
+    stream != StreamName::Stderr || classify_nix_chatter_line(line).is_none()
 }
 
 fn split_command_invocation<'a>(

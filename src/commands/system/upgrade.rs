@@ -16,6 +16,7 @@ use crate::output::printer::Printer;
 
 use crate::infra::timing::TimingCommand;
 
+use super::cache_preflight::{CachePreflightMode, CachePreflightOutcome, check_cache_preflight};
 use super::rebuild::cmd_rebuild_with_command_result;
 
 // ─── upgrade ─────────────────────────────────────────────────────────────────
@@ -55,6 +56,14 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
             ..RebuildArgs::default()
         };
         let system_ctx = ctx.system_context();
+        if check_cache_preflight(&system_ctx, CachePreflightMode::Prompt)
+            == CachePreflightOutcome::Abort
+        {
+            Printer::body("Cancelled before rebuild.");
+            Printer::detail("flake.lock keeps the updated inputs.");
+            Printer::detail("Run `git checkout flake.lock` to revert, or `nx upgrade` to retry.");
+            return 0;
+        }
         let rebuild_result =
             cmd_rebuild_with_command_result(&rebuild, &system_ctx, TimingCommand::Upgrade);
         if rebuild_result.code != 0 {

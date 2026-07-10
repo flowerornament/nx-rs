@@ -168,6 +168,27 @@ case "$program" in
     fi
 
     if [ "${1:-}" = "build" ]; then
+      is_dry_run=0
+      for arg in "$@"; do
+        if [ "$arg" = "--dry-run" ]; then
+          is_dry_run=1
+        fi
+      done
+      if [ "$is_dry_run" = "1" ]; then
+        if [ "$mode" = "cache_preflight_misses" ]; then
+          echo "these 6 derivations will be built:" >&2
+          for name in starship-1.23.0 terminal-notifier-2.0.0 python3.12-httpx-0.28.1 darwin-system-26.05pre home-manager-generation nix-2.24.9; do
+            echo "  /nix/store/00000000000000000000000000000000-${name}.drv" >&2
+          done
+        else
+          echo "these 2 derivations will be built:" >&2
+          echo "  /nix/store/00000000000000000000000000000000-starship-1.23.0.drv" >&2
+          echo "  /nix/store/11111111111111111111111111111111-terminal-notifier-2.0.0.drv" >&2
+        fi
+        echo "these 1 paths will be fetched (1.00 MiB download, 2.00 MiB unpacked):" >&2
+        echo "  /nix/store/22222222222222222222222222222222-bash-5.2p37" >&2
+        exit 0
+      fi
       if [ "$mode" = "split_build_cache_corruption" ]; then
         marker="${HOME}/.nx-system-it-split-build-cache-corruption-once"
         if [ ! -f "$marker" ]; then

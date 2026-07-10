@@ -490,6 +490,7 @@ Preflight requirements:
 1. Git preflight must succeed.
 2. No untracked `.nix` files under `home/`, `packages/`, `system/`, `hosts/`.
 3. `nix flake check <repo_root>` must pass.
+4. When `--preflight` is passed, additionally report binary cache coverage from `nix build <repo_root>#darwinConfigurations.<host>.system --dry-run` before exiting. The report lists up to 10 source-build derivation names and warns when they exceed `NX_CACHE_MISS_THRESHOLD` (default 5); it is warning-only and never fails the preflight.
 
 Then run the default rebuild path:
 
@@ -544,6 +545,9 @@ High-level phases:
   - enrich and changelog fetch
   - non-dry-run `brew upgrade <pkgs...>`
 3. Rebuild unless `--skip-rebuild`
+  - Before rebuilding, run a binary cache preflight: `nix build <repo_root>#darwinConfigurations.<host>.system --dry-run`, parse the will-be-built and will-be-fetched sections, and list up to 10 source-build derivation names (store hash prefix and `.drv` suffix stripped).
+  - When source builds exceed `NX_CACHE_MISS_THRESHOLD` (default 5), warn that the binary cache has likely not caught up with the new nixpkgs revision and, in interactive terminals, prompt to continue (default no). Declining exits `0` before rebuild/commit, keeps the updated `flake.lock`, and prints the `git checkout flake.lock` revert hint.
+  - Non-interactive sessions and preflight dry-run failures are warning-only; the rebuild remains authoritative. The preflight applies to Darwin repos (manifest platform `darwin` or no manifest) with a resolvable host.
   - If rebuild fails with a Nix fixed-output hash mismatch, parse the `specified` and `got` hashes.
   - If exactly one tracked `.nix` file contains the exact specified hash string and that file has no pre-existing staged or unstaged changes, update that occurrence to the got hash and retry rebuild.
   - Print the repaired file, line number, old hash, and new hash when automatic repair runs.

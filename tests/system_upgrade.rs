@@ -48,6 +48,12 @@ const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
     "hosts",
 ];
 const REBUILD_TIMING_HEAD_ARGS: &[&str] = &["rev-parse", "HEAD"];
+const CACHE_PREFLIGHT_HOST_ARGS: &[&str] = &["--get", "LocalHostName"];
+const CACHE_PREFLIGHT_BUILD_ARGS: &[&str] = &[
+    "build",
+    "<REPO_ROOT>#darwinConfigurations.test-host.system",
+    "--dry-run",
+];
 const REBUILD_FLAKE_ARGS: &[&str] = &["flake", "check", REPO_ROOT_TOKEN];
 const SUDO_SET_HOME_ARG: &str = "-H";
 const ROOT_ENV_PROGRAM: &str = "/usr/bin/env";
@@ -255,6 +261,8 @@ const UPGRADE_BREW_NO_UPDATES_CALLS: &[ExpectedCall] = &[
 const UPGRADE_REBUILD_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
@@ -280,6 +288,8 @@ const UPGRADE_REBUILD_CALLS: &[ExpectedCall] = &[
 const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
@@ -330,6 +340,8 @@ const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
 const UPGRADE_SPLIT_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
@@ -353,6 +365,8 @@ const UPGRADE_SPLIT_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
 const UPGRADE_SPLIT_REBUILD_RUN_CURRENT_LEGACY_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
@@ -418,6 +432,8 @@ const UPGRADE_SPLIT_REBUILD_RUN_CURRENT_LEGACY_CALLS: &[ExpectedCall] = &[
 const UPGRADE_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
@@ -445,6 +461,8 @@ const UPGRADE_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
+    ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),

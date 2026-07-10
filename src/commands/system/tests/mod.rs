@@ -7,6 +7,9 @@ use crate::cli::{RebuildArgs, UpgradeArgs, UpgradeFlowArgs, UpgradeSkipArgs};
 use crate::domain::upgrade::{InputChange, github_owner_repo};
 use crate::infra::shell::{CapturedCommand, run_captured_command};
 
+use super::cache_preflight::{
+    DryRunPlan, derivation_display_name, parse_cache_miss_threshold, parse_dry_run_plan,
+};
 use super::fixed_output_hash::{
     FixedOutputHashMismatch, apply_fixed_output_hash_repair, find_fixed_output_hash_targets,
     parse_fixed_output_hash_mismatch, path_is_clean,
@@ -27,6 +30,7 @@ use super::upgrade::{
 use crate::domain::upgrade::build_flake_update_args;
 
 mod brew;
+mod cache_preflight;
 mod git;
 mod rebuild;
 mod upgrade_helpers;

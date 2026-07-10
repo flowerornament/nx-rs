@@ -22,6 +22,7 @@ use crate::output::printer::Printer;
 
 use super::{
     DARWIN_REBUILD,
+    cache_preflight::{CachePreflightMode, check_cache_preflight},
     fixed_output_hash::{
         FixedOutputHashMismatch, FixedOutputHashTarget, apply_fixed_output_hash_repair,
         find_fixed_output_hash_targets, parse_fixed_output_hash_mismatch, path_is_clean,
@@ -231,6 +232,10 @@ fn run_rebuild(
     }
 
     if args.preflight {
+        let _ = timing.record_result_phase("cache-preflight", || {
+            check_cache_preflight(ctx, CachePreflightMode::ReportOnly);
+            Ok(())
+        });
         println!();
         ctx.printer.success("Rebuild preflight passed");
         return RebuildCommandResult {
@@ -1209,7 +1214,7 @@ fn authorize_split_sudo(
     Ok(Some((output, phase)))
 }
 
-fn darwin_host(ctx: &SystemContext<'_>) -> Option<String> {
+pub(super) fn darwin_host(ctx: &SystemContext<'_>) -> Option<String> {
     std::env::var(DARWIN_HOST_ENV)
         .ok()
         .filter(|host| !host.trim().is_empty())

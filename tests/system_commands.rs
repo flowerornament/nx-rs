@@ -46,6 +46,12 @@ const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
 ];
 const REBUILD_TIMING_HEAD_ARGS: &[&str] = &["rev-parse", "HEAD"];
 const REBUILD_FLAKE_ARGS: &[&str] = &["flake", "check", REPO_ROOT_TOKEN];
+const CACHE_PREFLIGHT_HOST_ARGS: &[&str] = &["--get", "LocalHostName"];
+const CACHE_PREFLIGHT_BUILD_ARGS: &[&str] = &[
+    "build",
+    "<REPO_ROOT>#darwinConfigurations.test-host.system",
+    "--dry-run",
+];
 const TEST_CI_ARGS: &[&str] = &["ci"];
 
 const UPDATE_PASSTHROUGH_ARGS: &[&str] = &["update", "--", "--commit-lock-file", "foo"];
@@ -141,6 +147,8 @@ const REBUILD_CHECK_ONLY_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
+    ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
 ];
 
 const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
@@ -544,7 +552,19 @@ const COMMAND_CASES: &[CommandCase] = &[
         mode: "success",
         expected_exit: 0,
         expected_calls: REBUILD_CHECK_ONLY_CALLS,
-        stdout_contains: &["Rebuild preflight passed"],
+        stdout_contains: &["Source Builds (2)", "Rebuild preflight passed"],
+    },
+    CommandCase {
+        id: "rebuild_preflight_warns_when_cache_misses_exceed_threshold",
+        cli_args: REBUILD_CHECK_ONLY_ARGS,
+        mode: "cache_preflight_misses",
+        expected_exit: 0,
+        expected_calls: REBUILD_CHECK_ONLY_CALLS,
+        stdout_contains: &[
+            "Source Builds (6)",
+            "6 derivations will build from source (threshold: 5)",
+            "Rebuild preflight passed",
+        ],
     },
     CommandCase {
         id: "rebuild_git_preflight_failure_short_circuit",

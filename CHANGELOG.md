@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- adds a binary cache preflight to `nx upgrade` and `nx rebuild --preflight`: dry-runs the system build, lists derivations that would build from source, and prompts before rebuilding when they exceed `NX_CACHE_MISS_THRESHOLD` (default 5); aborting keeps the updated `flake.lock` and prints the revert hint
+
 ## v1.5.28 - 2026-06-20
 
 - adopts a curated low-noise subset of `clippy::nursery` lints and makes `just ci` report per-step timings, with `just ci-record` available for local gate trend tracking

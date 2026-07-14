@@ -17,15 +17,16 @@ use super::fixed_output_hash::{
 use super::rebuild::{
     FailureOutputExcerpt, SplitBuildOutputMode, build_rebuild_command,
     build_rebuild_command_with_manifest, failure_output_excerpt, has_nix_extension,
-    parse_system_config_path, quiet_activation_line, should_use_split_darwin,
-    split_nix_build_command_with_log_format, sudo_password_required,
+    parse_system_config_path, should_use_split_darwin, split_nix_build_command_with_log_format,
+    sudo_password_required,
 };
 use super::undo::{git_diff_stat, git_modified_files};
 use super::upgrade::{
     brew_compare_url, build_nix_command, flake_compare_endpoint, flake_compare_url,
     flake_prefetch_ref, is_cache_corruption, is_fd_exhaustion, maybe_ai_summary,
-    parse_ai_summary_output, parse_brew_info_json, parse_brew_outdated_json, parse_compare_json,
-    should_use_detailed_ai_summary, upgrade_requires_manifest_system_safety,
+    nix_update_output_args, parse_ai_summary_output, parse_brew_info_json,
+    parse_brew_outdated_json, parse_compare_json, should_use_detailed_ai_summary,
+    upgrade_requires_manifest_system_safety,
 };
 use crate::domain::upgrade::build_flake_update_args;
 

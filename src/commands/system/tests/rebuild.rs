@@ -1,5 +1,4 @@
 use super::*;
-use crate::infra::shell::StreamName;
 
 #[test]
 fn rebuild_command_includes_base_args() {
@@ -15,7 +14,7 @@ fn rebuild_command_includes_base_args() {
     assert_eq!(result[2], "--flake");
     assert_eq!(result[3], "/Users/test/.nix-config");
     assert_eq!(result[4], "--log-format");
-    assert_eq!(result[5], "bar");
+    assert_eq!(result[5], "internal-json");
 }
 
 #[test]
@@ -35,7 +34,7 @@ fn rebuild_command_includes_passthrough_args() {
             "--flake".to_string(),
             "/test".to_string(),
             "--log-format".to_string(),
-            "bar".to_string(),
+            "internal-json".to_string(),
             "--show-trace".to_string(),
         ]
     );
@@ -136,7 +135,7 @@ fn split_darwin_json_parser_rejects_missing_output() {
 fn split_nix_build_raises_file_descriptor_limit() {
     let (program, args) = split_nix_build_command_with_log_format(
         "git+file:///repo#darwinConfigurations.host.system",
-        SplitBuildOutputMode::Captured.log_format(),
+        SplitBuildOutputMode::Structured.log_format(),
     );
 
     assert_eq!(
@@ -151,6 +150,8 @@ fn split_nix_build_raises_file_descriptor_limit() {
                 "build".to_string(),
                 "--no-link".to_string(),
                 "--print-out-paths".to_string(),
+                "--log-format".to_string(),
+                "internal-json".to_string(),
                 "git+file:///repo#darwinConfigurations.host.system".to_string(),
             ],
         )
@@ -161,7 +162,7 @@ fn split_nix_build_raises_file_descriptor_limit() {
 fn split_nix_build_can_request_native_log_format() {
     let (_, args) = split_nix_build_command_with_log_format(
         "git+file:///repo#darwinConfigurations.host.system",
-        Some("bar"),
+        "bar",
     );
 
     assert!(
@@ -171,34 +172,12 @@ fn split_nix_build_can_request_native_log_format() {
 }
 
 #[test]
-fn split_build_log_format_uses_bar_by_default() {
-    assert_eq!(SplitBuildOutputMode::Captured.log_format(), None);
-    assert_eq!(SplitBuildOutputMode::Native.log_format(), Some("bar"));
+fn split_build_log_format_uses_structured_output_by_default() {
     assert_eq!(
-        SplitBuildOutputMode::NativeVerbose.log_format(),
-        Some("bar-with-logs")
+        SplitBuildOutputMode::Structured.log_format(),
+        "internal-json"
     );
-}
-
-#[test]
-fn quiet_activation_line_hides_nix_fetch_and_build_chatter() {
-    for line in [
-        "copying path '/nix/store/example' from 'https://cache.nixos.org'",
-        "these 184 paths will be fetched (14.7 MiB download)",
-        "these 13 derivations will be built:",
-        "  /nix/store/example.drv",
-        "building /nix/store/example.drv",
-    ] {
-        assert!(!quiet_activation_line(StreamName::Stderr, line), "{line}");
-    }
-
-    for line in [
-        "setting up /etc...",
-        "Homebrew bundle...",
-        "Activating home-manager configuration for morgan",
-    ] {
-        assert!(quiet_activation_line(StreamName::Stderr, line), "{line}");
-    }
+    assert_eq!(SplitBuildOutputMode::Verbose.log_format(), "bar-with-logs");
 }
 
 #[test]

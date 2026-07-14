@@ -67,6 +67,7 @@ const SUDO_SET_HOME_ARG: &str = "-H";
 const ROOT_ENV_PROGRAM: &str = "/usr/bin/env";
 const ROOT_HOME_ENV_ARG: &str = "HOME=/var/root";
 const NIX_REMOTE_DAEMON_ENV_ARG: &str = "NIX_REMOTE=daemon";
+const NIX_CONFIG_INTERNAL_JSON_ARG: &str = "NIX_CONFIG=log-format = internal-json";
 
 const UPDATE_SUCCESS_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
     "nix",
@@ -107,7 +108,7 @@ const REBUILD_SUCCESS_CALLS: &[ExpectedCall] = &[
             "--flake",
             REPO_ROOT_TOKEN,
             "--log-format",
-            "bar",
+            "internal-json",
             "--show-trace",
             "foo",
         ],
@@ -120,7 +121,7 @@ const REBUILD_SUCCESS_CALLS: &[ExpectedCall] = &[
             "--flake",
             REPO_ROOT_TOKEN,
             "--log-format",
-            "bar",
+            "internal-json",
             "--show-trace",
             "foo",
         ],
@@ -164,7 +165,7 @@ const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
             "--flake",
             REPO_ROOT_TOKEN,
             "--log-format",
-            "bar",
+            "internal-json",
             "--show-trace",
             "foo",
         ],
@@ -177,7 +178,7 @@ const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
             "--flake",
             REPO_ROOT_TOKEN,
             "--log-format",
-            "bar",
+            "internal-json",
             "--show-trace",
             "foo",
         ],
@@ -197,7 +198,7 @@ const REBUILD_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
             "--flake",
             REPO_ROOT_TOKEN,
             "--log-format",
-            "bar",
+            "internal-json",
             "--show-trace",
         ],
     ),
@@ -209,7 +210,7 @@ const REBUILD_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
             "--flake",
             REPO_ROOT_TOKEN,
             "--log-format",
-            "bar",
+            "internal-json",
             "--show-trace",
         ],
     ),
@@ -228,7 +229,7 @@ const REBUILD_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
             "--flake",
             REPO_ROOT_TOKEN,
             "--log-format",
-            "bar",
+            "internal-json",
             "--show-trace",
         ],
     ),
@@ -240,7 +241,7 @@ const REBUILD_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
             "--flake",
             REPO_ROOT_TOKEN,
             "--log-format",
-            "bar",
+            "internal-json",
             "--show-trace",
         ],
     ),
@@ -262,6 +263,8 @@ const SPLIT_REBUILD_BUILD_CALLS: &[ExpectedCall] = &[
             "build",
             "--no-link",
             "--print-out-paths",
+            "--log-format",
+            "internal-json",
             "<REPO_ROOT>#darwinConfigurations.test-host.system",
         ],
     ),
@@ -307,6 +310,7 @@ const SPLIT_REBUILD_PROFILE_SET_CALL: ExpectedCall = ExpectedCall::new(
         ROOT_ENV_PROGRAM,
         ROOT_HOME_ENV_ARG,
         NIX_REMOTE_DAEMON_ENV_ARG,
+        NIX_CONFIG_INTERNAL_JSON_ARG,
         "nix-env",
         "-p",
         "/nix/var/nix/profiles/system",
@@ -323,6 +327,7 @@ const SPLIT_REBUILD_ACTIVATE_CALL: ExpectedCall = ExpectedCall::new(
         ROOT_ENV_PROGRAM,
         ROOT_HOME_ENV_ARG,
         NIX_REMOTE_DAEMON_ENV_ARG,
+        NIX_CONFIG_INTERNAL_JSON_ARG,
         "/nix/store/new-system/activate",
     ],
 );
@@ -372,13 +377,19 @@ fn split_rebuild_legacy_fallback_calls() -> Vec<ExpectedCall> {
             "--flake",
             REPO_ROOT_TOKEN,
             "--log-format",
-            "bar",
+            "internal-json",
         ],
     ));
     calls.push(ExpectedCall::new(
         "darwin-rebuild",
         EXPECTED_CWD_REPO_ROOT,
-        &["switch", "--flake", REPO_ROOT_TOKEN, "--log-format", "bar"],
+        &[
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "internal-json",
+        ],
     ));
     calls
 }
@@ -398,13 +409,19 @@ fn split_rebuild_run_current_legacy_fallback_calls() -> Vec<ExpectedCall> {
             "--flake",
             REPO_ROOT_TOKEN,
             "--log-format",
-            "bar",
+            "internal-json",
         ],
     ));
     calls.push(ExpectedCall::new(
         "darwin-rebuild",
         EXPECTED_CWD_REPO_ROOT,
-        &["switch", "--flake", REPO_ROOT_TOKEN, "--log-format", "bar"],
+        &[
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "internal-json",
+        ],
     ));
     calls
 }
@@ -426,6 +443,8 @@ fn split_rebuild_cache_retry_calls() -> Vec<ExpectedCall> {
             "build",
             "--no-link",
             "--print-out-paths",
+            "--log-format",
+            "internal-json",
             "<REPO_ROOT>#darwinConfigurations.test-host.system",
         ],
     ));
@@ -708,7 +727,7 @@ fn split_darwin_rebuild_runs_explicit_phases() -> Result<(), Box<dyn Error>> {
         stdout.contains("System rebuilt"),
         "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    assert_quiet_split_build_output(&stdout, &stderr);
+    assert_structured_split_build_output(&stdout, &stderr);
     assert_timing_children(
         home_dir.path(),
         "split_rebuild_env",
@@ -728,7 +747,7 @@ fn split_darwin_rebuild_runs_explicit_phases() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn assert_quiet_split_build_output(stdout: &str, stderr: &str) {
+fn assert_structured_split_build_output(stdout: &str, stderr: &str) {
     for fragment in [
         "copying path '/nix/store/split-example-one'",
         "copying path '/nix/store/activation-example'",
@@ -850,7 +869,7 @@ fn split_darwin_rebuild_preserves_passwordless_legacy_sudo() -> Result<(), Box<d
         stdout.contains("System rebuilt"),
         "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    assert_quiet_split_build_output(&stdout, &stderr);
+    assert_structured_split_build_output(&stdout, &stderr);
 
     Ok(())
 }
@@ -888,7 +907,7 @@ fn split_darwin_rebuild_preserves_run_current_passwordless_legacy_sudo()
         !stdout.contains("Authorizing sudo for system profile update and activation"),
         "stdout should not prompt when /run/current-system darwin-rebuild is passwordless\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    assert_quiet_split_build_output(&stdout, &stderr);
+    assert_structured_split_build_output(&stdout, &stderr);
 
     Ok(())
 }
@@ -922,7 +941,7 @@ fn split_darwin_rebuild_retries_source_cache_corruption() -> Result<(), Box<dyn 
 }
 
 #[test]
-fn split_darwin_rebuild_failure_surfaces_quiet_build_output() -> Result<(), Box<dyn Error>> {
+fn split_darwin_rebuild_failure_surfaces_structured_diagnostics() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
     let nx_bin = resolve_nx_bin(&workspace_root)?;
@@ -953,7 +972,7 @@ fn split_darwin_rebuild_failure_surfaces_quiet_build_output() -> Result<(), Box<
             "stdout missing quiet failure detail '{expected}'\nstdout:\n{stdout}\nstderr:\n{stderr}"
         );
     }
-    assert_quiet_split_build_output(&stdout, &stderr);
+    assert_structured_split_build_output(&stdout, &stderr);
     assert_timing_children(home_dir.path(), "split_rebuild_build_failure", &["build"])?;
 
     Ok(())

@@ -502,14 +502,14 @@ Experimental split Darwin rebuild:
 - `NX_SPLIT_DARWIN=1` enables the split path for Darwin repos without a manifest.
 - Applies only to Darwin manifests using the default `darwin-rebuild` command and no passthrough args.
 - Falls back to the default rebuild path when the split path cannot confidently preserve behavior.
-- Runs `nix build --json --no-link <repo_root>#darwinConfigurations.<host>.system` under a raised file descriptor limit.
-- In interactive terminals, the split build captures stdout and a bounded stderr tail while compacting repetitive Nix fetch/build chatter into a single live status line. Successful build logs stay quiet and retry/error detection still has diagnostics. `--verbose` streams Nix stderr with `bar-with-logs`.
+- Runs `nix build --no-link --print-out-paths --log-format internal-json <repo_root>#darwinConfigurations.<host>.system` under a raised file descriptor limit.
+- Captured Nix commands use Nix's structured activity protocol. In interactive terminals, nx aggregates build counts, copy/download progress, phases, and the active operation into one throttled live status line. Nix message records are decoded as diagnostics and kept in a bounded tail for retry and failure detection. `--verbose` streams Nix stderr with `bar-with-logs`.
 - Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get LocalHostName`, then `hostname -s`.
 - If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
 - Otherwise runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
 - If direct split activation would require an interactive sudo prompt but the legacy `sudo darwin-rebuild` path is available non-interactively, falls back to legacy `darwin-rebuild` to preserve passwordless sudoers setups.
-- In interactive terminals, activation output inherits stdio directly and sets Nix log format through `NIX_CONFIG` so child tools preserve native color/progress behavior without raw fetch/build floods. Legacy `darwin-rebuild` fallback receives `--log-format bar` unless the user passed a log format explicitly, and default piped fallback output compacts repetitive Nix fetch/build chatter.
-- Non-interactive runs and `--timing` keep captured output, suppress repetitive Nix fetch/build chatter from the rendered stream, and retain captured output for retry/error detection.
+- In interactive terminals, direct activation inherits stdio and sets `NIX_CONFIG` to Nix's native `bar` format; `--verbose` selects `bar-with-logs`. Captured activation and `darwin-rebuild` fallback use `internal-json` unless the user passed a log format explicitly.
+- Non-interactive runs and `--timing` do not render transient progress. They retain decoded diagnostics for retry/error detection and derive timing phases from typed Nix activities.
 - If rebuild fails with a Nix fixed-output hash mismatch, parse the `specified` and `got` hashes. If exactly one tracked `.nix` file contains the exact specified hash string and that file has no pre-existing staged or unstaged changes, update that occurrence to the got hash and retry rebuild. Disable automatic repair when `NX_NO_AUTO_HASH_FIX=1` (also accepting `true`, `yes`, or `on`). Stop automatic repairs after three fixed-output hash mismatches in one command and require manual review.
 - Retries a bounded number of times after clearing Nix git/tarball/fetcher caches when flake check or rebuild output reports lazy source object lookup failures.
 - Retries after file descriptor exhaustion by clearing tarball/fetcher caches; root cache cleanup must be non-interactive.

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use crate::infra::nix_output::{NixStatusLine, classify_nix_chatter_line};
+use crate::infra::nix_output::NixActivityType;
 use crate::infra::timing::TimingPhase;
 
 #[derive(Debug)]
@@ -32,6 +32,26 @@ impl ActivationPhaseProfiler {
         if let Some(marker) = activation_marker(line) {
             self.open_phase(marker.name, Instant::now());
         }
+    }
+
+    pub fn observe_nix_activity(&mut self, kind: NixActivityType) {
+        let name = match kind {
+            NixActivityType::CopyPath
+            | NixActivityType::FileTransfer
+            | NixActivityType::CopyPaths
+            | NixActivityType::Substitute
+            | NixActivityType::FetchTree => "fetches",
+            NixActivityType::Realise
+            | NixActivityType::Builds
+            | NixActivityType::Build
+            | NixActivityType::BuildWaiting => "nix-build",
+            NixActivityType::Unknown
+            | NixActivityType::OptimiseStore
+            | NixActivityType::VerifyPaths
+            | NixActivityType::QueryPathInfo
+            | NixActivityType::PostBuildHook => return,
+        };
+        self.open_phase(name.to_string(), Instant::now());
     }
 
     #[must_use]
@@ -128,16 +148,6 @@ fn pre_activation_marker(line: &str) -> Option<ActivationMarker> {
         return Some(ActivationMarker::new("build"));
     }
 
-    match classify_nix_chatter_line(line) {
-        Some(NixStatusLine::SourceFetch | NixStatusLine::StoreCopy) => {
-            return Some(ActivationMarker::new("fetches"));
-        }
-        Some(NixStatusLine::Build | NixStatusLine::Plan | NixStatusLine::BarProgress) => {
-            return Some(ActivationMarker::new("nix-build"));
-        }
-        Some(NixStatusLine::StorePath) | None => {}
-    }
-
     None
 }
 
@@ -222,15 +232,6 @@ mod tests {
             activation_marker("building the system configuration...").map(|marker| marker.name),
             Some("build".to_string())
         );
-        assert_eq!(
-            activation_marker("these 4 derivations will be built:").map(|marker| marker.name),
-            Some("nix-build".to_string())
-        );
-        assert_eq!(
-            activation_marker("copying path '/nix/store/example' from 'https://cache.nixos.org'")
-                .map(|marker| marker.name),
-            Some("fetches".to_string())
-        );
     }
 
     #[test]
@@ -243,20 +244,5 @@ mod tests {
         assert_eq!(phases.len(), 2);
         assert_eq!(phases[0].name, "etc");
         assert_eq!(phases[1].name, "homebrew-bundle");
-    }
-
-    #[test]
-    fn profiler_deduplicates_repeated_markers() {
-        let mut profiler = ActivationPhaseProfiler::new();
-        profiler.observe_stderr_line("copying path '/nix/store/one'");
-        profiler.observe_stderr_line("copying path '/nix/store/two'");
-        profiler.observe_stderr_line("building /nix/store/example.drv");
-        let phases = profiler.finish();
-
-        let names = phases
-            .iter()
-            .map(|phase| phase.name.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(names, ["fetches", "nix-build"]);
     }
 }

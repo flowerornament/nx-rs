@@ -125,6 +125,11 @@ case "$program" in
     exit 0
     ;;
   nix)
+    if [ "${1:-}" = "--log-format" ]; then
+      shift
+      shift
+    fi
+
     if [ "${1:-}" = "flake" ] && { [ "${2:-}" = "update" ] || [ "${2:-}" = "lock" ]; }; then
       if [ "$mode" = "update_fail" ]; then
         echo "stub nix flake command failed"
@@ -211,8 +216,8 @@ case "$program" in
         echo "not-json"
         exit 0
       fi
-      echo "copying path '/nix/store/split-example-one' from 'https://cache.nixos.org'..." >&2
-      echo "building '/nix/store/split-example.drv'..." >&2
+      echo '@nix {"action":"start","id":1,"level":0,"parent":0,"text":"copying paths","type":103}' >&2
+      echo '@nix {"action":"start","id":2,"level":0,"parent":0,"text":"building derivations","type":104}' >&2
       output="${NX_SYSTEM_IT_DARWIN_BUILD_OUTPUT:-/nix/store/new-system}"
       printf '%s\n' "$output"
       exit 0
@@ -391,8 +396,8 @@ case "$program" in
           echo "stub activate failed" >&2
           exit 1
         fi
-        echo "copying path '/nix/store/activation-example' from 'https://cache.nixos.org'" >&2
-        echo "building /nix/store/activation-example.drv" >&2
+        echo '@nix {"action":"start","id":1,"level":0,"parent":0,"text":"copying paths","type":103}' >&2
+        echo '@nix {"action":"start","id":2,"level":0,"parent":0,"text":"building derivations","type":104}' >&2
         echo "setting up /etc..." >&2
         echo "Homebrew bundle..." >&2
         echo "Activating home-manager configuration for test" >&2
@@ -493,10 +498,8 @@ case "$program" in
       exit 1
     fi
     echo "building the system configuration..." >&2
-    echo "these 2 derivations will be built:" >&2
-    echo "copying path '/nix/store/example-one' from 'https://cache.nixos.org'" >&2
-    echo "copying path '/nix/store/example-two' from 'https://cache.nixos.org'" >&2
-    echo "building /nix/store/example.drv" >&2
+    echo '@nix {"action":"start","id":1,"level":0,"parent":0,"text":"copying paths","type":103}' >&2
+    echo '@nix {"action":"start","id":2,"level":0,"parent":0,"text":"building derivations","type":104}' >&2
     echo "setting up /etc..." >&2
     echo "Homebrew bundle..." >&2
     echo "Using ripgrep" >&2

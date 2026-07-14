@@ -14,6 +14,20 @@ fn sample_upgrade_args() -> UpgradeArgs {
 }
 
 #[test]
+fn flake_update_selects_structured_or_verbose_nix_output() {
+    let base = vec!["flake".to_string(), "update".to_string()];
+
+    assert_eq!(
+        nix_update_output_args(&base, false),
+        ["--log-format", "internal-json", "flake", "update"]
+    );
+    assert_eq!(
+        nix_update_output_args(&base, true),
+        ["--log-format", "bar-with-logs", "flake", "update"]
+    );
+}
+
+#[test]
 fn flake_compare_url_uses_short_revs() {
     let url = flake_compare_url(&sample_input_change());
     assert_eq!(

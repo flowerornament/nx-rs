@@ -59,6 +59,8 @@ const SUDO_SET_HOME_ARG: &str = "-H";
 const ROOT_ENV_PROGRAM: &str = "/usr/bin/env";
 const ROOT_HOME_ENV_ARG: &str = "HOME=/var/root";
 const NIX_REMOTE_DAEMON_ENV_ARG: &str = "NIX_REMOTE=daemon";
+const NIX_CONFIG_INTERNAL_JSON_ARG: &str = "NIX_CONFIG=log-format = internal-json";
+const FLAKE_UPDATE_ARGS: &[&str] = &["--log-format", "internal-json", "flake", "update"];
 
 const UPGRADE_COMMIT_ARGS: &[&str] = &["upgrade", "--skip-brew", "--skip-rebuild", "--no-ai"];
 const UPGRADE_FAILURE_ARGS: &[&str] = &["upgrade", "--no-ai"];
@@ -176,7 +178,7 @@ struct UpgradeCase {
 
 const UPGRADE_COMMIT_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
     ExpectedCall::new(
@@ -199,14 +201,14 @@ const UPGRADE_COMMIT_CALLS: &[ExpectedCall] = &[
 
 const UPGRADE_SKIP_COMMIT_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
 ];
 
 const UPGRADE_FAILURE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
 ];
 
 const UPGRADE_PASSTHROUGH_CALLS: &[ExpectedCall] = &[
@@ -214,13 +216,20 @@ const UPGRADE_PASSTHROUGH_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new(
         "nix",
         EXPECTED_CWD_REPO_ROOT,
-        &["flake", "update", "--commit-lock-file", "foo"],
+        &[
+            "--log-format",
+            "internal-json",
+            "flake",
+            "update",
+            "--commit-lock-file",
+            "foo",
+        ],
     ),
 ];
 
 const UPGRADE_TOKEN_MODE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"])
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS)
         .with_env(&[("NIX_CONFIG", UPGRADE_NIX_CONFIG)]),
 ];
 
@@ -229,19 +238,26 @@ const UPGRADE_TARGETED_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new(
         "nix",
         EXPECTED_CWD_REPO_ROOT,
-        &["flake", "update", "nx-rs", "anneal"],
+        &[
+            "--log-format",
+            "internal-json",
+            "flake",
+            "update",
+            "nx-rs",
+            "anneal",
+        ],
     ),
 ];
 
 const UPGRADE_CACHE_RETRY_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
 ];
 
 const UPGRADE_PREFETCH_CACHE_RETRY_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
@@ -249,18 +265,18 @@ const UPGRADE_PREFETCH_CACHE_RETRY_CALLS: &[ExpectedCall] = &[
 
 const UPGRADE_NO_CHANGE_NO_COMMIT_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
 ];
 
 const UPGRADE_BREW_NO_UPDATES_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("brew", EXPECTED_CWD_REPO_ROOT, &["outdated", "--json"]),
 ];
 
 const UPGRADE_REBUILD_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
@@ -275,19 +291,25 @@ const UPGRADE_REBUILD_CALLS: &[ExpectedCall] = &[
             "--flake",
             REPO_ROOT_TOKEN,
             "--log-format",
-            "bar",
+            "internal-json",
         ],
     ),
     ExpectedCall::new(
         "darwin-rebuild",
         EXPECTED_CWD_REPO_ROOT,
-        &["switch", "--flake", REPO_ROOT_TOKEN, "--log-format", "bar"],
+        &[
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "internal-json",
+        ],
     ),
 ];
 
 const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
@@ -305,6 +327,8 @@ const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
             "build",
             "--no-link",
             "--print-out-paths",
+            "--log-format",
+            "internal-json",
             "<REPO_ROOT>#darwinConfigurations.test-host.system",
         ],
     ),
@@ -317,6 +341,7 @@ const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
             ROOT_ENV_PROGRAM,
             ROOT_HOME_ENV_ARG,
             NIX_REMOTE_DAEMON_ENV_ARG,
+            NIX_CONFIG_INTERNAL_JSON_ARG,
             "nix-env",
             "-p",
             "/nix/var/nix/profiles/system",
@@ -332,6 +357,7 @@ const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
             ROOT_ENV_PROGRAM,
             ROOT_HOME_ENV_ARG,
             NIX_REMOTE_DAEMON_ENV_ARG,
+            NIX_CONFIG_INTERNAL_JSON_ARG,
             "/nix/store/new-system/activate",
         ],
     ),
@@ -339,7 +365,7 @@ const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
 
 const UPGRADE_SPLIT_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
@@ -357,6 +383,8 @@ const UPGRADE_SPLIT_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
             "build",
             "--no-link",
             "--print-out-paths",
+            "--log-format",
+            "internal-json",
             "<REPO_ROOT>#darwinConfigurations.test-host.system",
         ],
     ),
@@ -364,7 +392,7 @@ const UPGRADE_SPLIT_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
 
 const UPGRADE_SPLIT_REBUILD_RUN_CURRENT_LEGACY_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
@@ -382,6 +410,8 @@ const UPGRADE_SPLIT_REBUILD_RUN_CURRENT_LEGACY_CALLS: &[ExpectedCall] = &[
             "build",
             "--no-link",
             "--print-out-paths",
+            "--log-format",
+            "internal-json",
             "<REPO_ROOT>#darwinConfigurations.test-host.system",
         ],
     ),
@@ -419,19 +449,25 @@ const UPGRADE_SPLIT_REBUILD_RUN_CURRENT_LEGACY_CALLS: &[ExpectedCall] = &[
             "--flake",
             REPO_ROOT_TOKEN,
             "--log-format",
-            "bar",
+            "internal-json",
         ],
     ),
     ExpectedCall::new(
         "darwin-rebuild",
         EXPECTED_CWD_REPO_ROOT,
-        &["switch", "--flake", REPO_ROOT_TOKEN, "--log-format", "bar"],
+        &[
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "internal-json",
+        ],
     ),
 ];
 
 const UPGRADE_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
@@ -446,19 +482,25 @@ const UPGRADE_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
             "--flake",
             REPO_ROOT_TOKEN,
             "--log-format",
-            "bar",
+            "internal-json",
         ],
     ),
     ExpectedCall::new(
         "darwin-rebuild",
         EXPECTED_CWD_REPO_ROOT,
-        &["switch", "--flake", REPO_ROOT_TOKEN, "--log-format", "bar"],
+        &[
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "internal-json",
+        ],
     ),
 ];
 
 const UPGRADE_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
@@ -475,13 +517,19 @@ const UPGRADE_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
             "--flake",
             REPO_ROOT_TOKEN,
             "--log-format",
-            "bar",
+            "internal-json",
         ],
     ),
     ExpectedCall::new(
         "darwin-rebuild",
         EXPECTED_CWD_REPO_ROOT,
-        &["switch", "--flake", REPO_ROOT_TOKEN, "--log-format", "bar"],
+        &[
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "internal-json",
+        ],
     ),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, &["ls-files", "--", "*.nix"]),
     ExpectedCall::new(
@@ -498,13 +546,19 @@ const UPGRADE_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
             "--flake",
             REPO_ROOT_TOKEN,
             "--log-format",
-            "bar",
+            "internal-json",
         ],
     ),
     ExpectedCall::new(
         "darwin-rebuild",
         EXPECTED_CWD_REPO_ROOT,
-        &["switch", "--flake", REPO_ROOT_TOKEN, "--log-format", "bar"],
+        &[
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "internal-json",
+        ],
     ),
     ExpectedCall::new(
         "git",
@@ -533,7 +587,7 @@ const UPGRADE_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
 
 const UPGRADE_BREW_WITH_UPDATES_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["flake", "update"]),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("brew", EXPECTED_CWD_REPO_ROOT, &["outdated", "--json"]),
     ExpectedCall::new(
         "brew",
@@ -707,12 +761,12 @@ fn system_upgrade_flows() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn upgrade_split_rebuild_keeps_nix_build_output_quiet() -> Result<(), Box<dyn Error>> {
+fn upgrade_split_rebuild_uses_structured_nix_output() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
     let nx_bin = resolve_nx_bin(&workspace_root)?;
     let case = UpgradeCase {
-        id: "upgrade_split_rebuild_quiet",
+        id: "upgrade_split_rebuild_structured",
         cli_args: UPGRADE_REBUILD_ARGS,
         mode: "success",
         expected_exit: 0,
@@ -722,7 +776,7 @@ fn upgrade_split_rebuild_keeps_nix_build_output_quiet() -> Result<(), Box<dyn Er
 
     let output = run_case_with_extra_env(&nx_bin, &repo_base, &case, &[("NX_SPLIT_DARWIN", "1")])?;
 
-    assert_quiet_split_build_output(&output.stdout, &output.stderr);
+    assert_structured_split_build_output(&output.stdout, &output.stderr);
 
     Ok(())
 }
@@ -756,13 +810,13 @@ fn upgrade_split_rebuild_preserves_run_current_passwordless_legacy_sudo()
         output.stdout,
         output.stderr
     );
-    assert_quiet_split_build_output(&output.stdout, &output.stderr);
+    assert_structured_split_build_output(&output.stdout, &output.stderr);
 
     Ok(())
 }
 
 #[test]
-fn upgrade_split_rebuild_failure_surfaces_quiet_build_output() -> Result<(), Box<dyn Error>> {
+fn upgrade_split_rebuild_failure_surfaces_structured_diagnostics() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
     let nx_bin = resolve_nx_bin(&workspace_root)?;
@@ -781,7 +835,7 @@ fn upgrade_split_rebuild_failure_surfaces_quiet_build_output() -> Result<(), Box
 
     let output = run_case_with_extra_env(&nx_bin, &repo_base, &case, &[("NX_SPLIT_DARWIN", "1")])?;
 
-    assert_quiet_split_build_output(&output.stdout, &output.stderr);
+    assert_structured_split_build_output(&output.stdout, &output.stderr);
 
     Ok(())
 }
@@ -866,7 +920,7 @@ fn run_case_with_extra_env(
     }
     assert!(
         !stdout.contains("stub nix flake command ok"),
-        "case {}: successful nix flake update output should stay quiet by default\nstdout:\n{}\nstderr:\n{}",
+        "case {}: successful structured Nix progress should not leak into captured output\nstdout:\n{}\nstderr:\n{}",
         case.id,
         stdout,
         stderr
@@ -882,7 +936,7 @@ fn run_case_with_extra_env(
     })
 }
 
-fn assert_quiet_split_build_output(stdout: &str, stderr: &str) {
+fn assert_structured_split_build_output(stdout: &str, stderr: &str) {
     for fragment in [
         "copying path '/nix/store/split-example-one'",
         "copying path '/nix/store/activation-example'",

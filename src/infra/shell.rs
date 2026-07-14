@@ -8,12 +8,12 @@ use std::thread;
 use anyhow::{Context, anyhow};
 use serde_json::Value;
 
-use crate::infra::nix_output::{CompactNixProgress, tee_quiet_nix_chunk, tee_quiet_nix_record};
+use crate::infra::activation_profile::ActivationPhaseProfiler;
+use crate::infra::nix_output::{NixProgress, NixRecord, feed_nix_output};
+use crate::infra::timing::TimingPhase;
 use crate::output::printer::Printer;
 
 type CommandEnv<'a> = &'a [(&'a str, &'a str)];
-type StreamObserver<'a> = &'a mut dyn FnMut(StreamName, &str);
-type StreamFilter<'a> = &'a mut dyn FnMut(StreamName, &str) -> bool;
 const STDERR_TEE_CAPTURE_LIMIT: usize = 256 * 1024;
 
 pub struct CapturedCommand {
@@ -53,28 +53,20 @@ struct StreamedCommand {
     collected: Option<String>,
 }
 
-struct StreamingOptions<'a> {
-    collect_output: bool,
-    observer: Option<StreamObserver<'a>>,
-    should_render: Option<StreamFilter<'a>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StreamName {
-    Stdout,
-    Stderr,
+struct StderrCapture {
+    bytes: Vec<u8>,
+    phases: Vec<TimingPhase>,
 }
 
 #[derive(Debug)]
 struct StreamedLine {
-    stream: StreamName,
     line: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StderrTeeMode {
     Raw,
-    QuietNix,
+    Nix,
 }
 
 /// Run a command and parse stdout as JSON while suppressing stderr noise.
@@ -146,19 +138,7 @@ pub fn run_indented_command_with_env(
     _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<i32> {
-    Ok(run_streaming_command_with_env(
-        program,
-        args,
-        cwd,
-        env,
-        indent,
-        StreamingOptions {
-            collect_output: false,
-            observer: None,
-            should_render: None,
-        },
-    )?
-    .code)
+    Ok(run_streaming_command_with_env(program, args, cwd, env, indent, false)?.code)
 }
 
 pub fn run_indented_command_collecting_with_env(
@@ -169,82 +149,12 @@ pub fn run_indented_command_collecting_with_env(
     _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<(i32, String)> {
-    let streamed = run_streaming_command_with_env(
-        program,
-        args,
-        cwd,
-        env,
-        indent,
-        StreamingOptions {
-            collect_output: true,
-            observer: None,
-            should_render: None,
-        },
-    )?;
-    Ok((streamed.code, streamed.collected.unwrap_or_default()))
-}
-
-pub fn run_indented_command_collecting_with_observer<F>(
-    program: &str,
-    args: &[&str],
-    cwd: Option<&Path>,
-    env: Option<CommandEnv<'_>>,
-    _printer: &Printer,
-    indent: &str,
-    mut observer: F,
-) -> anyhow::Result<(i32, String)>
-where
-    F: FnMut(StreamName, &str),
-{
-    let streamed = run_streaming_command_with_env(
-        program,
-        args,
-        cwd,
-        env,
-        indent,
-        StreamingOptions {
-            collect_output: true,
-            observer: Some(&mut observer),
-            should_render: None,
-        },
-    )?;
-    Ok((streamed.code, streamed.collected.unwrap_or_default()))
-}
-
-pub fn run_indented_command_collecting_filtered_with_observer<F, G>(
-    program: &str,
-    args: &[&str],
-    cwd: Option<&Path>,
-    env: Option<CommandEnv<'_>>,
-    indent: &str,
-    mut observer: F,
-    mut should_render: G,
-) -> anyhow::Result<(i32, String)>
-where
-    F: FnMut(StreamName, &str),
-    G: FnMut(StreamName, &str) -> bool,
-{
-    let streamed = run_streaming_command_with_env(
-        program,
-        args,
-        cwd,
-        env,
-        indent,
-        StreamingOptions {
-            collect_output: true,
-            observer: Some(&mut observer),
-            should_render: Some(&mut should_render),
-        },
-    )?;
+    let streamed = run_streaming_command_with_env(program, args, cwd, env, indent, true)?;
     Ok((streamed.code, streamed.collected.unwrap_or_default()))
 }
 
 pub fn terminal_stdio_available() -> bool {
     io::stdin().is_terminal() && io::stdout().is_terminal() && io::stderr().is_terminal()
-}
-
-pub fn terminal_stderr_available() -> bool {
-    io::stderr().is_terminal()
 }
 
 pub fn run_native_command_with_env(
@@ -277,13 +187,31 @@ pub fn run_stdout_collecting_tee_stderr_with_env(
     run_stdout_collecting_stderr_with_env(program, args, cwd, env, StderrTeeMode::Raw)
 }
 
-pub fn run_stdout_collecting_quiet_nix_stderr_with_env(
+pub fn run_stdout_collecting_nix_stderr_with_env(
     program: &str,
     args: &[&str],
     cwd: Option<&Path>,
     env: Option<CommandEnv<'_>>,
 ) -> anyhow::Result<CapturedCommand> {
-    run_stdout_collecting_stderr_with_env(program, args, cwd, env, StderrTeeMode::QuietNix)
+    Ok(
+        run_stdout_collecting_stderr_with_env_profiled(
+            program,
+            args,
+            cwd,
+            env,
+            StderrTeeMode::Nix,
+        )?
+        .0,
+    )
+}
+
+pub fn run_stdout_collecting_nix_stderr_with_env_profiled(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: Option<CommandEnv<'_>>,
+) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)> {
+    run_stdout_collecting_stderr_with_env_profiled(program, args, cwd, env, StderrTeeMode::Nix)
 }
 
 fn run_stdout_collecting_stderr_with_env(
@@ -293,6 +221,16 @@ fn run_stdout_collecting_stderr_with_env(
     env: Option<CommandEnv<'_>>,
     stderr_mode: StderrTeeMode,
 ) -> anyhow::Result<CapturedCommand> {
+    Ok(run_stdout_collecting_stderr_with_env_profiled(program, args, cwd, env, stderr_mode)?.0)
+}
+
+fn run_stdout_collecting_stderr_with_env_profiled(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: Option<CommandEnv<'_>>,
+    stderr_mode: StderrTeeMode,
+) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)> {
     let mut command = Command::new(program);
     configure_command(&mut command, args, cwd, env);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -313,13 +251,16 @@ fn run_stdout_collecting_stderr_with_env(
     let stderr_handle = thread::spawn(move || collect_stderr_stream(stderr, stderr_mode));
     let status = child.wait().context("waiting for child process")?;
     let stdout = String::from_utf8_lossy(&join_collector("stdout", stdout_handle)?).into_owned();
-    let stderr = String::from_utf8_lossy(&join_collector("stderr", stderr_handle)?).into_owned();
+    let stderr = join_stderr_collector(stderr_handle)?;
 
-    Ok(CapturedCommand {
-        code: status.code().unwrap_or(1),
-        stdout,
-        stderr,
-    })
+    Ok((
+        CapturedCommand {
+            code: status.code().unwrap_or(1),
+            stdout,
+            stderr: String::from_utf8_lossy(&stderr.bytes).into_owned(),
+        },
+        stderr.phases,
+    ))
 }
 
 fn run_streaming_command_with_env(
@@ -328,13 +269,8 @@ fn run_streaming_command_with_env(
     cwd: Option<&Path>,
     env: Option<CommandEnv<'_>>,
     indent: &str,
-    options: StreamingOptions<'_>,
+    collect_output: bool,
 ) -> anyhow::Result<StreamedCommand> {
-    let StreamingOptions {
-        collect_output,
-        mut observer,
-        mut should_render,
-    } = options;
     let mut command = Command::new(program);
     configure_command(&mut command, args, cwd, env);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -353,31 +289,23 @@ fn run_streaming_command_with_env(
         .stderr
         .take()
         .context("failed to capture child stderr")?;
-    let stdout_handle = spawn_line_reader("stdout", StreamName::Stdout, stdout, tx.clone());
-    let stderr_handle = spawn_line_reader("stderr", StreamName::Stderr, stderr, tx);
+    let stdout_handle = spawn_line_reader("stdout", stdout, tx.clone());
+    let stderr_handle = spawn_line_reader("stderr", stderr, tx);
 
     let mut collected = collect_output.then(String::new);
     for event in rx {
         let trimmed = visible_stream_line(&event.line);
         let trimmed = trimmed.as_ref();
-        if let Some(observer) = observer.as_deref_mut() {
-            observer(event.stream, trimmed);
-        }
         if let Some(collected) = collected.as_mut() {
             if !collected.is_empty() {
                 collected.push('\n');
             }
             collected.push_str(trimmed);
         }
-        let render = should_render
-            .as_deref_mut()
-            .is_none_or(|filter| filter(event.stream, trimmed));
-        if render {
-            if trimmed.is_empty() {
-                println!();
-            } else {
-                Printer::stream_line(trimmed, indent, 80);
-            }
+        if trimmed.is_empty() {
+            println!();
+        } else {
+            Printer::stream_line(trimmed, indent, 80);
         }
     }
 
@@ -408,20 +336,13 @@ fn configure_command(
 
 fn spawn_line_reader(
     stream_name: &'static str,
-    stream_kind: StreamName,
     stream: impl Read + Send + 'static,
     tx: mpsc::Sender<StreamedLine>,
 ) -> thread::JoinHandle<anyhow::Result<()>> {
     thread::spawn(move || {
         for line in BufReader::new(stream).lines() {
             let line = line.with_context(|| format!("reading {stream_name} stream"))?;
-            if tx
-                .send(StreamedLine {
-                    stream: stream_kind,
-                    line,
-                })
-                .is_err()
-            {
+            if tx.send(StreamedLine { line }).is_err() {
                 break;
             }
         }
@@ -443,14 +364,14 @@ fn collect_stream(
 fn collect_stderr_stream(
     stream: impl Read + Send + 'static,
     mode: StderrTeeMode,
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<StderrCapture> {
     match mode {
         StderrTeeMode::Raw => tee_stderr_stream(stream),
-        StderrTeeMode::QuietNix => tee_quiet_nix_stderr_stream(stream),
+        StderrTeeMode::Nix => tee_nix_stderr_stream(stream),
     }
 }
 
-fn tee_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Result<Vec<u8>> {
+fn tee_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Result<StderrCapture> {
     let mut bytes = Vec::new();
     let mut buf = [0u8; 8192];
     let mut stderr = io::stderr().lock();
@@ -468,38 +389,86 @@ fn tee_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Result<V
         }
         append_tail(&mut bytes, &buf[..count], STDERR_TEE_CAPTURE_LIMIT);
     }
-    Ok(bytes)
+    Ok(StderrCapture {
+        bytes,
+        phases: Vec::new(),
+    })
 }
 
-fn tee_quiet_nix_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
+fn tee_nix_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Result<StderrCapture> {
+    let mut diagnostics = Vec::new();
     let mut buf = [0u8; 8192];
     let mut pending = Vec::new();
     let mut stderr = io::stderr().lock();
     let should_tee = terminal_stdio_available();
-    let mut progress = CompactNixProgress::default();
+    let mut progress = NixProgress::default();
+    let mut profiler = ActivationPhaseProfiler::new();
 
     loop {
         let count = stream.read(&mut buf).context("reading stderr stream")?;
         if count == 0 {
             break;
         }
-        append_tail(&mut bytes, &buf[..count], STDERR_TEE_CAPTURE_LIMIT);
-
-        if !should_tee {
-            continue;
-        }
-
-        tee_quiet_nix_chunk(&buf[..count], &mut pending, &mut progress, &mut stderr)?;
+        feed_nix_output(&buf[..count], &mut pending, |record| {
+            handle_nix_record(
+                progress.observe_record(record),
+                &mut progress,
+                &mut diagnostics,
+                &mut profiler,
+                should_tee.then_some(&mut stderr),
+            )
+        })?;
     }
 
+    if !pending.is_empty() {
+        handle_nix_record(
+            progress.observe_record(&pending),
+            &mut progress,
+            &mut diagnostics,
+            &mut profiler,
+            should_tee.then_some(&mut stderr),
+        )?;
+    }
     if should_tee {
-        if !pending.is_empty() {
-            tee_quiet_nix_record(&pending, &mut progress, &mut stderr)?;
-        }
         progress.clear(&mut stderr)?;
     }
-    Ok(bytes)
+    Ok(StderrCapture {
+        bytes: diagnostics,
+        phases: profiler.finish(),
+    })
+}
+
+fn handle_nix_record(
+    record: NixRecord,
+    progress: &mut NixProgress,
+    diagnostics: &mut Vec<u8>,
+    profiler: &mut ActivationPhaseProfiler,
+    stderr: Option<&mut impl Write>,
+) -> anyhow::Result<()> {
+    match record {
+        NixRecord::Progress(activity) => {
+            if let Some(activity) = activity {
+                profiler.observe_nix_activity(activity);
+            }
+            if let Some(stderr) = stderr {
+                progress.render(stderr)?;
+            }
+        }
+        NixRecord::Diagnostic(message) => {
+            for line in message.lines() {
+                profiler.observe_stderr_line(line);
+            }
+            append_tail(diagnostics, message.as_bytes(), STDERR_TEE_CAPTURE_LIMIT);
+            append_tail(diagnostics, b"\n", STDERR_TEE_CAPTURE_LIMIT);
+            if let Some(stderr) = stderr {
+                progress.clear(stderr)?;
+                writeln!(stderr, "{message}").context("writing child stderr")?;
+                stderr.flush().context("flushing child stderr")?;
+            }
+        }
+        NixRecord::Ignored => {}
+    }
+    Ok(())
 }
 
 fn append_tail(bytes: &mut Vec<u8>, chunk: &[u8], limit: usize) {
@@ -547,13 +516,20 @@ fn join_collector(
         .map_err(|_| anyhow!("{stream_name} reader thread panicked"))?
 }
 
+fn join_stderr_collector(
+    handle: thread::JoinHandle<anyhow::Result<StderrCapture>>,
+) -> anyhow::Result<StderrCapture> {
+    handle
+        .join()
+        .map_err(|_| anyhow!("stderr reader thread panicked"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use std::io;
 
-    use crate::infra::nix_output::{NixStatusLine, classify_nix_chatter_line};
     use crate::output::style::OutputStyle;
 
     struct FailingReader;
@@ -581,7 +557,7 @@ mod tests {
     fn join_reader_surfaces_stream_read_error() {
         let (tx, rx) = mpsc::channel::<StreamedLine>();
         drop(rx);
-        let handle = spawn_line_reader("stderr", StreamName::Stderr, FailingReader, tx);
+        let handle = spawn_line_reader("stderr", FailingReader, tx);
 
         let err = join_reader("stderr", handle).expect_err("read error should be surfaced");
         assert!(err.to_string().contains("reading stderr stream"));
@@ -638,30 +614,6 @@ mod tests {
     }
 
     #[test]
-    fn run_indented_command_observer_receives_stream_names() {
-        let printer = Printer::new(OutputStyle::from_flags(true, false, false));
-        let args = ["-c", "printf 'out\\n'; printf 'err\\n' >&2"];
-        let mut seen = Vec::new();
-
-        let (code, output) = run_indented_command_collecting_with_observer(
-            "sh",
-            &args,
-            None,
-            None,
-            &printer,
-            "  ",
-            |stream, line| seen.push((stream, line.to_string())),
-        )
-        .expect("shell command should run");
-
-        assert_eq!(code, 0);
-        assert!(output.contains("out"));
-        assert!(output.contains("err"));
-        assert!(seen.contains(&(StreamName::Stdout, "out".to_string())));
-        assert!(seen.contains(&(StreamName::Stderr, "err".to_string())));
-    }
-
-    #[test]
     fn run_indented_command_collapses_carriage_return_progress() {
         let printer = Printer::new(OutputStyle::from_flags(true, false, false));
         let args = [
@@ -706,100 +658,18 @@ mod tests {
     }
 
     #[test]
-    fn quiet_nix_status_line_classifies_repetitive_build_chatter() {
-        for (line, expected) in [
-            (
-                "copying path '/nix/store/example' from 'https://cache.nixos.org'...",
-                Some(NixStatusLine::StoreCopy),
-            ),
-            (
-                "building '/nix/store/example.drv'...",
-                Some(NixStatusLine::Build),
-            ),
-            (
-                "building /nix/store/example.drv",
-                Some(NixStatusLine::Build),
-            ),
-            (
-                "unpacking 'github:flowerornament/nx-rs/abc123' into the Git cache...",
-                Some(NixStatusLine::SourceFetch),
-            ),
-            (
-                "these 184 paths will be fetched (14.7 MiB download, 142.1 MiB unpacked):",
-                Some(NixStatusLine::Plan),
-            ),
-            (
-                "these 172 derivations will be built:",
-                Some(NixStatusLine::Plan),
-            ),
-            ("/nix/store/example-package", Some(NixStatusLine::StorePath)),
-            ("error: Cannot build '/nix/store/example.drv'.", None),
-        ] {
-            assert_eq!(classify_nix_chatter_line(line), expected, "{line}");
-        }
-    }
-
-    #[test]
-    fn run_stdout_collecting_quiet_nix_stderr_keeps_diagnostic_tail() {
+    fn run_stdout_collecting_nix_stderr_keeps_diagnostic_tail() {
         let args = [
             "-c",
-            "printf 'json\\n'; printf \"copying path '/nix/store/example' from 'https://cache.nixos.org'...\\n\" >&2; printf \"building '/nix/store/example.drv'...\\n\" >&2; printf \"error: Cannot build '/nix/store/example.drv'.\\n\" >&2",
+            "printf 'json\\n'; printf '%s\\n' '@nix {\"action\":\"start\",\"id\":1,\"level\":0,\"parent\":0,\"text\":\"\",\"type\":104}' '@nix {\"action\":\"result\",\"fields\":[1,2,1,0],\"id\":1,\"type\":105}' '@nix {\"action\":\"msg\",\"level\":0,\"msg\":\"error: Cannot build\"}' >&2",
         ];
 
-        let output = run_stdout_collecting_quiet_nix_stderr_with_env("sh", &args, None, None)
+        let output = run_stdout_collecting_nix_stderr_with_env("sh", &args, None, None)
             .expect("shell command should run");
 
         assert_eq!(output.code, 0);
         assert_eq!(output.stdout, "json\n");
-        assert!(output.stderr.contains("copying path '/nix/store/example'"));
-        assert!(output.stderr.contains("building '/nix/store/example.drv'"));
-        assert!(output.stderr.contains("error: Cannot build"));
-    }
-
-    #[test]
-    fn compact_nix_progress_summarizes_counts() {
-        let mut progress = CompactNixProgress::default();
-        let mut sink = Vec::new();
-
-        progress
-            .observe(NixStatusLine::SourceFetch, &mut sink)
-            .expect("write should succeed");
-        progress
-            .observe(NixStatusLine::StoreCopy, &mut sink)
-            .expect("write should succeed");
-        progress
-            .observe(NixStatusLine::StoreCopy, &mut sink)
-            .expect("write should succeed");
-        progress
-            .observe(NixStatusLine::Build, &mut sink)
-            .expect("write should succeed");
-
-        assert_eq!(
-            progress.summary(),
-            "realized 1 sources, copied 2 paths, building 1 derivations"
-        );
-        assert!(String::from_utf8_lossy(&sink).contains("nix:"));
-    }
-
-    #[test]
-    fn quiet_nix_chunk_splits_carriage_return_records() {
-        let mut pending = Vec::new();
-        let mut progress = CompactNixProgress::default();
-        let mut sink = Vec::new();
-
-        tee_quiet_nix_chunk(
-            b"copying path '/nix/store/example' from 'https://cache.nixos.org'...\rbuilding '/nix/store/example.drv'...\rerror: boom\n",
-            &mut pending,
-            &mut progress,
-            &mut sink,
-        )
-        .expect("quiet tee should handle carriage-return records");
-
-        let rendered = String::from_utf8_lossy(&sink);
-        assert!(rendered.contains("nix: copied 1 paths"));
-        assert!(rendered.contains("building 1 derivations"));
-        assert!(rendered.contains("error: boom"));
-        assert!(pending.is_empty());
+        assert_eq!(output.stderr, "error: Cannot build\n");
     }
 
     #[test]

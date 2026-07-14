@@ -7,10 +7,11 @@ use crate::domain::upgrade::{
     InputChange, build_flake_update_args, diff_locks, github_owner_repo, load_flake_lock, short_rev,
 };
 use crate::infra::ai_engine::DEFAULT_CODEX_MODEL;
+use crate::infra::nix_output::NixLogFormat;
 use crate::infra::shell::{
     first_nonempty_output, run_captured_command, run_captured_command_with_env,
-    run_indented_command, run_stdout_collecting_quiet_nix_stderr_with_env,
-    run_stdout_collecting_tee_stderr_with_env, terminal_stdio_available,
+    run_indented_command, run_stdout_collecting_nix_stderr_with_env,
+    run_stdout_collecting_tee_stderr_with_env,
 };
 use crate::output::printer::Printer;
 
@@ -822,7 +823,7 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext, nix_env: &NixCommandE
                     env,
                 )
             } else {
-                run_stdout_collecting_quiet_nix_stderr_with_env(
+                run_stdout_collecting_nix_stderr_with_env(
                     &program,
                     &arg_refs,
                     Some(&ctx.repo_root),
@@ -873,12 +874,15 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext, nix_env: &NixCommandE
     false
 }
 
-fn nix_update_output_args(base_args: &[String], verbose: bool) -> Vec<String> {
+pub(super) fn nix_update_output_args(base_args: &[String], verbose: bool) -> Vec<String> {
+    let format = if verbose {
+        NixLogFormat::BarWithLogs
+    } else {
+        NixLogFormat::InternalJson
+    };
     let mut args = Vec::with_capacity(base_args.len() + 2);
-    if terminal_stdio_available() {
-        args.push("--log-format".to_string());
-        args.push(if verbose { "bar-with-logs" } else { "bar" }.to_string());
-    }
+    args.push("--log-format".to_string());
+    args.push(format.as_arg().to_string());
     args.extend(base_args.iter().cloned());
     args
 }

@@ -9,7 +9,7 @@ use anyhow::{Context, anyhow};
 use serde_json::Value;
 
 use crate::infra::activation_profile::ActivationPhaseProfiler;
-use crate::infra::nix_output::{NixProgress, NixRecord, feed_nix_output};
+use crate::infra::nix_output::{NixOutputRenderer, NixRecord, feed_nix_output};
 use crate::infra::timing::TimingPhase;
 use crate::output::printer::Printer;
 
@@ -298,12 +298,7 @@ fn replay_success_diagnostics(
         && !mode.renders_nix_output_live()
         && !diagnostics.is_empty();
     if replay {
-        stderr
-            .write_all(diagnostics)
-            .context("writing captured Nix diagnostics")?;
-        stderr
-            .flush()
-            .context("flushing captured Nix diagnostics")?;
+        NixOutputRenderer::render_captured_diagnostics(stderr, diagnostics)?;
     }
     Ok(())
 }
@@ -446,7 +441,7 @@ fn tee_nix_stderr_stream(
     let mut pending = Vec::new();
     let mut stderr = io::stderr().lock();
     let should_render_progress = render_progress && terminal_stdio_available();
-    let mut progress = NixProgress::default();
+    let mut renderer = NixOutputRenderer::default();
     let mut profiler = ActivationPhaseProfiler::new();
 
     loop {
@@ -456,8 +451,8 @@ fn tee_nix_stderr_stream(
         }
         feed_nix_output(&buf[..count], &mut pending, |record| {
             handle_nix_record(
-                progress.observe_record(record),
-                &mut progress,
+                renderer.observe_record(record),
+                &mut renderer,
                 &mut diagnostics,
                 &mut profiler,
                 &mut stderr,
@@ -468,8 +463,8 @@ fn tee_nix_stderr_stream(
 
     if !pending.is_empty() {
         handle_nix_record(
-            progress.observe_record(&pending),
-            &mut progress,
+            renderer.observe_record(&pending),
+            &mut renderer,
             &mut diagnostics,
             &mut profiler,
             &mut stderr,
@@ -477,7 +472,7 @@ fn tee_nix_stderr_stream(
         )?;
     }
     if should_render_progress {
-        progress.clear(&mut stderr)?;
+        renderer.clear(&mut stderr)?;
     }
     Ok(StderrCapture {
         bytes: diagnostics,
@@ -487,7 +482,7 @@ fn tee_nix_stderr_stream(
 
 fn handle_nix_record(
     record: NixRecord,
-    progress: &mut NixProgress,
+    renderer: &mut NixOutputRenderer,
     diagnostics: &mut Vec<u8>,
     profiler: &mut ActivationPhaseProfiler,
     stderr: &mut impl Write,
@@ -499,7 +494,7 @@ fn handle_nix_record(
                 profiler.observe_nix_activity(activity);
             }
             if render_progress {
-                progress.render(stderr)?;
+                renderer.render(stderr)?;
             }
         }
         NixRecord::Diagnostic(diagnostic) => {
@@ -513,9 +508,7 @@ fn handle_nix_record(
             );
             append_tail(diagnostics, b"\n", STDERR_TEE_CAPTURE_LIMIT);
             if render_progress {
-                progress.clear(stderr)?;
-                writeln!(stderr, "{}", diagnostic.message).context("writing child stderr")?;
-                stderr.flush().context("flushing child stderr")?;
+                renderer.render_diagnostic(stderr, &diagnostic)?;
             }
         }
         NixRecord::Ignored => {}
@@ -726,7 +719,7 @@ mod tests {
 
     #[test]
     fn suppressed_progress_replays_success_diagnostics_after_completion() {
-        let mut progress = NixProgress::default();
+        let mut progress = NixOutputRenderer::default();
         let mut diagnostics = Vec::new();
         let mut profiler = ActivationPhaseProfiler::new();
         let mut stderr = Vec::new();
@@ -765,7 +758,7 @@ mod tests {
             &mut stderr,
         )
         .expect("replay diagnostics");
-        assert_eq!(stderr, b"warning: check this\n");
+        assert_eq!(stderr, b"  warning: check this\n");
     }
 
     #[test]

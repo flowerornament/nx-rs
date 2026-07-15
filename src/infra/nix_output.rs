@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 
 use crate::infra::text::truncate_with_ellipsis;
+use crate::output::printer::DETAIL_INDENT;
 
 const NIX_JSON_PREFIX: &str = "@nix ";
 const NIX_RECORD_LIMIT: usize = 16 * 1024;
@@ -206,7 +207,7 @@ struct ActivityTotals {
 }
 
 #[derive(Default)]
-pub(crate) struct NixProgress {
+pub(crate) struct NixOutputRenderer {
     activities: HashMap<u64, Activity>,
     totals: HashMap<NixActivityType, ActivityTotals>,
     current_activity: Option<u64>,
@@ -219,7 +220,7 @@ pub(crate) struct NixProgress {
     last_rendered_at: Option<Instant>,
 }
 
-impl NixProgress {
+impl NixOutputRenderer {
     pub(crate) fn observe_record(&mut self, record: &[u8]) -> NixRecord {
         let text = String::from_utf8_lossy(record);
         let visible = visible_record(&text);
@@ -393,7 +394,7 @@ impl NixProgress {
 
         self.active = true;
         self.rendered_summary = Some(summary.clone());
-        write!(stderr, "\r\x1b[2K  nix: {summary}").context("writing child stderr")?;
+        write!(stderr, "\r\x1b[2K{DETAIL_INDENT}nix: {summary}").context("writing child stderr")?;
         stderr.flush().context("flushing child stderr")
     }
 
@@ -406,6 +407,27 @@ impl NixProgress {
             self.last_rendered_at = None;
         }
         Ok(())
+    }
+
+    pub(crate) fn render_diagnostic(
+        &mut self,
+        stderr: &mut impl Write,
+        diagnostic: &NixDiagnostic,
+    ) -> anyhow::Result<()> {
+        self.clear(stderr)?;
+        write_detail_lines(stderr, diagnostic.message.as_bytes())?;
+        if !diagnostic.message.ends_with('\n') {
+            writeln!(stderr).context("terminating Nix diagnostic")?;
+        }
+        stderr.flush().context("flushing Nix diagnostic")
+    }
+
+    pub(crate) fn render_captured_diagnostics(
+        stderr: &mut impl Write,
+        diagnostics: &[u8],
+    ) -> anyhow::Result<()> {
+        write_detail_lines(stderr, diagnostics)?;
+        stderr.flush().context("flushing Nix diagnostics")
     }
 
     pub(crate) fn summary(&self) -> String {
@@ -510,6 +532,16 @@ impl NixProgress {
         }
         (!label.is_empty()).then_some(label)
     }
+}
+
+fn write_detail_lines(stderr: &mut impl Write, output: &[u8]) -> anyhow::Result<()> {
+    for line in output.split_inclusive(|byte| *byte == b'\n') {
+        stderr
+            .write_all(DETAIL_INDENT.as_bytes())
+            .context("writing Nix output indent")?;
+        stderr.write_all(line).context("writing Nix output")?;
+    }
+    Ok(())
 }
 
 pub(crate) enum NixRecord {
@@ -738,13 +770,13 @@ fn short_source(source: &str) -> String {
 mod tests {
     use super::*;
 
-    fn observe(progress: &mut NixProgress, line: &str) -> NixRecord {
+    fn observe(progress: &mut NixOutputRenderer, line: &str) -> NixRecord {
         progress.observe_record(line.as_bytes())
     }
 
     #[test]
     fn structured_progress_matches_nix_activity_protocol() {
-        let mut progress = NixProgress::default();
+        let mut progress = NixOutputRenderer::default();
         observe(
             &mut progress,
             r#"@nix {"action":"start","id":1,"level":0,"parent":0,"text":"","type":104}"#,
@@ -770,7 +802,7 @@ mod tests {
 
     #[test]
     fn structured_message_becomes_decoded_diagnostic() {
-        let mut progress = NixProgress::default();
+        let mut progress = NixOutputRenderer::default();
         let record = observe(
             &mut progress,
             r#"@nix {"action":"msg","level":0,"msg":"error: boom\nspecified: old\ngot: new"}"#,
@@ -784,7 +816,7 @@ mod tests {
 
     #[test]
     fn parent_expected_total_is_not_added_twice() {
-        let mut progress = NixProgress::default();
+        let mut progress = NixOutputRenderer::default();
         observe(
             &mut progress,
             r#"@nix {"action":"start","id":1,"level":0,"parent":0,"text":"realising","type":102}"#,
@@ -807,7 +839,7 @@ mod tests {
 
     #[test]
     fn activity_phase_and_fetch_status_enrich_current_operation() {
-        let mut progress = NixProgress::default();
+        let mut progress = NixOutputRenderer::default();
         observe(
             &mut progress,
             r#"@nix {"action":"start","id":1,"level":0,"parent":0,"text":"building package","type":105,"fields":["/nix/store/hash-package.drv","",1,1]}"#,
@@ -829,14 +861,14 @@ mod tests {
 
     #[test]
     fn non_protocol_text_remains_a_diagnostic() {
-        let mut progress = NixProgress::default();
+        let mut progress = NixOutputRenderer::default();
         let record = observe(&mut progress, "remote: Repository not found.");
         assert!(matches!(record, NixRecord::Diagnostic(_)));
     }
 
     #[test]
     fn anomalous_activity_stream_remains_bounded() {
-        let mut progress = NixProgress::default();
+        let mut progress = NixOutputRenderer::default();
         for id in 0..=MAX_ACTIVE_ACTIVITIES as u64 {
             observe(
                 &mut progress,
@@ -851,7 +883,7 @@ mod tests {
 
     #[test]
     fn renderer_updates_and_clears_one_terminal_line() {
-        let mut progress = NixProgress::default();
+        let mut progress = NixOutputRenderer::default();
         observe(
             &mut progress,
             r#"@nix {"action":"start","id":1,"level":0,"parent":0,"text":"building derivations","type":104}"#,
@@ -864,6 +896,28 @@ mod tests {
         assert_eq!(
             String::from_utf8(stderr).expect("terminal output is utf-8"),
             "\r\x1b[2K  nix: building derivations\r\x1b[2K"
+        );
+    }
+
+    #[test]
+    fn renderer_indents_every_diagnostic_line() {
+        let mut renderer = NixOutputRenderer::default();
+        let diagnostic =
+            NixDiagnostic::plain("warning: check this\nderivation evaluated".to_string());
+        let mut stderr = Vec::new();
+
+        renderer
+            .render_diagnostic(&mut stderr, &diagnostic)
+            .expect("render live diagnostic");
+        NixOutputRenderer::render_captured_diagnostics(
+            &mut stderr,
+            b"warning: replayed\nderivation replayed\n",
+        )
+        .expect("render captured diagnostics");
+
+        assert_eq!(
+            stderr,
+            b"  warning: check this\n  derivation evaluated\n  warning: replayed\n  derivation replayed\n"
         );
     }
 

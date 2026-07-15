@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- indents every structured Nix diagnostic line by two spaces to match nx detail lines and aggregate progress while leaving native `--verbose` and interactive activation streams unchanged
+
 ## v1.5.29 - 2026-07-15
 
 - adds a binary cache preflight to `nx upgrade` and `nx rebuild --preflight`: dry-runs the system build, lists derivations that would build from source, and prompts before rebuilding when they exceed `NX_CACHE_MISS_THRESHOLD` (default 5); aborting keeps the updated `flake.lock` and prints the revert hint

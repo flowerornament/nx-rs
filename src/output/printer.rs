@@ -6,6 +6,8 @@ use std::time::Duration;
 
 use crate::output::style::{IconSet, OutputStyle};
 
+pub(crate) const DETAIL_INDENT: &str = "  ";
+
 /// Kind of AI agent activity to display during streaming operations.
 #[derive(Debug, Clone, Copy)]
 pub enum ActivityKind {
@@ -292,7 +294,7 @@ impl LineLayout {
     const fn indent(self) -> &'static str {
         match self {
             Self::TopLevel => "",
-            Self::Detail => "  ",
+            Self::Detail => DETAIL_INDENT,
             Self::SubDetail => "    ",
         }
     }

@@ -625,8 +625,9 @@ Dry-run behavior:
   outdated checks) use shared loading scopes rather than one-off progress printers.
 - User-facing Nix updates, checks, builds, and captured activation commands use
   `internal-json`; nx renders aggregate activity progress in interactive terminals and
-  retains decoded diagnostics. `--verbose` uses `bar-with-logs`, while directly inherited
-  activation uses Nix's native `bar`.
+  retains decoded diagnostics. Aggregate progress and decoded diagnostic lines use the
+  two-space detail indent. `--verbose` uses `bar-with-logs`, while directly inherited
+  activation uses Nix's native `bar`; nx leaves both native streams byte-for-byte intact.
 - Machine-readable Nix queries and dry-run planning remain fully captured because their
   stdout/stderr is command data. `--timing` suppresses transient progress, and structured
   warnings remain visible in non-interactive runs.

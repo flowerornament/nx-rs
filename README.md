@@ -502,13 +502,15 @@ Runs `darwin-rebuild switch` for the managed repo.
 - Captured builds and `darwin-rebuild` fallback use Nix's `internal-json`
   activity protocol. In a terminal, `nx` shows one throttled live line with
   build counts, transfer progress, phases, and the active operation. Structured
-  diagnostics remain available for retry and failure handling. `--verbose`
-  uses `bar-with-logs` and streams full logs.
+  diagnostics use nx's two-space detail indent while remaining available for
+  retry and failure handling. `--verbose` uses `bar-with-logs` and streams full
+  native output unchanged.
 - If split activation would need an interactive sudo prompt and passwordless
   `sudo darwin-rebuild` is available, `nx` falls back to that path.
 - Interactive activation output passes through directly with `NIX_CONFIG`
   setting Nix's native `bar` log format, so Nix, Homebrew, and Home Manager keep
-  their normal progress behavior. Non-interactive runs and `--timing` retain
+  their normal progress behavior; nx does not indent this native byte stream.
+  Non-interactive runs and `--timing` retain
   decoded diagnostics and derive timing phases from structured Nix activities.
 - If rebuild reports a fixed-output hash mismatch, `nx rebuild` updates the
   unique clean matching hash in a tracked `.nix` file and retries. It prints the

@@ -1,18 +1,34 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Write;
+use std::num::NonZeroU16;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use console::{Term, truncate_str};
 use serde::Deserialize;
 use serde_json::value::RawValue;
-
-use crate::infra::text::truncate_with_ellipsis;
 
 const NIX_JSON_PREFIX: &str = "@nix ";
 const NIX_RECORD_LIMIT: usize = 16 * 1024;
 const RENDER_INTERVAL: Duration = Duration::from_millis(50);
 const MAX_ACTIVE_ACTIVITIES: usize = 4096;
+const PROGRESS_PREFIX: &str = "  nix: ";
+
+#[derive(Debug, Clone, Copy)]
+struct TerminalWidth(NonZeroU16);
+
+impl TerminalWidth {
+    fn stderr() -> Option<Self> {
+        let (_, columns) = Term::stderr().size_checked()?;
+        NonZeroU16::new(columns).map(Self)
+    }
+
+    const fn usable_columns(self) -> usize {
+        // Avoid the terminal's delayed-wrap state in its final column.
+        self.0.get().saturating_sub(1) as usize
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NixOutputMode {
@@ -215,7 +231,7 @@ pub(crate) struct NixProgress {
     corrupted_paths: u64,
     untrusted_paths: u64,
     active: bool,
-    rendered_summary: Option<String>,
+    rendered_line: Option<String>,
     last_rendered_at: Option<Instant>,
 }
 
@@ -379,22 +395,50 @@ impl NixProgress {
 
     pub(crate) fn render(&mut self, stderr: &mut impl Write) -> anyhow::Result<()> {
         let now = Instant::now();
-        if self
-            .last_rendered_at
-            .is_some_and(|last| now.duration_since(last) < RENDER_INTERVAL)
-        {
+        if !self.render_due(now) {
             return Ok(());
         }
-        let summary = self.summary();
+        let Some(width) = TerminalWidth::stderr() else {
+            return self.clear(stderr);
+        };
+        self.render_at(stderr, width, now)
+    }
+
+    #[cfg(test)]
+    fn render_with_width(
+        &mut self,
+        stderr: &mut impl Write,
+        width: TerminalWidth,
+    ) -> anyhow::Result<()> {
+        let now = Instant::now();
+        if !self.render_due(now) {
+            return Ok(());
+        }
+        self.render_at(stderr, width, now)
+    }
+
+    fn render_due(&self, now: Instant) -> bool {
+        self.last_rendered_at
+            .is_none_or(|last| now.duration_since(last) >= RENDER_INTERVAL)
+    }
+
+    fn render_at(
+        &mut self,
+        stderr: &mut impl Write,
+        width: TerminalWidth,
+        now: Instant,
+    ) -> anyhow::Result<()> {
+        let line = progress_line(&self.summary(), width);
         self.last_rendered_at = Some(now);
-        if self.rendered_summary.as_deref() == Some(summary.as_str()) {
+        if self.rendered_line.as_deref() == Some(line.as_str()) {
             return Ok(());
         }
 
         self.active = true;
-        self.rendered_summary = Some(summary.clone());
-        write!(stderr, "\r\x1b[2K  nix: {summary}").context("writing child stderr")?;
-        stderr.flush().context("flushing child stderr")
+        write!(stderr, "\r\x1b[2K{line}").context("writing child stderr")?;
+        stderr.flush().context("flushing child stderr")?;
+        self.rendered_line = Some(line);
+        Ok(())
     }
 
     pub(crate) fn clear(&mut self, stderr: &mut impl Write) -> anyhow::Result<()> {
@@ -402,7 +446,7 @@ impl NixProgress {
             write!(stderr, "\r\x1b[2K").context("clearing child stderr progress")?;
             stderr.flush().context("flushing child stderr")?;
             self.active = false;
-            self.rendered_summary = None;
+            self.rendered_line = None;
             self.last_rendered_at = None;
         }
         Ok(())
@@ -461,7 +505,7 @@ impl NixProgress {
         if parts.is_empty() {
             "preparing build plan".to_string()
         } else {
-            truncate_with_ellipsis(&parts.join(", "), 120)
+            parts.join(", ")
         }
     }
 
@@ -510,6 +554,13 @@ impl NixProgress {
         }
         (!label.is_empty()).then_some(label)
     }
+}
+
+fn progress_line(summary: &str, width: TerminalWidth) -> String {
+    let line = format!("{PROGRESS_PREFIX}{summary}");
+    let columns = width.usable_columns();
+    let tail = if columns >= 3 { "..." } else { "" };
+    truncate_str(&line, columns, tail).into_owned()
 }
 
 pub(crate) enum NixRecord {
@@ -738,6 +789,10 @@ fn short_source(source: &str) -> String {
 mod tests {
     use super::*;
 
+    fn width(columns: u16) -> TerminalWidth {
+        TerminalWidth(NonZeroU16::new(columns).expect("test terminal width must be nonzero"))
+    }
+
     fn observe(progress: &mut NixProgress, line: &str) -> NixRecord {
         progress.observe_record(line.as_bytes())
     }
@@ -858,13 +913,40 @@ mod tests {
         );
         let mut stderr = Vec::new();
 
-        progress.render(&mut stderr).expect("render progress");
+        progress
+            .render_with_width(&mut stderr, width(80))
+            .expect("render progress");
         progress.clear(&mut stderr).expect("clear progress");
 
         assert_eq!(
             String::from_utf8(stderr).expect("terminal output is utf-8"),
             "\r\x1b[2K  nix: building derivations\r\x1b[2K"
         );
+    }
+
+    #[test]
+    fn renderer_bounds_progress_to_one_terminal_row() {
+        let line = progress_line(
+            "35/51 built, 2/155/162 copied, 1.0/1.5 GiB copied, downloading cache.nixos.org/nar",
+            width(40),
+        );
+
+        assert_eq!(console::measure_text_width(&line), 39);
+        assert!(line.starts_with(PROGRESS_PREFIX));
+        assert!(line.ends_with("..."));
+    }
+
+    #[test]
+    fn renderer_uses_display_width_for_unicode() {
+        let line = progress_line("building 雪雪雪雪", width(20));
+
+        assert!(console::measure_text_width(&line) <= 19);
+    }
+
+    #[test]
+    fn renderer_handles_tiny_terminal_widths() {
+        assert_eq!(progress_line("building", width(1)), "");
+        assert_eq!(progress_line("building", width(2)), " ");
     }
 
     #[test]

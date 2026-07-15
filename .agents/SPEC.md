@@ -503,7 +503,7 @@ Experimental split Darwin rebuild:
 - Applies only to Darwin manifests using the default `darwin-rebuild` command and no passthrough args.
 - Falls back to the default rebuild path when the split path cannot confidently preserve behavior.
 - Runs `nix build --no-link --print-out-paths --log-format internal-json <repo_root>#darwinConfigurations.<host>.system` under a raised file descriptor limit.
-- Captured Nix commands use Nix's structured activity protocol. In interactive terminals, nx aggregates build counts, copy/download progress, phases, and the active operation into one throttled live status line. Nix message records are decoded as diagnostics and kept in a bounded tail for retry and failure detection. `--verbose` streams Nix stderr with `bar-with-logs`.
+- Captured Nix commands use Nix's structured activity protocol. In interactive terminals, nx aggregates build counts, copy/download progress, phases, and the active operation into one throttled live status line bounded to the current terminal width. Nix message records are decoded as diagnostics and kept in a bounded tail for retry and failure detection. `--verbose` streams Nix stderr with `bar-with-logs`.
 - Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get LocalHostName`, then `hostname -s`.
 - If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
 - Otherwise runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.

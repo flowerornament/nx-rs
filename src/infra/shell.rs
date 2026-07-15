@@ -725,6 +725,58 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "interactive terminal demo; run with `just demo-nix-output`"]
+    fn visual_nix_output_contract() {
+        assert!(
+            terminal_stdio_available(),
+            "run `just demo-nix-output` directly in a terminal"
+        );
+
+        eprintln!("\n> Structured Nix progress (one transient row)");
+        let script = r#"
+emit() {
+    printf '%s\n' "$1" >&2
+    sleep 0.12
+}
+
+printf '{"storePaths":["/nix/store/demo-system"]}\n'
+emit '@nix {"action":"start","id":1,"level":0,"parent":0,"text":"","type":104}'
+emit '@nix {"action":"result","fields":[12,51,3,0],"id":1,"type":105}'
+emit '@nix {"action":"start","fields":["https://cache.nixos.org/nar/long-demo-path"],"id":2,"level":0,"parent":0,"text":"","type":101}'
+emit '@nix {"action":"result","fields":[67108864,536870912,0,0],"id":2,"type":105}'
+emit '@nix {"action":"msg","level":1,"msg":"warning: demo diagnostic interrupts the live row"}'
+emit '@nix {"action":"result","fields":[36,51,2,0],"id":1,"type":105}'
+emit '@nix {"action":"result","fields":[402653184,536870912,0,0],"id":2,"type":105}'
+emit '@nix {"action":"result","fields":[51,51,0,0],"id":1,"type":105}'
+"#;
+        let output = run_stdout_collecting_nix_stderr_with_env("sh", &["-c", script], None, None)
+            .expect("visual structured-output demo should run");
+
+        assert_eq!(output.code, 0);
+        assert_eq!(
+            output.stdout,
+            "{\"storePaths\":[\"/nix/store/demo-system\"]}\n"
+        );
+        assert_eq!(
+            output.stderr,
+            "warning: demo diagnostic interrupts the live row\n"
+        );
+        eprintln!("  captured stdout: {}", output.stdout.trim());
+
+        eprintln!("\n> Shared two-space stream indentation");
+        let printer = Printer::new(OutputStyle::from_flags(true, false, false));
+        for script in [
+            "printf 'stdout payload\\n'",
+            "printf 'stderr payload\\n' >&2",
+        ] {
+            let code = run_indented_command("sh", &["-c", script], None, &printer, "  ")
+                .expect("visual passthrough demo should run");
+            assert_eq!(code, 0);
+        }
+        eprintln!("\n  demo complete: no progress frames should remain above");
+    }
+
+    #[test]
     fn suppressed_progress_replays_success_diagnostics_after_completion() {
         let mut progress = NixProgress::default();
         let mut diagnostics = Vec::new();

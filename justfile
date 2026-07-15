@@ -104,6 +104,13 @@ ci:
 ci-record:
     @scripts/quality-gate.sh record
 
+# Visually exercise structured Nix progress and indented subprocess output.
+[group('develop')]
+demo-nix-output:
+    @cargo test --test system_upgrade upgrade_split_rebuild_uses_structured_nix_output -- --exact
+    @cargo test --test system_commands split_darwin_rebuild_runs_explicit_phases -- --exact
+    @cargo test --lib infra::shell::tests::visual_nix_output_contract -- --exact --ignored --nocapture --test-threads=1
+
 # Update release versions and scaffold changelog.
 [group('release')]
 [arg('version', pattern='[0-9]+\.[0-9]+\.[0-9]+', help='Semver release, for example 1.5.25')]

@@ -135,7 +135,7 @@ fn split_darwin_json_parser_rejects_missing_output() {
 fn split_nix_build_raises_file_descriptor_limit() {
     let (program, args) = split_nix_build_command_with_log_format(
         "git+file:///repo#darwinConfigurations.host.system",
-        SplitBuildOutputMode::Structured.log_format(),
+        NixOutputMode::Structured.log_format().as_arg(),
     );
 
     assert_eq!(
@@ -174,10 +174,13 @@ fn split_nix_build_can_request_native_log_format() {
 #[test]
 fn split_build_log_format_uses_structured_output_by_default() {
     assert_eq!(
-        SplitBuildOutputMode::Structured.log_format(),
+        NixOutputMode::Structured.log_format().as_arg(),
         "internal-json"
     );
-    assert_eq!(SplitBuildOutputMode::Verbose.log_format(), "bar-with-logs");
+    assert_eq!(
+        NixOutputMode::Verbose.log_format().as_arg(),
+        "bar-with-logs"
+    );
 }
 
 #[test]

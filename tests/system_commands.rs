@@ -45,7 +45,13 @@ const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
     "hosts",
 ];
 const REBUILD_TIMING_HEAD_ARGS: &[&str] = &["rev-parse", "HEAD"];
-const REBUILD_FLAKE_ARGS: &[&str] = &["flake", "check", REPO_ROOT_TOKEN];
+const REBUILD_FLAKE_ARGS: &[&str] = &[
+    "--log-format",
+    "internal-json",
+    "flake",
+    "check",
+    REPO_ROOT_TOKEN,
+];
 const CACHE_PREFLIGHT_HOST_ARGS: &[&str] = &["--get", "LocalHostName"];
 const CACHE_PREFLIGHT_BUILD_ARGS: &[&str] = &[
     "build",
@@ -72,13 +78,20 @@ const NIX_CONFIG_INTERNAL_JSON_ARG: &str = "NIX_CONFIG=log-format = internal-jso
 const UPDATE_SUCCESS_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
     "nix",
     EXPECTED_CWD_REPO_ROOT,
-    &["flake", "update", "--commit-lock-file", "foo"],
+    &[
+        "--log-format",
+        "internal-json",
+        "flake",
+        "update",
+        "--commit-lock-file",
+        "foo",
+    ],
 )];
 
 const UPDATE_FAILURE_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
     "nix",
     EXPECTED_CWD_REPO_ROOT,
-    &["flake", "update"],
+    &["--log-format", "internal-json", "flake", "update"],
 )];
 
 const TEST_SUCCESS_CALLS: &[ExpectedCall] = &[ExpectedCall::new(

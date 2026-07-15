@@ -471,7 +471,7 @@ Network behavior:
 
 ## 10.2 `update`
 
-- Runs `nix flake update` via shared streaming function.
+- Runs `nix flake update` with `--log-format internal-json` and the shared structured Nix progress renderer.
 - Accepts passthrough args.
 - Success message instructs `nx rebuild` or `nx upgrade`.
 
@@ -623,6 +623,15 @@ Dry-run behavior:
   cleanup, and top-level layout remain centralized.
 - Captured package/source lookups (`search`, `info`, install resolution, and Homebrew
   outdated checks) use shared loading scopes rather than one-off progress printers.
+- User-facing Nix updates, checks, builds, and captured activation commands use
+  `internal-json`; nx renders aggregate activity progress in interactive terminals and
+  retains decoded diagnostics. `--verbose` uses `bar-with-logs`, while directly inherited
+  activation uses Nix's native `bar`.
+- Machine-readable Nix queries and dry-run planning remain fully captured because their
+  stdout/stderr is command data. `--timing` suppresses transient progress, and structured
+  warnings remain visible in non-interactive runs.
+- Store and generation maintenance commands stream their human result lines because the
+  deleted paths and generations are the user-facing payload, not fetch/build progress.
 - Dry-run install output includes `Dry Run`.
 - Dry-run remove output includes `Would remove`.
 - Rebuild flow invokes streaming command path when preflight and flake-check pass.

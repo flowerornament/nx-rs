@@ -3,7 +3,7 @@
 ## Unreleased
 
 - adds a binary cache preflight to `nx upgrade` and `nx rebuild --preflight`: dry-runs the system build, lists derivations that would build from source, and prompts before rebuilding when they exceed `NX_CACHE_MISS_THRESHOLD` (default 5); aborting keeps the updated `flake.lock` and prints the revert hint
-- renders captured `nx upgrade` and `nx rebuild` work from Nix's `internal-json` activity protocol, with aggregate build and transfer progress, active phases, decoded diagnostics, and throttled in-place updates that avoid Git carriage-return frame floods; `--verbose` keeps native full logs
+- renders user-facing Nix updates, checks, builds, and captured activation from the `internal-json` activity protocol, with aggregate progress, active phases, decoded diagnostics, visible non-interactive warnings, and throttled in-place updates that avoid Git carriage-return frame floods; `--verbose` keeps native full logs
 
 ## v1.5.28 - 2026-06-20
 

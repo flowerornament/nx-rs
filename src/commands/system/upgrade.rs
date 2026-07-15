@@ -7,7 +7,7 @@ use crate::domain::upgrade::{
     InputChange, build_flake_update_args, diff_locks, github_owner_repo, load_flake_lock, short_rev,
 };
 use crate::infra::ai_engine::DEFAULT_CODEX_MODEL;
-use crate::infra::nix_output::NixLogFormat;
+use crate::infra::nix_output::NixOutputMode;
 use crate::infra::shell::{
     first_nonempty_output, run_captured_command, run_captured_command_with_env,
     run_indented_command, run_stdout_collecting_nix_stderr_with_env,
@@ -15,6 +15,7 @@ use crate::infra::shell::{
 };
 use crate::output::printer::Printer;
 
+use crate::infra::text::truncate_with_ellipsis;
 use crate::infra::timing::TimingCommand;
 
 use super::cache_preflight::{CachePreflightMode, CachePreflightOutcome, check_cache_preflight};
@@ -387,26 +388,11 @@ pub(super) fn parse_ai_summary_output(
     }
 
     let joined = lines.join(" ");
-    Some(truncate_summary(joined.trim(), max_chars))
+    Some(truncate_with_ellipsis(joined.trim(), max_chars))
 }
 
 fn trim_summary_prefix(line: &str) -> &str {
     line.trim_start_matches(['-', '*', ' ']).trim()
-}
-
-fn truncate_summary(text: &str, max_chars: usize) -> String {
-    let chars = text.chars().collect::<Vec<_>>();
-    if chars.len() <= max_chars {
-        return text.to_string();
-    }
-
-    let keep = max_chars.saturating_sub(3);
-    let mut shortened = chars.into_iter().take(keep).collect::<String>();
-    while shortened.ends_with(' ') {
-        shortened.pop();
-    }
-    shortened.push_str("...");
-    shortened
 }
 
 fn first_commit_line(message: &str) -> &str {
@@ -875,16 +861,7 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext, nix_env: &NixCommandE
 }
 
 pub(super) fn nix_update_output_args(base_args: &[String], verbose: bool) -> Vec<String> {
-    let format = if verbose {
-        NixLogFormat::BarWithLogs
-    } else {
-        NixLogFormat::InternalJson
-    };
-    let mut args = Vec::with_capacity(base_args.len() + 2);
-    args.push("--log-format".to_string());
-    args.push(format.as_arg().to_string());
-    args.extend(base_args.iter().cloned());
-    args
+    NixOutputMode::from_verbose(verbose).command_args(base_args)
 }
 
 fn combined_command_output(output: &crate::infra::shell::CapturedCommand) -> String {

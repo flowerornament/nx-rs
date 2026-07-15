@@ -189,9 +189,7 @@ fn is_fetch_section_header(line: &str) -> bool {
 
 /// Strip `/nix/store/<hash>-` prefix and `.drv` suffix from a store path.
 pub(super) fn derivation_display_name(store_path: &str) -> String {
-    let stripped = store_path.strip_prefix("/nix/store/").unwrap_or(store_path);
-    let name = stripped.split_once('-').map_or(stripped, |(_, name)| name);
-    name.strip_suffix(".drv").unwrap_or(name).to_string()
+    crate::infra::nix_output::store_path_display_name(store_path)
 }
 
 fn cache_miss_threshold() -> usize {

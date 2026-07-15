@@ -478,7 +478,8 @@ confirmation prompt.
 
 #### `update`
 
-Runs `nix flake update`. Additional args after `--` pass through to the
+Runs `nix flake update` with the same structured, in-place Nix progress used by
+`upgrade` and `rebuild`. Additional args after `--` pass through to the
 underlying flake update invocation.
 
 ---

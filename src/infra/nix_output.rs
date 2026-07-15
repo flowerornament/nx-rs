@@ -1,14 +1,55 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Write;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::value::RawValue;
+
+use crate::infra::text::truncate_with_ellipsis;
 
 const NIX_JSON_PREFIX: &str = "@nix ";
 const NIX_RECORD_LIMIT: usize = 16 * 1024;
 const RENDER_INTERVAL: Duration = Duration::from_millis(50);
+const MAX_ACTIVE_ACTIVITIES: usize = 4096;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NixOutputMode {
+    Structured,
+    Verbose,
+}
+
+impl NixOutputMode {
+    pub(crate) const fn from_verbose(verbose: bool) -> Self {
+        if verbose {
+            Self::Verbose
+        } else {
+            Self::Structured
+        }
+    }
+
+    pub(crate) const fn log_format(self) -> NixLogFormat {
+        match self {
+            Self::Structured => NixLogFormat::InternalJson,
+            Self::Verbose => NixLogFormat::BarWithLogs,
+        }
+    }
+
+    pub(crate) const fn is_verbose(self) -> bool {
+        matches!(self, Self::Verbose)
+    }
+
+    pub(crate) fn command_args(self, base_args: &[String]) -> Vec<String> {
+        let mut args = Vec::with_capacity(base_args.len() + 2);
+        args.extend([
+            "--log-format".to_string(),
+            self.log_format().as_arg().to_string(),
+        ]);
+        args.extend(base_args.iter().cloned());
+        args
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NixLogFormat {
@@ -86,6 +127,24 @@ impl From<u64> for NixActivityType {
             111 => Self::BuildWaiting,
             112 => Self::FetchTree,
             _ => Self::Unknown,
+        }
+    }
+}
+
+impl NixActivityType {
+    pub(crate) const fn timing_phase(self) -> Option<&'static str> {
+        match self {
+            Self::CopyPath
+            | Self::FileTransfer
+            | Self::CopyPaths
+            | Self::Substitute
+            | Self::FetchTree => Some("fetches"),
+            Self::Realise | Self::Builds | Self::Build | Self::BuildWaiting => Some("nix-build"),
+            Self::Unknown
+            | Self::OptimiseStore
+            | Self::VerifyPaths
+            | Self::QueryPathInfo
+            | Self::PostBuildHook => None,
         }
     }
 }
@@ -172,21 +231,26 @@ impl NixProgress {
             return self.observe_json_record(json, visible);
         }
 
-        NixRecord::Diagnostic(visible.to_string())
+        NixRecord::Diagnostic(NixDiagnostic::plain(visible.to_string()))
     }
 
     fn observe_json_record(&mut self, json: &str, original: &str) -> NixRecord {
-        let Ok(record) = serde_json::from_str::<NixJsonRecord>(json) else {
-            return NixRecord::Diagnostic(original.to_string());
+        let Ok(record) = serde_json::from_str::<NixJsonRecord<'_>>(json) else {
+            return NixRecord::Diagnostic(NixDiagnostic::plain(original.to_string()));
         };
 
-        match record.action.as_str() {
+        match record.action.as_ref() {
             "start" => {
                 let Some(id) = record.id else {
                     return NixRecord::Ignored;
                 };
                 let kind = record.kind.map_or(NixActivityType::Unknown, Into::into);
-                let label = activity_label(kind, &record.text, &record.fields);
+                let label = activity_label(kind, &record.text, record.fields);
+                if self.activities.len() >= MAX_ACTIVE_ACTIVITIES
+                    && let Some(oldest) = self.activities.keys().min().copied()
+                {
+                    self.stop_activity(oldest);
+                }
                 self.activities.insert(
                     id,
                     Activity {
@@ -209,7 +273,7 @@ impl NixProgress {
             }
             "result" => {
                 if let (Some(id), Some(kind)) = (record.id, record.kind) {
-                    self.observe_result(id, kind, &record.fields);
+                    self.observe_result(id, kind, record.fields);
                 }
                 NixRecord::Progress(None)
             }
@@ -217,7 +281,9 @@ impl NixProgress {
                 if record.msg.is_empty() {
                     NixRecord::Ignored
                 } else {
-                    NixRecord::Diagnostic(record.msg)
+                    NixRecord::Diagnostic(NixDiagnostic {
+                        message: record.msg.into_owned(),
+                    })
                 }
             }
             _ => NixRecord::Ignored,
@@ -242,11 +308,12 @@ impl NixProgress {
         }
     }
 
-    fn observe_result(&mut self, id: u64, kind: u64, fields: &[Value]) {
+    fn observe_result(&mut self, id: u64, kind: u64, fields: Option<&RawValue>) {
         match NixResultType::from(kind) {
             NixResultType::FileLinked => {
+                let bytes = parse_fields::<(u64,)>(fields).map_or(0, |fields| fields.0);
                 self.files_linked = self.files_linked.saturating_add(1);
-                self.bytes_linked = self.bytes_linked.saturating_add(integer_field(fields, 0));
+                self.bytes_linked = self.bytes_linked.saturating_add(bytes);
             }
             NixResultType::UntrustedPath => {
                 self.untrusted_paths = self.untrusted_paths.saturating_add(1);
@@ -255,19 +322,24 @@ impl NixProgress {
                 self.corrupted_paths = self.corrupted_paths.saturating_add(1);
             }
             NixResultType::Progress => {
+                let Some((done, expected, running, failed)) = parse_fields(fields) else {
+                    return;
+                };
                 let Some(activity) = self.activities.get_mut(&id) else {
                     return;
                 };
                 activity.progress = Progress {
-                    done: integer_field(fields, 0),
-                    expected: integer_field(fields, 1),
-                    running: integer_field(fields, 2),
-                    failed: integer_field(fields, 3),
+                    done,
+                    expected,
+                    running,
+                    failed,
                 };
             }
             NixResultType::SetExpected => {
-                let expected_kind = NixActivityType::from(integer_field(fields, 0));
-                let expected = integer_field(fields, 1);
+                let Some((expected_kind, expected)) = parse_fields::<(u64, u64)>(fields) else {
+                    return;
+                };
+                let expected_kind = NixActivityType::from(expected_kind);
                 let Some(activity) = self.activities.get_mut(&id) else {
                     return;
                 };
@@ -282,20 +354,20 @@ impl NixProgress {
                     .saturating_add(expected);
             }
             NixResultType::SetPhase => {
-                let Some(status) = string_field(fields, 0) else {
+                let Some((status,)) = parse_fields::<(Cow<'_, str>,)>(fields) else {
                     return;
                 };
                 if let Some(activity) = self.activities.get_mut(&id) {
-                    activity.phase = Some(status.to_string());
+                    activity.phase = Some(status.into_owned());
                     self.current_activity = Some(id);
                 }
             }
             NixResultType::FetchStatus => {
-                let Some(status) = string_field(fields, 0) else {
+                let Some((status,)) = parse_fields::<(Cow<'_, str>,)>(fields) else {
                     return;
                 };
                 if let Some(activity) = self.activities.get_mut(&id) {
-                    activity.status = Some(status.to_string());
+                    activity.status = Some(status.into_owned());
                     self.current_activity = Some(id);
                 }
             }
@@ -306,10 +378,6 @@ impl NixProgress {
     }
 
     pub(crate) fn render(&mut self, stderr: &mut impl Write) -> anyhow::Result<()> {
-        let summary = self.summary();
-        if self.rendered_summary.as_deref() == Some(summary.as_str()) {
-            return Ok(());
-        }
         let now = Instant::now();
         if self
             .last_rendered_at
@@ -317,10 +385,14 @@ impl NixProgress {
         {
             return Ok(());
         }
+        let summary = self.summary();
+        self.last_rendered_at = Some(now);
+        if self.rendered_summary.as_deref() == Some(summary.as_str()) {
+            return Ok(());
+        }
 
         self.active = true;
         self.rendered_summary = Some(summary.clone());
-        self.last_rendered_at = Some(now);
         write!(stderr, "\r\x1b[2K  nix: {summary}").context("writing child stderr")?;
         stderr.flush().context("flushing child stderr")
     }
@@ -389,7 +461,7 @@ impl NixProgress {
         if parts.is_empty() {
             "preparing build plan".to_string()
         } else {
-            truncate(&parts.join(", "), 120)
+            truncate_with_ellipsis(&parts.join(", "), 120)
         }
     }
 
@@ -442,23 +514,36 @@ impl NixProgress {
 
 pub(crate) enum NixRecord {
     Progress(Option<NixActivityType>),
-    Diagnostic(String),
+    Diagnostic(NixDiagnostic),
     Ignored,
 }
 
-#[derive(Debug, Deserialize)]
-struct NixJsonRecord {
-    action: String,
+pub(crate) struct NixDiagnostic {
+    pub(crate) message: String,
+}
+
+impl NixDiagnostic {
+    fn plain(message: String) -> Self {
+        Self { message }
+    }
+}
+
+#[derive(Deserialize)]
+struct NixJsonRecord<'a> {
+    #[serde(borrow)]
+    action: Cow<'a, str>,
     #[serde(default)]
     id: Option<u64>,
     #[serde(default, rename = "type")]
     kind: Option<u64>,
-    #[serde(default)]
-    text: String,
-    #[serde(default)]
-    msg: String,
-    #[serde(default)]
-    fields: Vec<Value>,
+    #[serde(default, borrow)]
+    text: Cow<'a, str>,
+    #[serde(default, borrow)]
+    msg: Cow<'a, str>,
+    #[serde(default, rename = "level")]
+    _level: Option<u64>,
+    #[serde(default, borrow)]
+    fields: Option<&'a RawValue>,
 }
 
 pub(crate) fn feed_nix_output(
@@ -484,29 +569,54 @@ pub(crate) fn feed_nix_output(
     Ok(())
 }
 
-fn activity_label(kind: NixActivityType, text: &str, fields: &[Value]) -> Option<String> {
+fn activity_label(kind: NixActivityType, text: &str, fields: Option<&RawValue>) -> Option<String> {
     match kind {
-        NixActivityType::Build => string_field(fields, 0)
-            .map(store_path_name)
-            .map(|name| format!("building {name}")),
-        NixActivityType::Substitute => {
-            let name = string_field(fields, 0).map(store_path_name)?;
-            let source = string_field(fields, 1).unwrap_or("cache");
-            Some(format!("fetching {name} from {source}"))
+        NixActivityType::Build => {
+            let (path, machine, _, _) =
+                parse_fields::<(Cow<'_, str>, Cow<'_, str>, u64, u64)>(fields)?;
+            let mut label = format!("building {}", store_path_display_name(&path));
+            if !machine.is_empty() {
+                label.push_str(" on ");
+                label.push_str(&machine);
+            }
+            Some(label)
         }
-        NixActivityType::FileTransfer => string_field(fields, 0)
-            .map(short_source)
-            .map(|source| format!("downloading {source}")),
+        NixActivityType::Substitute => {
+            let (path, source) = parse_fields::<(Cow<'_, str>, Cow<'_, str>)>(fields)?;
+            let verb = if source.starts_with("local") {
+                "copying"
+            } else {
+                "fetching"
+            };
+            Some(format!(
+                "{verb} {} from {source}",
+                store_path_display_name(&path)
+            ))
+        }
+        NixActivityType::FileTransfer => {
+            let (source,) = parse_fields::<(Cow<'_, str>,)>(fields)?;
+            Some(format!("downloading {}", short_source(&source)))
+        }
+        NixActivityType::PostBuildHook => {
+            let (path,) = parse_fields::<(Cow<'_, str>,)>(fields)?;
+            Some(format!("post-build {}", store_path_display_name(&path)))
+        }
+        NixActivityType::QueryPathInfo => {
+            let (path, source) = parse_fields::<(Cow<'_, str>, Cow<'_, str>)>(fields)?;
+            Some(format!(
+                "querying {} on {source}",
+                store_path_display_name(&path)
+            ))
+        }
         _ => (!text.is_empty()).then(|| text.to_string()),
     }
 }
 
-fn integer_field(fields: &[Value], index: usize) -> u64 {
-    fields.get(index).and_then(Value::as_u64).unwrap_or(0)
-}
-
-fn string_field(fields: &[Value], index: usize) -> Option<&str> {
-    fields.get(index).and_then(Value::as_str)
+fn parse_fields<'a, T>(fields: Option<&'a RawValue>) -> Option<T>
+where
+    T: Deserialize<'a>,
+{
+    serde_json::from_str(fields?.get()).ok()
 }
 
 fn push_activity_summary(parts: &mut Vec<String>, progress: Progress, noun: &str) {
@@ -610,7 +720,7 @@ fn visible_record(text: &str) -> &str {
         .trim_end_matches(['\n', '\r'])
 }
 
-fn store_path_name(path: &str) -> String {
+pub(crate) fn store_path_display_name(path: &str) -> String {
     let base = path.rsplit('/').next().unwrap_or(path);
     let name = base.split_once('-').map_or(base, |(_, name)| name);
     name.strip_suffix(".drv").unwrap_or(name).to_string()
@@ -622,15 +732,6 @@ fn short_source(source: &str) -> String {
         .or_else(|| source.strip_prefix("http://"))
         .unwrap_or(source)
         .to_string()
-}
-
-fn truncate(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut out: String = text.chars().take(max_chars.saturating_sub(3)).collect();
-    out.push_str("...");
-    out
 }
 
 #[cfg(test)]
@@ -675,10 +776,10 @@ mod tests {
             r#"@nix {"action":"msg","level":0,"msg":"error: boom\nspecified: old\ngot: new"}"#,
         );
 
-        let NixRecord::Diagnostic(message) = record else {
+        let NixRecord::Diagnostic(diagnostic) = record else {
             panic!("expected diagnostic");
         };
-        assert_eq!(message, "error: boom\nspecified: old\ngot: new");
+        assert_eq!(diagnostic.message, "error: boom\nspecified: old\ngot: new");
     }
 
     #[test]
@@ -731,6 +832,21 @@ mod tests {
         let mut progress = NixProgress::default();
         let record = observe(&mut progress, "remote: Repository not found.");
         assert!(matches!(record, NixRecord::Diagnostic(_)));
+    }
+
+    #[test]
+    fn anomalous_activity_stream_remains_bounded() {
+        let mut progress = NixProgress::default();
+        for id in 0..=MAX_ACTIVE_ACTIVITIES as u64 {
+            observe(
+                &mut progress,
+                &format!(
+                    r#"@nix {{"action":"start","id":{id},"level":0,"parent":0,"text":"build","type":105}}"#
+                ),
+            );
+        }
+
+        assert_eq!(progress.activities.len(), MAX_ACTIVE_ACTIVITIES);
     }
 
     #[test]

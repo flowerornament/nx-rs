@@ -66,7 +66,18 @@ struct StreamedLine {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StderrTeeMode {
     Raw,
-    Nix,
+    Nix { render_progress: bool },
+}
+
+impl StderrTeeMode {
+    fn renders_nix_output_live(self) -> bool {
+        matches!(
+            self,
+            Self::Nix {
+                render_progress: true
+            }
+        ) && terminal_stdio_available()
+    }
 }
 
 /// Run a command and parse stdout as JSON while suppressing stderr noise.
@@ -193,16 +204,16 @@ pub fn run_stdout_collecting_nix_stderr_with_env(
     cwd: Option<&Path>,
     env: Option<CommandEnv<'_>>,
 ) -> anyhow::Result<CapturedCommand> {
-    Ok(
-        run_stdout_collecting_stderr_with_env_profiled(
-            program,
-            args,
-            cwd,
-            env,
-            StderrTeeMode::Nix,
-        )?
-        .0,
-    )
+    Ok(run_stdout_collecting_stderr_with_env_profiled(
+        program,
+        args,
+        cwd,
+        env,
+        StderrTeeMode::Nix {
+            render_progress: true,
+        },
+    )?
+    .0)
 }
 
 pub fn run_stdout_collecting_nix_stderr_with_env_profiled(
@@ -210,8 +221,15 @@ pub fn run_stdout_collecting_nix_stderr_with_env_profiled(
     args: &[&str],
     cwd: Option<&Path>,
     env: Option<CommandEnv<'_>>,
+    render_progress: bool,
 ) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)> {
-    run_stdout_collecting_stderr_with_env_profiled(program, args, cwd, env, StderrTeeMode::Nix)
+    run_stdout_collecting_stderr_with_env_profiled(
+        program,
+        args,
+        cwd,
+        env,
+        StderrTeeMode::Nix { render_progress },
+    )
 }
 
 fn run_stdout_collecting_stderr_with_env(
@@ -252,6 +270,12 @@ fn run_stdout_collecting_stderr_with_env_profiled(
     let status = child.wait().context("waiting for child process")?;
     let stdout = String::from_utf8_lossy(&join_collector("stdout", stdout_handle)?).into_owned();
     let stderr = join_stderr_collector(stderr_handle)?;
+    replay_success_diagnostics(
+        status.success(),
+        stderr_mode,
+        &stderr.bytes,
+        &mut io::stderr(),
+    )?;
 
     Ok((
         CapturedCommand {
@@ -261,6 +285,27 @@ fn run_stdout_collecting_stderr_with_env_profiled(
         },
         stderr.phases,
     ))
+}
+
+fn replay_success_diagnostics(
+    success: bool,
+    mode: StderrTeeMode,
+    diagnostics: &[u8],
+    stderr: &mut impl Write,
+) -> anyhow::Result<()> {
+    let replay = success
+        && matches!(mode, StderrTeeMode::Nix { .. })
+        && !mode.renders_nix_output_live()
+        && !diagnostics.is_empty();
+    if replay {
+        stderr
+            .write_all(diagnostics)
+            .context("writing captured Nix diagnostics")?;
+        stderr
+            .flush()
+            .context("flushing captured Nix diagnostics")?;
+    }
+    Ok(())
 }
 
 fn run_streaming_command_with_env(
@@ -367,7 +412,7 @@ fn collect_stderr_stream(
 ) -> anyhow::Result<StderrCapture> {
     match mode {
         StderrTeeMode::Raw => tee_stderr_stream(stream),
-        StderrTeeMode::Nix => tee_nix_stderr_stream(stream),
+        StderrTeeMode::Nix { render_progress } => tee_nix_stderr_stream(stream, render_progress),
     }
 }
 
@@ -375,18 +420,15 @@ fn tee_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Result<S
     let mut bytes = Vec::new();
     let mut buf = [0u8; 8192];
     let mut stderr = io::stderr().lock();
-    let should_tee = terminal_stdio_available();
     loop {
         let count = stream.read(&mut buf).context("reading stderr stream")?;
         if count == 0 {
             break;
         }
-        if should_tee {
-            stderr
-                .write_all(&buf[..count])
-                .context("writing child stderr")?;
-            stderr.flush().context("flushing child stderr")?;
-        }
+        stderr
+            .write_all(&buf[..count])
+            .context("writing child stderr")?;
+        stderr.flush().context("flushing child stderr")?;
         append_tail(&mut bytes, &buf[..count], STDERR_TEE_CAPTURE_LIMIT);
     }
     Ok(StderrCapture {
@@ -395,12 +437,15 @@ fn tee_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Result<S
     })
 }
 
-fn tee_nix_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Result<StderrCapture> {
+fn tee_nix_stderr_stream(
+    mut stream: impl Read + Send + 'static,
+    render_progress: bool,
+) -> anyhow::Result<StderrCapture> {
     let mut diagnostics = Vec::new();
     let mut buf = [0u8; 8192];
     let mut pending = Vec::new();
     let mut stderr = io::stderr().lock();
-    let should_tee = terminal_stdio_available();
+    let should_render_progress = render_progress && terminal_stdio_available();
     let mut progress = NixProgress::default();
     let mut profiler = ActivationPhaseProfiler::new();
 
@@ -415,7 +460,8 @@ fn tee_nix_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Resu
                 &mut progress,
                 &mut diagnostics,
                 &mut profiler,
-                should_tee.then_some(&mut stderr),
+                &mut stderr,
+                should_render_progress,
             )
         })?;
     }
@@ -426,10 +472,11 @@ fn tee_nix_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Resu
             &mut progress,
             &mut diagnostics,
             &mut profiler,
-            should_tee.then_some(&mut stderr),
+            &mut stderr,
+            should_render_progress,
         )?;
     }
-    if should_tee {
+    if should_render_progress {
         progress.clear(&mut stderr)?;
     }
     Ok(StderrCapture {
@@ -443,26 +490,31 @@ fn handle_nix_record(
     progress: &mut NixProgress,
     diagnostics: &mut Vec<u8>,
     profiler: &mut ActivationPhaseProfiler,
-    stderr: Option<&mut impl Write>,
+    stderr: &mut impl Write,
+    render_progress: bool,
 ) -> anyhow::Result<()> {
     match record {
         NixRecord::Progress(activity) => {
             if let Some(activity) = activity {
                 profiler.observe_nix_activity(activity);
             }
-            if let Some(stderr) = stderr {
+            if render_progress {
                 progress.render(stderr)?;
             }
         }
-        NixRecord::Diagnostic(message) => {
-            for line in message.lines() {
+        NixRecord::Diagnostic(diagnostic) => {
+            for line in diagnostic.message.lines() {
                 profiler.observe_stderr_line(line);
             }
-            append_tail(diagnostics, message.as_bytes(), STDERR_TEE_CAPTURE_LIMIT);
+            append_tail(
+                diagnostics,
+                diagnostic.message.as_bytes(),
+                STDERR_TEE_CAPTURE_LIMIT,
+            );
             append_tail(diagnostics, b"\n", STDERR_TEE_CAPTURE_LIMIT);
-            if let Some(stderr) = stderr {
+            if render_progress {
                 progress.clear(stderr)?;
-                writeln!(stderr, "{message}").context("writing child stderr")?;
+                writeln!(stderr, "{}", diagnostic.message).context("writing child stderr")?;
                 stderr.flush().context("flushing child stderr")?;
             }
         }
@@ -661,15 +713,59 @@ mod tests {
     fn run_stdout_collecting_nix_stderr_keeps_diagnostic_tail() {
         let args = [
             "-c",
-            "printf 'json\\n'; printf '%s\\n' '@nix {\"action\":\"start\",\"id\":1,\"level\":0,\"parent\":0,\"text\":\"\",\"type\":104}' '@nix {\"action\":\"result\",\"fields\":[1,2,1,0],\"id\":1,\"type\":105}' '@nix {\"action\":\"msg\",\"level\":0,\"msg\":\"error: Cannot build\"}' >&2",
+            "printf 'json\\n'; printf '%s\\n' '@nix {\"action\":\"start\",\"id\":1,\"level\":0,\"parent\":0,\"text\":\"\",\"type\":104}' '@nix {\"action\":\"result\",\"fields\":[1,2,1,0],\"id\":1,\"type\":105}' '@nix {\"action\":\"msg\",\"level\":0,\"msg\":\"error: Cannot build\"}' >&2; exit 1",
         ];
 
         let output = run_stdout_collecting_nix_stderr_with_env("sh", &args, None, None)
             .expect("shell command should run");
 
-        assert_eq!(output.code, 0);
+        assert_eq!(output.code, 1);
         assert_eq!(output.stdout, "json\n");
         assert_eq!(output.stderr, "error: Cannot build\n");
+    }
+
+    #[test]
+    fn suppressed_progress_replays_success_diagnostics_after_completion() {
+        let mut progress = NixProgress::default();
+        let mut diagnostics = Vec::new();
+        let mut profiler = ActivationPhaseProfiler::new();
+        let mut stderr = Vec::new();
+
+        let progress_record = progress.observe_record(
+            br#"@nix {"action":"start","id":1,"level":0,"parent":0,"text":"building","type":104}"#,
+        );
+        handle_nix_record(
+            progress_record,
+            &mut progress,
+            &mut diagnostics,
+            &mut profiler,
+            &mut stderr,
+            false,
+        )
+        .expect("handle progress");
+        let warning_record = progress
+            .observe_record(br#"@nix {"action":"msg","level":1,"msg":"warning: check this"}"#);
+        handle_nix_record(
+            warning_record,
+            &mut progress,
+            &mut diagnostics,
+            &mut profiler,
+            &mut stderr,
+            false,
+        )
+        .expect("handle warning");
+
+        assert!(stderr.is_empty());
+        replay_success_diagnostics(
+            true,
+            StderrTeeMode::Nix {
+                render_progress: false,
+            },
+            &diagnostics,
+            &mut stderr,
+        )
+        .expect("replay diagnostics");
+        assert_eq!(stderr, b"warning: check this\n");
     }
 
     #[test]

@@ -14,4 +14,5 @@ pub mod self_refresh;
 pub mod shell;
 pub mod shell_history;
 pub mod sources;
+pub mod text;
 pub mod timing;

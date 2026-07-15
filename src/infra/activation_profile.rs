@@ -35,21 +35,8 @@ impl ActivationPhaseProfiler {
     }
 
     pub fn observe_nix_activity(&mut self, kind: NixActivityType) {
-        let name = match kind {
-            NixActivityType::CopyPath
-            | NixActivityType::FileTransfer
-            | NixActivityType::CopyPaths
-            | NixActivityType::Substitute
-            | NixActivityType::FetchTree => "fetches",
-            NixActivityType::Realise
-            | NixActivityType::Builds
-            | NixActivityType::Build
-            | NixActivityType::BuildWaiting => "nix-build",
-            NixActivityType::Unknown
-            | NixActivityType::OptimiseStore
-            | NixActivityType::VerifyPaths
-            | NixActivityType::QueryPathInfo
-            | NixActivityType::PostBuildHook => return,
+        let Some(name) = kind.timing_phase() else {
+            return;
         };
         self.open_phase(name.to_string(), Instant::now());
     }

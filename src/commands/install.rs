@@ -27,6 +27,7 @@ use crate::infra::flake_input::{FlakeInputEdit, add_flake_input};
 use crate::infra::package_query::{PackageQueryReport, query_package, query_packages};
 use crate::infra::shell::git_diff;
 use crate::infra::sources::check_nix_available;
+use crate::infra::text::truncate_with_ellipsis as truncate_text;
 use crate::infra::timing::TimingCommand;
 use crate::output::printer::Printer;
 
@@ -1016,14 +1017,6 @@ fn format_source_display(source: PackageSource, attr: Option<&str>) -> String {
         PackageSource::Cask => "Homebrew cask".to_string(),
         PackageSource::Mas => "Mac App Store".to_string(),
     }
-}
-
-fn truncate_text(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let take = max_chars.saturating_sub(3);
-    format!("{}...", text.chars().take(take).collect::<String>())
 }
 
 fn build_simulated_preview_line(

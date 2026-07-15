@@ -54,7 +54,13 @@ const CACHE_PREFLIGHT_BUILD_ARGS: &[&str] = &[
     "<REPO_ROOT>#darwinConfigurations.test-host.system",
     "--dry-run",
 ];
-const REBUILD_FLAKE_ARGS: &[&str] = &["flake", "check", REPO_ROOT_TOKEN];
+const REBUILD_FLAKE_ARGS: &[&str] = &[
+    "--log-format",
+    "internal-json",
+    "flake",
+    "check",
+    REPO_ROOT_TOKEN,
+];
 const SUDO_SET_HOME_ARG: &str = "-H";
 const ROOT_ENV_PROGRAM: &str = "/usr/bin/env";
 const ROOT_HOME_ENV_ARG: &str = "HOME=/var/root";

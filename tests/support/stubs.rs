@@ -52,6 +52,7 @@ set -eu
 program="$(basename "$0")"
 log_path="${NX_SYSTEM_IT_LOG:?NX_SYSTEM_IT_LOG must be set}"
 mode="${NX_SYSTEM_IT_MODE:-success}"
+output_demo="${NX_OUTPUT_DEMO:-0}"
 
 assert_root_nix_env() {
   if [ "${HOME:-}" != "/var/root" ]; then
@@ -148,7 +149,13 @@ case "$program" in
       elif [ "$mode" = "upgrade_flake_changed" ] || [ "$mode" = "upgrade_prefetch_cache_corruption" ] || [ "$mode" = "upgrade_hash_repair" ]; then
         printf '%s' "${NX_SYSTEM_IT_UPGRADE_NEW_LOCK:?NX_SYSTEM_IT_UPGRADE_NEW_LOCK must be set}" > flake.lock
       fi
-      echo "stub nix flake command ok"
+      if [ "$output_demo" = "1" ]; then
+        echo '@nix {"action":"start","id":70,"level":0,"parent":0,"text":"fetching updated flake inputs","type":112}' >&2
+        sleep 0.18
+        echo '@nix {"action":"stop","id":70}' >&2
+      else
+        echo "stub nix flake command ok"
+      fi
       exit 0
     fi
 
@@ -170,7 +177,13 @@ case "$program" in
         echo "stub nix flake check failed" >&2
         exit 1
       fi
-      echo "stub nix flake check ok"
+      if [ "$output_demo" = "1" ]; then
+        echo '@nix {"action":"start","id":71,"level":0,"parent":0,"text":"evaluating flake checks","type":104}' >&2
+        sleep 0.18
+        echo '@nix {"action":"stop","id":71}' >&2
+      else
+        echo "stub nix flake check ok"
+      fi
       exit 0
     fi
 
@@ -218,8 +231,23 @@ case "$program" in
         echo "not-json"
         exit 0
       fi
-      echo '@nix {"action":"start","id":1,"level":0,"parent":0,"text":"copying paths","type":103}' >&2
-      echo '@nix {"action":"start","id":2,"level":0,"parent":0,"text":"building derivations","type":104}' >&2
+      if [ "$output_demo" = "1" ]; then
+        emit() {
+          printf '%s\n' "$1" >&2
+          sleep 0.12
+        }
+        emit '@nix {"action":"start","id":1,"level":0,"parent":0,"text":"","type":104}'
+        emit '@nix {"action":"result","fields":[12,51,3,0],"id":1,"type":105}'
+        emit '@nix {"action":"start","fields":["https://cache.nixos.org/nar/long-demo-path"],"id":2,"level":0,"parent":0,"text":"","type":101}'
+        emit '@nix {"action":"result","fields":[67108864,536870912,0,0],"id":2,"type":105}'
+        emit '@nix {"action":"msg","level":1,"msg":"warning: demo diagnostic interrupts progress\ncontinuation remains aligned"}'
+        emit '@nix {"action":"result","fields":[36,51,2,0],"id":1,"type":105}'
+        emit '@nix {"action":"result","fields":[402653184,536870912,0,0],"id":2,"type":105}'
+        emit '@nix {"action":"result","fields":[51,51,0,0],"id":1,"type":105}'
+      else
+        echo '@nix {"action":"start","id":1,"level":0,"parent":0,"text":"copying paths","type":103}' >&2
+        echo '@nix {"action":"start","id":2,"level":0,"parent":0,"text":"building derivations","type":104}' >&2
+      fi
       output="${NX_SYSTEM_IT_DARWIN_BUILD_OUTPUT:-/nix/store/new-system}"
       printf '%s\n' "$output"
       exit 0
@@ -398,8 +426,12 @@ case "$program" in
           echo "stub activate failed" >&2
           exit 1
         fi
-        echo '@nix {"action":"start","id":1,"level":0,"parent":0,"text":"copying paths","type":103}' >&2
-        echo '@nix {"action":"start","id":2,"level":0,"parent":0,"text":"building derivations","type":104}' >&2
+        if [ "$output_demo" = "1" ]; then
+          printf 'copying paths...\rbuilding derivations...\ractivation dependencies ready\n' >&2
+        else
+          echo '@nix {"action":"start","id":1,"level":0,"parent":0,"text":"copying paths","type":103}' >&2
+          echo '@nix {"action":"start","id":2,"level":0,"parent":0,"text":"building derivations","type":104}' >&2
+        fi
         echo "setting up /etc..." >&2
         echo "Homebrew bundle..." >&2
         echo "Activating home-manager configuration for test" >&2

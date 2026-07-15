@@ -394,6 +394,9 @@ impl NixProgress {
     }
 
     pub(crate) fn render(&mut self, stderr: &mut impl Write) -> anyhow::Result<()> {
+        if self.activities.is_empty() {
+            return self.clear(stderr);
+        }
         let now = Instant::now();
         if !self.render_due(now) {
             return Ok(());
@@ -922,6 +925,26 @@ mod tests {
             String::from_utf8(stderr).expect("terminal output is utf-8"),
             "\r\x1b[2K  nix: building derivations\r\x1b[2K"
         );
+    }
+
+    #[test]
+    fn renderer_clears_when_the_final_activity_stops() {
+        let mut progress = NixProgress::default();
+        observe(
+            &mut progress,
+            r#"@nix {"action":"start","id":1,"level":0,"parent":0,"text":"building","type":104}"#,
+        );
+        let mut stderr = Vec::new();
+        progress
+            .render_with_width(&mut stderr, width(80))
+            .expect("render progress");
+
+        let record = observe(&mut progress, r#"@nix {"action":"stop","id":1}"#);
+        assert!(matches!(record, NixRecord::Progress(None)));
+        progress.render(&mut stderr).expect("clear progress");
+
+        assert!(stderr.ends_with(b"\r\x1b[2K"));
+        assert!(!progress.active);
     }
 
     #[test]

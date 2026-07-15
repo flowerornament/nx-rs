@@ -646,6 +646,16 @@ fn system_command_flows() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+#[ignore = "support for `just demo-nix-output`"]
+fn install_output_demo_stubs() -> Result<(), Box<dyn Error>> {
+    let destination = env::var_os("NX_OUTPUT_DEMO_STUB_DIR")
+        .ok_or("NX_OUTPUT_DEMO_STUB_DIR must name the destination")?;
+    fs::create_dir_all(&destination)?;
+    install_stubs(Path::new(&destination))?;
+    Ok(())
+}
+
+#[test]
 fn rebuild_hash_mismatch_repairs_and_retries() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");

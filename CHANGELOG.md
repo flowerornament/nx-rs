@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.5.30 - 2026-07-15
+
 - keeps structured Nix progress within one terminal row at any terminal width, preventing wrapped updates from accumulating in scrollback
 - clears structured progress when the final Nix activity stops and aligns every line of live Nix diagnostics to the standard two-space detail indent
 - avoids replaying structured failure diagnostics that were already shown live, preserves unseen profile-update and activation errors, and closes successful split rebuild phases with explicit completion lines

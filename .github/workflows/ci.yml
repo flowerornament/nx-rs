@@ -14,13 +14,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: dtolnay/rust-toolchain@master
+      - name: Install pinned Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: 1.93.1
-          components: clippy, rustfmt
+          rustflags: ""
+
+      - name: Verify pinned Rust toolchain
+        run: rustup show active-toolchain
 
       - uses: taiki-e/install-action@just
-      - uses: Swatinem/rust-cache@v2
 
       - name: CI gate
         run: just ci

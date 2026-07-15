@@ -620,6 +620,9 @@ Dry-run behavior:
 
 - Top-level status glyphs, including transient loading spinners, start at column zero; only
   body/detail output is indented.
+- Action groups use one blank row before the action and no blank rows between the action,
+  its details, and its closing status. Overall summaries may use one blank row to separate
+  them from the final action group.
 - Long-running operations should use the shared printer loading scope so spinner lifecycle,
   cleanup, and top-level layout remain centralized.
 - Captured package/source lookups (`search`, `info`, install resolution, and Homebrew
@@ -633,6 +636,9 @@ Dry-run behavior:
   warnings remain visible in non-interactive runs.
 - Store and generation maintenance commands stream their human result lines because the
   deleted paths and generations are the user-facing payload, not fetch/build progress.
+- `just demo-output` runs representative commands in a real pseudo-terminal. Its normalized
+  final screen is snapshot-tested, including colors, carriage-return cleanup, vertical rhythm,
+  detail indentation, and exactly-once diagnostics.
 - Dry-run install output includes `Dry Run`.
 - Dry-run remove output includes `Would remove`.
 - Rebuild flow invokes streaming command path when preflight and flake-check pass.

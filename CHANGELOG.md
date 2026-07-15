@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- makes `just demo-output` use the same colored status language as `nx` and verifies its final pseudo-terminal screen against an inspectable reference
+- keeps cache-preflight details and rebuild completion statuses attached to their action groups without stray blank rows
+
 ## v1.5.30 - 2026-07-15
 
 - keeps structured Nix progress within one terminal row at any terminal width, preventing wrapped updates from accumulating in scrollback

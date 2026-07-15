@@ -133,7 +133,7 @@ Quality gates:
 | Check | `just check` | `cargo check`, all targets/features |
 | **Full CI gate** | **`just ci`** | Timed fmt-check + lint + test + test-scripts + check in sequence |
 | Gate timing ledger | `just ci-record` | Same gate, appending a local ignored CSV row to `.nx/gate-times.csv` |
-| Visual output demo | `just demo-output` | Runs real `nx` list, successful and failing rebuild preflight, and disposable upgrade flows with deterministic external commands |
+| Visual output demo | `just demo-output` | Runs real `nx` list, successful and failing rebuild preflight, and disposable upgrade flows in a snapshot-tested terminal layout |
 | System tests | `just test-system` | Integration matrix with deterministic stubs |
 
 All flags use `--workspace --all-targets --all-features`. Clippy treats warnings as errors. The lint policy enables `clippy::all`, `clippy::pedantic`, and a curated low-noise subset of `clippy::nursery`; do not enable the whole nursery group without first proving the new warnings improve the loop more than they add churn.

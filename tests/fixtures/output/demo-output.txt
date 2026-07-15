@@ -1,0 +1,83 @@
+> Preparing output demo
++ Output demo ready
+
+  $ nx list
+  Installed (8 packages)
+  fd
+  lua5_4
+  python3
+  ripgrep
+  htop
+  raycast
+  Xcode
+  test-agent
+
+  $ nx rebuild --preflight
+> Checking nx routing metadata
++ Routing metadata passed
+
+> Checking tracked nix files
++ Git preflight passed
+
+> Checking flake
++ Flake check passed
+  darwin host: test-host
+
+> Checking binary cache coverage
+  Source Builds (2)
+  starship-1.23.0
+  terminal-notifier-2.0.0
+  1 paths will be fetched from the binary cache
++ Rebuild preflight passed
+
+  $ nx rebuild --preflight  # expected failure
+> Checking nx routing metadata
++ Routing metadata passed
+
+> Checking tracked nix files
++ Git preflight passed
+
+> Checking flake
+  error: flake evaluation failed
+x Flake check failed
+
+  $ nx upgrade
+> Updating flake inputs
++ All flake inputs up to date
+
+> Checking Homebrew updates
++ All Homebrew packages up to date
+  darwin host: test-host
+
+> Checking binary cache coverage
+  Source Builds (2)
+  starship-1.23.0
+  terminal-notifier-2.0.0
+  1 paths will be fetched from the binary cache
+
+> Checking tracked nix files
++ Git preflight passed
+
+> Checking flake
++ Flake check passed
+
+> Rebuilding system
+  darwin host: test-host
+
+> Building system configuration
+  warning: substituter response was slow
+  continuing with cached metadata
++ System configuration built
+
+> Updating system profile
++ System profile updated
+
+> Activating system
+  activation dependencies ready
+  setting up /etc...
+  applying Homebrew bundle...
+  activating Home Manager...
+  linking generation...
++ System rebuilt
+
++ Output demo complete

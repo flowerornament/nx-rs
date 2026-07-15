@@ -160,7 +160,6 @@ fn run_rebuild(
             check_cache_preflight(ctx, CachePreflightMode::ReportOnly);
             Ok(())
         });
-        println!();
         ctx.printer.success("Rebuild preflight passed");
         return RebuildCommandResult {
             code: 0,
@@ -402,7 +401,6 @@ fn do_rebuild(
             };
 
         if output.code == 0 {
-            println!();
             match outcome {
                 RebuildOutcome::AlreadyCurrent => ctx.printer.success("System already current"),
                 RebuildOutcome::Rebuilt => ctx.printer.success("System rebuilt"),

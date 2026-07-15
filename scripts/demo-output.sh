@@ -6,6 +6,35 @@ if [[ ! -t 0 || ! -t 1 || ! -t 2 ]]; then
   exit 1
 fi
 
+if [[ -z "${NO_COLOR+x}" && "${TERM:-}" != "dumb" ]]; then
+  action_color=$'\033[36m'
+  success_color=$'\033[32m'
+  error_color=$'\033[1;31m'
+  reset_color=$'\033[0m'
+else
+  action_color=''
+  success_color=''
+  error_color=''
+  reset_color=''
+fi
+
+action() {
+  printf '\n%s> %s%s\n' "$action_color" "$1" "$reset_color"
+}
+
+success() {
+  printf '%s+ %s%s\n' "$success_color" "$1" "$reset_color"
+}
+
+error() {
+  printf '%sx %s%s\n' "$error_color" "$1" "$reset_color" >&2
+}
+
+scenario() {
+  # The command renderer's first section break terminates this prompt line.
+  printf '\n  $ %s' "$1"
+}
+
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
@@ -16,7 +45,7 @@ stubs="$scratch/stubs"
 log="$scratch/invocations.tsv"
 profile="$scratch/system-profile"
 
-printf '\n> Preparing output demo\n'
+action 'Preparing output demo'
 cargo build --quiet --manifest-path "$root/Cargo.toml" --bin nx
 target_dir="$(
   cargo metadata --quiet --no-deps --format-version 1 --manifest-path "$root/Cargo.toml" |
@@ -33,7 +62,7 @@ NX_OUTPUT_DEMO_STUB_DIR="$stubs" cargo test \
   -- --exact --ignored >/dev/null
 ln -s /nix/store/current-system "$profile"
 : >"$log"
-printf '+ Output demo ready\n'
+success 'Output demo ready'
 
 run_nx() {
   local mode="$1"
@@ -55,19 +84,20 @@ run_nx() {
   )
 }
 
-printf '\n  $ nx list'
+scenario 'nx list'
 run_nx success list
 
-printf '\n  $ nx rebuild --preflight'
+scenario 'nx rebuild --preflight'
 run_nx success rebuild --preflight
 
-printf '\n  $ nx rebuild --preflight  # expected failure'
+scenario 'nx rebuild --preflight  # expected failure'
 if run_nx flake_check_fail rebuild --preflight; then
-  printf 'x Expected rebuild preflight to fail\n' >&2
+  error 'Expected rebuild preflight to fail'
   exit 1
 fi
 
-printf '\n  $ nx upgrade'
+scenario 'nx upgrade'
 run_nx success upgrade --no-ai
 
-printf '\n+ Output demo complete\n'
+printf '\n'
+success 'Output demo complete'

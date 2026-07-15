@@ -129,7 +129,7 @@ fn report_dry_run_plan(ctx: &SystemContext<'_>, plan: &DryRunPlan) {
         return;
     }
 
-    Printer::heading(&format!("Source Builds ({})", plan.to_build.len()));
+    Printer::body(&format!("Source Builds ({})", plan.to_build.len()));
     for name in plan.to_build.iter().take(MAX_LISTED_SOURCE_BUILDS) {
         Printer::body(name);
     }

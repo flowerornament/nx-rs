@@ -612,6 +612,25 @@ const UPGRADE_DRY_RUN_BREW_WITH_UPDATES_CALLS: &[ExpectedCall] = &[
     ),
 ];
 
+const UPGRADE_INVALID_LOCK_CASES: &[UpgradeCase] = &[
+    UpgradeCase {
+        id: "upgrade_malformed_lock_before_update_short_circuits",
+        cli_args: UPGRADE_FAILURE_ARGS,
+        mode: "upgrade_lock_malformed_pre",
+        expected_exit: 1,
+        expected_calls: &[],
+        stdout_contains: &[],
+    },
+    UpgradeCase {
+        id: "upgrade_unreadable_lock_after_update_short_circuits",
+        cli_args: UPGRADE_FAILURE_ARGS,
+        mode: "upgrade_lock_unreadable_post",
+        expected_exit: 1,
+        expected_calls: UPGRADE_NO_CHANGE_NO_COMMIT_CALLS,
+        stdout_contains: &[],
+    },
+];
+
 const UPGRADE_CASES: &[UpgradeCase] = &[
     UpgradeCase {
         id: "upgrade_flake_failure_short_circuit",
@@ -761,6 +780,32 @@ fn system_upgrade_flows() -> Result<(), Box<dyn Error>> {
 
     for case in UPGRADE_CASES {
         run_case(&nx_bin, &repo_base, case)?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn upgrade_invalid_locks_fail_at_phase_boundaries() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+
+    for case in UPGRADE_INVALID_LOCK_CASES {
+        let output = run_case_with_extra_env(&nx_bin, &repo_base, case, &[])?;
+        let stage = if case.mode.ends_with("_pre") {
+            "before"
+        } else {
+            "after"
+        };
+        assert!(
+            output
+                .stderr
+                .contains(&format!("Could not load flake.lock {stage} update")),
+            "case {} did not explain lock failure\nstderr:\n{}",
+            case.id,
+            output.stderr
+        );
     }
 
     Ok(())
@@ -967,9 +1012,16 @@ fn assert_no_anonymous_boundaries(case_id: &str, stdout: &str, stderr: &str) {
 }
 
 fn seed_flake_lock_if_needed(repo_root: &Path, mode: &str) -> Result<(), Box<dyn Error>> {
+    if mode == "upgrade_lock_malformed_pre" {
+        fs::write(repo_root.join("flake.lock"), r#"{"nodes":{"root":{}}}"#)?;
+        return Ok(());
+    }
     if matches!(
         mode,
-        "upgrade_flake_changed" | "upgrade_prefetch_cache_corruption" | "upgrade_hash_repair"
+        "upgrade_flake_changed"
+            | "upgrade_prefetch_cache_corruption"
+            | "upgrade_hash_repair"
+            | "upgrade_lock_unreadable_post"
     ) {
         fs::write(repo_root.join("flake.lock"), UPGRADE_FLAKE_LOCK_OLD)?;
     }
@@ -1035,7 +1087,9 @@ fn assert_repo_state(
 
 fn expected_mutated_paths(mode: &str) -> &'static [&'static str] {
     match mode {
-        "upgrade_flake_changed" | "upgrade_prefetch_cache_corruption" => &["flake.lock"],
+        "upgrade_flake_changed"
+        | "upgrade_prefetch_cache_corruption"
+        | "upgrade_lock_unreadable_post" => &["flake.lock"],
         "upgrade_hash_repair" => &["flake.lock", "home/agent-sync.nix"],
         _ => &[],
     }

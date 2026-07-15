@@ -4,6 +4,7 @@
 
 - honors `nx unused --include-protected` in both human and JSON output and reports protected packages as hidden only when they are actually omitted
 - derives the hosted CI Rust version and components from `rust-toolchain.toml`, keeping local and hosted quality gates on the same compiler
+- stops `nx upgrade` with a clear error when `flake.lock` is unreadable or malformed instead of treating the broken lock as an empty input graph
 
 ## v1.5.29 - 2026-07-15
 

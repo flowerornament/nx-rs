@@ -100,14 +100,17 @@ pub fn parse_flake_lock(path: &Path) -> anyhow::Result<HashMap<String, FlakeLock
         .and_then(Value::as_object)
         .context("missing nodes in flake.lock")?;
 
-    let root_inputs = nodes
+    let root_key = lock_data
         .get("root")
-        .and_then(|r| r.get("inputs"))
-        .and_then(Value::as_object);
-
-    let Some(root_inputs) = root_inputs else {
-        return Ok(HashMap::new());
-    };
+        .and_then(Value::as_str)
+        .unwrap_or("root");
+    let root = nodes
+        .get(root_key)
+        .with_context(|| format!("missing root node '{root_key}' in flake.lock"))?;
+    let root_inputs = root
+        .get("inputs")
+        .and_then(Value::as_object)
+        .context("missing root inputs in flake.lock")?;
 
     let mut inputs = HashMap::new();
 
@@ -464,6 +467,20 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let inputs = load_flake_lock(tmp.path()).unwrap();
         assert!(inputs.is_empty());
+    }
+
+    #[test]
+    fn load_invalid_locks_return_errors() {
+        let tmp = TempDir::new().unwrap();
+
+        write_lock(tmp.path(), "{");
+        assert!(load_flake_lock(tmp.path()).is_err());
+
+        fs::write(tmp.path().join("flake.lock"), [0xff]).unwrap();
+        assert!(load_flake_lock(tmp.path()).is_err());
+
+        write_lock(tmp.path(), r#"{"nodes":{"root":{}}}"#);
+        assert!(load_flake_lock(tmp.path()).is_err());
     }
 
     // --- diff_locks ---

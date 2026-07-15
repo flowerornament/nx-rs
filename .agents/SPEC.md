@@ -532,6 +532,7 @@ High-level phases:
 
 1. Flake phase:
   - load old lock
+  - fail before update when the existing lock cannot be read or parsed; fail before brew, rebuild, or commit when the updated lock cannot be read or parsed
   - dry-run: skip update
   - non-dry-run with no positional inputs: stream `nix flake update`
   - non-dry-run with positional inputs: stream `nix flake update <input...>`, preserving CLI order

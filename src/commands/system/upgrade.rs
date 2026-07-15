@@ -94,7 +94,11 @@ pub(super) const fn upgrade_requires_manifest_system_safety(args: &UpgradeArgs) 
 /// Returns changed flake inputs when any changed,
 /// `Err(exit_code)` on failure.
 fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<Vec<InputChange>, i32> {
-    let old_inputs = load_flake_lock(&ctx.repo_root).unwrap_or_default();
+    let old_inputs = load_flake_lock(&ctx.repo_root).map_err(|err| {
+        ctx.printer
+            .error(&format!("Could not load flake.lock before update: {err}"));
+        1
+    })?;
     let nix_env = if args.dry_run() {
         NixCommandEnv::default()
     } else {
@@ -108,7 +112,11 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<Vec<InputChan
             ctx.printer.error("Flake update failed");
             return Err(1);
         }
-        load_flake_lock(&ctx.repo_root).unwrap_or_default()
+        load_flake_lock(&ctx.repo_root).map_err(|err| {
+            ctx.printer
+                .error(&format!("Could not load flake.lock after update: {err}"));
+            1
+        })?
     };
 
     let diff = diff_locks(&old_inputs, &new_inputs);

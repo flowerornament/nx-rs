@@ -143,7 +143,9 @@ case "$program" in
           exit 1
         fi
       fi
-      if [ "$mode" = "upgrade_flake_changed" ] || [ "$mode" = "upgrade_prefetch_cache_corruption" ] || [ "$mode" = "upgrade_hash_repair" ]; then
+      if [ "$mode" = "upgrade_lock_unreadable_post" ]; then
+        printf '\377' > flake.lock
+      elif [ "$mode" = "upgrade_flake_changed" ] || [ "$mode" = "upgrade_prefetch_cache_corruption" ] || [ "$mode" = "upgrade_hash_repair" ]; then
         printf '%s' "${NX_SYSTEM_IT_UPGRADE_NEW_LOCK:?NX_SYSTEM_IT_UPGRADE_NEW_LOCK must be set}" > flake.lock
       fi
       echo "stub nix flake command ok"

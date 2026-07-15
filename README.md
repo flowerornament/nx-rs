@@ -372,6 +372,7 @@ Removes installed packages from the managed repo.
 - Supports `--dry-run` and `--yes`.
 - Supports `--model` for AI-assisted fallback removal.
 - `rm` and `uninstall` are aliases of `remove`.
+- Exits `1` on the first package that cannot be found, looked up, or removed; successful removals and no-change outcomes such as dry-runs, cancellations, and successful AI no-ops exit `0`.
 
 ---
 

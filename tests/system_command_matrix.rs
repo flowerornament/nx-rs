@@ -7,6 +7,7 @@ mod support_tree;
 
 use std::env;
 use std::error::Error;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -21,6 +22,7 @@ struct MatrixCase {
     id: &'static str,
     cli_args: &'static [&'static str],
     expected_exit: i32,
+    invalid_utf8_nix: Option<&'static str>,
 }
 
 const MATRIX_CASES: &[MatrixCase] = &[
@@ -28,11 +30,25 @@ const MATRIX_CASES: &[MatrixCase] = &[
         id: "install_missing_args_parser_error",
         cli_args: &["install"],
         expected_exit: 2,
+        invalid_utf8_nix: None,
     },
     MatrixCase {
         id: "remove_missing_args_parser_error",
         cli_args: &["remove"],
         expected_exit: 2,
+        invalid_utf8_nix: None,
+    },
+    MatrixCase {
+        id: "remove_not_found_is_failure",
+        cli_args: &["remove", "missing-package"],
+        expected_exit: 1,
+        invalid_utf8_nix: None,
+    },
+    MatrixCase {
+        id: "remove_lookup_error_is_failure",
+        cli_args: &["remove", "ripgrep"],
+        expected_exit: 1,
+        invalid_utf8_nix: Some("packages/nix/cli.nix"),
     },
 ];
 
@@ -53,6 +69,9 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &MatrixCase) -> Result<(), Bo
     let repo_root = TempDir::new()?;
     copy_tree(repo_base, repo_root.path())?;
     ensure_test_layout(repo_root.path())?;
+    if let Some(relative_path) = case.invalid_utf8_nix {
+        fs::write(repo_root.path().join(relative_path), [0xff])?;
+    }
 
     let home_dir = TempDir::new()?;
     let mut command = Command::new(nx_bin);

@@ -151,7 +151,7 @@ Defined at root callback:
 - `generations prune`: `0` on success, no-op, user cancellation, or `--dry-run`; `1` on discovery, command execution, or post-prune refresh failure.
 - `init`: `0` on success or user cancellation; `1` on manifest load/save failure.
 - `install`: `0` if all requested install actions succeeded or nothing selected; `1` on partial failure; clap usage errors exit `2`.
-- `remove`/`rm`/`uninstall`: `0`; clap usage errors exit `2`.
+- `remove`/`rm`/`uninstall`: `0` when every requested removal succeeds or completes without a change, including dry-run, cancellation, and successful AI no-op paths; `1` on the first not-found, lookup, edit, or AI failure; clap usage errors exit `2`.
 - `secret add`: `0` on successful update; `1` on input validation, file, or `sops` failure.
 - `search`: `0` when at least one result is rendered; `1` on not found or rendering failure.
 - `where`: `0` (including not-found); clap usage errors exit `2`.
@@ -400,7 +400,7 @@ For nix-based sources:
 - Removal strategy:
   - if concrete line known: direct file edit removal
   - else fallback to Claude-based edit
-- Command returns `0` even when individual packages are not found.
+- Command stops at the first per-package failure and returns `1`; successful removals and no-change outcomes such as dry-run, cancellation, and AI no-op return `0`.
 
 ## 9. Query Commands Contract
 
@@ -644,11 +644,11 @@ Dry-run behavior:
 
 - Preserve permissive behavior where current CLI does not fail hard:
   - `where` not-found returns `0`
-  - `remove` per-item failures do not change command exit
   - `info` not-found returns `0`
 - Preserve safety behavior where current CLI fails hard:
   - rebuild preflight failures
   - missing install attr for nix-based sources
   - invalid `list` source filter
+  - `remove` per-item lookup, edit, and AI failures
 - Historical parity notes from earlier implementations are informative only when preserved by
   the current sections above.

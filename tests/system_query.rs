@@ -398,6 +398,55 @@ fn system_query_unused_json_snapshot() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn system_query_unused_include_protected_controls_human_and_json_output()
+-> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+
+    let hidden = run_query_command(
+        &nx_bin,
+        &repo_base,
+        &["unused", "--no-history", "--limit", "20"],
+    )?;
+    let hidden_stdout = String::from_utf8_lossy(&hidden.output.stdout);
+    assert!(!hidden_stdout.contains("test-agent"));
+    assert!(hidden_stdout.contains("Protected hidden: 1"));
+
+    let included = run_query_command(
+        &nx_bin,
+        &repo_base,
+        &[
+            "unused",
+            "--no-history",
+            "--include-protected",
+            "--limit",
+            "20",
+        ],
+    )?;
+    let included_stdout = String::from_utf8_lossy(&included.output.stdout);
+    assert!(included_stdout.contains("test-agent"));
+    assert!(included_stdout.contains("protected by policy"));
+    assert!(!included_stdout.contains("Protected hidden"));
+
+    let included_json = run_query_command(
+        &nx_bin,
+        &repo_base,
+        &["unused", "--no-history", "--include-protected", "--json"],
+    )?;
+    let included_json: Value = serde_json::from_slice(&included_json.output.stdout)?;
+    assert!(has_record(&included_json, "test-agent"));
+
+    Ok(())
+}
+
+fn has_record(output: &Value, name: &str) -> bool {
+    output["records"]
+        .as_array()
+        .is_some_and(|records| records.iter().any(|record| record["name"] == name))
+}
+
+#[test]
 fn system_query_unused_uses_manifest_aliases_as_command_evidence() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");

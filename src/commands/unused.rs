@@ -58,21 +58,38 @@ pub fn cmd_unused(args: &UnusedArgs, ctx: &QueryContext<'_>) -> i32 {
         now_epoch_secs,
         UsageAuditOptions { since_seconds },
     );
-    let hidden_protected = all_records
-        .iter()
-        .filter(|record| record.status == UsageStatus::Protected)
-        .count();
-    let records = all_records
-        .into_iter()
-        .filter(|record| args.include_protected || record.status != UsageStatus::Protected)
-        .collect::<Vec<_>>();
+    let visible = select_visible_records(all_records, args.include_protected);
 
     if args.json {
-        return render_json(&records, args, since_seconds, ctx.printer);
+        return render_json(&visible.records, args, since_seconds, ctx.printer);
     }
 
-    render_human(&records, args, hidden_protected);
+    render_human(&visible.records, args, visible.hidden_protected);
     0
+}
+
+struct VisibleRecords {
+    records: Vec<UsageRecord>,
+    hidden_protected: usize,
+}
+
+fn select_visible_records(
+    mut records: Vec<UsageRecord>,
+    include_protected: bool,
+) -> VisibleRecords {
+    if include_protected {
+        return VisibleRecords {
+            records,
+            hidden_protected: 0,
+        };
+    }
+
+    let original_len = records.len();
+    records.retain(|record| record.status != UsageStatus::Protected);
+    VisibleRecords {
+        hidden_protected: original_len - records.len(),
+        records,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -341,15 +358,26 @@ struct UnusedJsonOutput<'a> {
 fn candidate_records(records: &[UsageRecord]) -> Vec<&UsageRecord> {
     let mut out = records
         .iter()
-        .filter(|record| matches!(record.status, UsageStatus::Old | UsageStatus::Unknown))
+        .filter(|record| {
+            matches!(
+                record.status,
+                UsageStatus::Old | UsageStatus::Unknown | UsageStatus::Protected
+            )
+        })
         .collect::<Vec<_>>();
-    out.sort_by_key(|record| {
+    out.sort_by(|left, right| {
         (
-            record.status != UsageStatus::Unknown,
-            record.confidence,
-            record.last_seen.unwrap_or(i64::MIN),
-            record.name.clone(),
+            left.status != UsageStatus::Unknown,
+            left.confidence,
+            left.last_seen.unwrap_or(i64::MIN),
+            left.name.as_str(),
         )
+            .cmp(&(
+                right.status != UsageStatus::Unknown,
+                right.confidence,
+                right.last_seen.unwrap_or(i64::MIN),
+                right.name.as_str(),
+            ))
     });
     out
 }
@@ -426,7 +454,7 @@ mod tests {
 
     use super::{
         SourceFilter, candidate_evidence_summary, candidate_records, last_evidence,
-        load_shell_history, package_cell,
+        load_shell_history, package_cell, select_visible_records,
     };
     use crate::domain::usage::{EvidenceConfidence, UsageRecord, UsageSource, UsageStatus};
     use tempfile::TempDir;
@@ -444,15 +472,33 @@ mod tests {
     fn candidate_records_prioritize_unknown_before_old() {
         let old = record("old", UsageStatus::Old, Some(10));
         let unknown = record("unknown", UsageStatus::Unknown, None);
+        let protected = record("protected", UsageStatus::Protected, None);
         let recent = record("recent", UsageStatus::Recent, Some(20));
 
-        let records = [old, unknown, recent];
+        let records = [old, unknown, protected, recent];
         let names = candidate_records(&records)
             .into_iter()
             .map(|record| record.name.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(names, vec!["unknown", "old"]);
+        assert_eq!(names, vec!["unknown", "protected", "old"]);
+    }
+
+    #[test]
+    fn visible_records_control_protected_records_and_hidden_count() {
+        let records = vec![
+            record("unknown", UsageStatus::Unknown, None),
+            record("protected", UsageStatus::Protected, None),
+        ];
+
+        let hidden = select_visible_records(records.clone(), false);
+        assert_eq!(hidden.hidden_protected, 1);
+        assert_eq!(hidden.records.len(), 1);
+        assert_eq!(hidden.records[0].name, "unknown");
+
+        let included = select_visible_records(records, true);
+        assert_eq!(included.hidden_protected, 0);
+        assert_eq!(included.records.len(), 2);
     }
 
     #[test]

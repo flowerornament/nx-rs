@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- honors `nx unused --include-protected` in both human and JSON output and reports protected packages as hidden only when they are actually omitted
+- derives the hosted CI Rust version and components from `rust-toolchain.toml`, keeping local and hosted quality gates on the same compiler
+
 ## v1.5.29 - 2026-07-15
 
 - adds a binary cache preflight to `nx upgrade` and `nx rebuild --preflight`: dry-runs the system build, lists derivations that would build from source, and prompts before rebuilding when they exceed `NX_CACHE_MISS_THRESHOLD` (default 5); aborting keeps the updated `flake.lock` and prints the revert hint

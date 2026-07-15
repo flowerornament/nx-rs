@@ -9,8 +9,8 @@ use crate::domain::upgrade::{
 use crate::infra::ai_engine::DEFAULT_CODEX_MODEL;
 use crate::infra::nix_output::NixOutputMode;
 use crate::infra::shell::{
-    first_nonempty_output, run_captured_command, run_captured_command_with_env,
-    run_indented_command, run_stdout_collecting_nix_stderr_with_env,
+    first_nonempty_output, first_unpresented_output, run_captured_command,
+    run_captured_command_with_env, run_indented_command, run_stdout_collecting_nix_stderr_with_env,
     run_stdout_collecting_tee_stderr_with_env,
 };
 use crate::output::printer::Printer;
@@ -885,7 +885,7 @@ fn combined_command_output(output: &crate::infra::shell::CapturedCommand) -> Str
 }
 
 fn print_command_failure_detail(output: &crate::infra::shell::CapturedCommand) {
-    let detail = first_nonempty_output(output);
+    let detail = first_unpresented_output(output);
     if !detail.is_empty() {
         Printer::detail(detail);
     }

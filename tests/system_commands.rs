@@ -376,6 +376,14 @@ fn split_rebuild_calls(authorizes_sudo: bool) -> Vec<ExpectedCall> {
     calls
 }
 
+fn split_profile_set_failure_calls() -> Vec<ExpectedCall> {
+    let mut calls = Vec::with_capacity(SPLIT_REBUILD_BUILD_CALLS.len() + 2);
+    calls.extend_from_slice(SPLIT_REBUILD_BUILD_CALLS);
+    calls.push(SPLIT_REBUILD_SUDO_CHECK_CALL);
+    calls.push(SPLIT_REBUILD_PROFILE_SET_CALL);
+    calls
+}
+
 fn split_rebuild_legacy_fallback_calls() -> Vec<ExpectedCall> {
     let mut calls = Vec::with_capacity(SPLIT_REBUILD_BUILD_CALLS.len() + 4);
     calls.extend_from_slice(SPLIT_REBUILD_BUILD_CALLS);
@@ -646,7 +654,7 @@ fn system_command_flows() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-#[ignore = "support for `just demo-nix-output`"]
+#[ignore = "support for `just demo-output`"]
 fn install_output_demo_stubs() -> Result<(), Box<dyn Error>> {
     let destination = env::var_os("NX_OUTPUT_DEMO_STUB_DIR")
         .ok_or("NX_OUTPUT_DEMO_STUB_DIR must name the destination")?;
@@ -711,7 +719,6 @@ fn rebuild_hash_mismatch_repairs_and_retries() -> Result<(), Box<dyn Error>> {
         stdout.contains("System rebuilt"),
         "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-
     let invocations = read_invocations(&log_path)?;
     assert_invocations(
         "rebuild_hash_mismatch_repairs_and_retries",
@@ -750,6 +757,8 @@ fn split_darwin_rebuild_runs_explicit_phases() -> Result<(), Box<dyn Error>> {
         stdout.contains("System rebuilt"),
         "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
+    assert!(stdout.contains("System configuration built"));
+    assert!(stdout.contains("System profile updated"));
     assert_structured_split_build_output(&stdout, &stderr);
     assert_timing_children(
         home_dir.path(),
@@ -984,7 +993,7 @@ fn split_darwin_rebuild_failure_surfaces_structured_diagnostics() -> Result<(), 
     )?;
 
     for expected in [
-        "Build failure output:",
+        "Failure output:",
         "anneal-0.13.1",
         "eval_git_mtime_uses_git_history",
         "git [\"init\"] failed to run: No such file or directory (os error 2)",
@@ -998,6 +1007,52 @@ fn split_darwin_rebuild_failure_surfaces_structured_diagnostics() -> Result<(), 
     assert_structured_split_build_output(&stdout, &stderr);
     assert_timing_children(home_dir.path(), "split_rebuild_build_failure", &["build"])?;
 
+    Ok(())
+}
+
+#[test]
+fn split_darwin_rebuild_surfaces_profile_set_failure() -> Result<(), Box<dyn Error>> {
+    assert_split_rebuild_failure(
+        "split_rebuild_profile_set_failure",
+        "split_profile_set_fail",
+        &split_profile_set_failure_calls(),
+        "stub nix-env failed",
+    )
+}
+
+#[test]
+fn split_darwin_rebuild_surfaces_activation_failure() -> Result<(), Box<dyn Error>> {
+    assert_split_rebuild_failure(
+        "split_rebuild_activation_failure",
+        "split_activate_fail",
+        &split_rebuild_calls(false),
+        "stub activate failed",
+    )
+}
+
+fn assert_split_rebuild_failure(
+    case_id: &str,
+    mode: &str,
+    expected_calls: &[ExpectedCall],
+    expected_detail: &str,
+) -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+    let RunResult { stdout, stderr, .. } = run_split_rebuild_with_expected_exit(
+        &nx_bin,
+        &repo_base,
+        case_id,
+        mode,
+        &[("NX_SPLIT_DARWIN", "1")],
+        expected_calls,
+        1,
+    )?;
+
+    assert!(
+        stdout.contains("Failure output:") && stdout.contains(expected_detail),
+        "stdout missing failure detail '{expected_detail}'\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
     Ok(())
 }
 

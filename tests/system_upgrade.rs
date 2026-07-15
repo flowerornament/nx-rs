@@ -878,7 +878,7 @@ fn upgrade_split_rebuild_failure_surfaces_structured_diagnostics() -> Result<(),
         expected_exit: 1,
         expected_calls: UPGRADE_SPLIT_REBUILD_FAILURE_CALLS,
         stdout_contains: &[
-            "Build failure output:",
+            "Failure output:",
             "anneal-0.13.1",
             "git [\"init\"] failed to run: No such file or directory (os error 2)",
         ],

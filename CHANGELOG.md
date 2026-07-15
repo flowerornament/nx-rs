@@ -4,7 +4,8 @@
 
 - keeps structured Nix progress within one terminal row at any terminal width, preventing wrapped updates from accumulating in scrollback
 - clears structured progress when the final Nix activity stops and aligns every line of live Nix diagnostics to the standard two-space detail indent
-- provides `just demo-nix-output`, a deterministic gallery that runs real `nx list`, `nx rebuild --preflight`, and disposable `nx upgrade` flows for visual inspection without rebuilding the system
+- avoids replaying structured failure diagnostics that were already shown live, preserves unseen profile-update and activation errors, and closes successful split rebuild phases with explicit completion lines
+- provides `just demo-output`, a deterministic visual reference for real `nx list`, successful and failing rebuild preflight, and disposable `nx upgrade` flows
 - honors `nx unused --include-protected` in both human and JSON output and reports protected packages as hidden only when they are actually omitted
 - derives the hosted CI Rust version and components from `rust-toolchain.toml`, keeping local and hosted quality gates on the same compiler
 - stops `nx upgrade` with a clear error when `flake.lock` is unreadable or malformed instead of treating the broken lock as an empty input graph

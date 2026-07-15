@@ -7,9 +7,10 @@ use crate::commands::context::SystemContext;
 use crate::domain::manifest::{Manifest, PlatformKind};
 use crate::infra::nix_output::{NixLogFormat, NixOutputMode};
 use crate::infra::shell::{
-    first_nonempty_output, run_captured_command, run_indented_command_collecting_with_env,
-    run_native_command_with_env, run_stdout_collecting_nix_stderr_with_env_profiled,
-    run_stdout_collecting_tee_stderr_with_env, terminal_stdio_available,
+    CapturedCommand, first_nonempty_output, first_unpresented_output, run_captured_command,
+    run_indented_command_collecting_with_env, run_native_command_with_env,
+    run_stdout_collecting_nix_stderr_with_env_profiled, run_stdout_collecting_tee_stderr_with_env,
+    terminal_stdio_available,
 };
 use crate::infra::timing::{
     TimingCommand, TimingPhase, TimingRecord, TimingSession, append_timing, timing_detail_lines,
@@ -359,8 +360,9 @@ fn check_flake(ctx: &SystemContext<'_>, render_progress: bool) -> Result<(), i32
         }
 
         ctx.printer.error("Flake check failed");
-        if !err_text.is_empty() {
-            println!("{err_text}");
+        let detail = first_unpresented_output(&output);
+        if !detail.is_empty() {
+            Printer::detail(detail);
         }
         return Err(1);
     }
@@ -389,7 +391,7 @@ fn do_rebuild(
         }
 
         let output_mode = RebuildOutputMode::from_args(args);
-        let (code, output, split_phases, outcome) =
+        let (output, split_phases, outcome) =
             match do_rebuild_once(args, ctx, manifest, &repo, use_sudo, output_mode) {
                 Ok(result) => result,
                 Err(err) => {
@@ -399,7 +401,7 @@ fn do_rebuild(
                 }
             };
 
-        if code == 0 {
+        if output.code == 0 {
             println!();
             match outcome {
                 RebuildOutcome::AlreadyCurrent => ctx.printer.success("System already current"),
@@ -408,7 +410,8 @@ fn do_rebuild(
             return (0, split_phases, repaired_paths);
         }
 
-        if super::upgrade::is_fd_exhaustion(&output)
+        let combined_output = combined_stream_output(&output.stdout, &output.stderr);
+        if super::upgrade::is_fd_exhaustion(&combined_output)
             && fd_exhaustion_retries < MAX_FD_EXHAUSTION_RETRIES
         {
             fd_exhaustion_retries += 1;
@@ -422,7 +425,7 @@ fn do_rebuild(
             continue;
         }
 
-        if super::upgrade::is_cache_corruption(&output)
+        if super::upgrade::is_cache_corruption(&combined_output)
             && source_cache_retries < MAX_SOURCE_CACHE_RETRIES
         {
             source_cache_retries += 1;
@@ -433,35 +436,25 @@ fn do_rebuild(
             continue;
         }
 
-        if let Some(path) = handle_fixed_output_hash_mismatch(ctx, &output, repaired_paths.len()) {
+        if let Some(path) =
+            handle_fixed_output_hash_mismatch(ctx, &combined_output, repaired_paths.len())
+        {
             if !repaired_paths.contains(&path) {
                 repaired_paths.push(path);
             }
             continue;
         }
 
-        if should_print_captured_rebuild_failure(output_mode, &split_phases) {
-            final_failure_output = Some(output);
-        }
+        final_failure_output = Some(output);
         final_failure_phases = split_phases;
         break;
     }
 
     ctx.printer.error("Rebuild failed");
-    if let Some(output) = final_failure_output.as_deref() {
-        print_rebuild_failure_output(output);
+    if let Some(output) = final_failure_output.as_ref() {
+        print_rebuild_failure_output(first_unpresented_output(output));
     }
     (1, final_failure_phases, repaired_paths)
-}
-
-fn should_print_captured_rebuild_failure(
-    output_mode: RebuildOutputMode,
-    phases: &[TimingPhase],
-) -> bool {
-    output_mode.build == NixOutputMode::Structured
-        && phases
-            .first()
-            .is_some_and(|phase| phase.name == "build" && phase.status != "ok")
 }
 
 fn print_rebuild_failure_output(output: &str) {
@@ -471,10 +464,10 @@ fn print_rebuild_failure_output(output: &str) {
     }
 
     if excerpt.omitted == 0 {
-        Printer::detail("Build failure output:");
+        Printer::detail("Failure output:");
     } else {
         Printer::detail(&format!(
-            "Build failure output (last {REBUILD_FAILURE_OUTPUT_LINES} lines):"
+            "Failure output (last {REBUILD_FAILURE_OUTPUT_LINES} lines):"
         ));
         Printer::sub_detail(&format!("... omitted {} earlier lines", excerpt.omitted));
     }
@@ -630,26 +623,26 @@ fn do_rebuild_once(
     repo: &str,
     use_sudo: bool,
     output_mode: RebuildOutputMode,
-) -> anyhow::Result<(i32, String, Vec<TimingPhase>, RebuildOutcome)> {
+) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>, RebuildOutcome)> {
     if should_use_split_darwin(args, manifest) {
         match do_split_darwin_rebuild(ctx, repo, use_sudo, output_mode) {
             SplitDarwinResult::Handled(result) => return result,
             SplitDarwinResult::Fallback(rebuild_command_override) => {
                 ctx.printer.action("Running darwin-rebuild switch");
-                let (code, output, phases) = run_darwin_rebuild(
+                let (output, phases) = run_darwin_rebuild(
                     args,
                     manifest,
                     repo,
                     use_sudo,
                     rebuild_command_override.as_deref(),
                 )?;
-                return Ok((code, output, phases, RebuildOutcome::Rebuilt));
+                return Ok((output, phases, RebuildOutcome::Rebuilt));
             }
         }
     }
 
-    let (code, output, phases) = run_darwin_rebuild(args, manifest, repo, use_sudo, None)?;
-    Ok((code, output, phases, RebuildOutcome::Rebuilt))
+    let (output, phases) = run_darwin_rebuild(args, manifest, repo, use_sudo, None)?;
+    Ok((output, phases, RebuildOutcome::Rebuilt))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -664,7 +657,7 @@ fn run_darwin_rebuild(
     repo: &str,
     use_sudo: bool,
     rebuild_command_override: Option<&str>,
-) -> anyhow::Result<(i32, String, Vec<TimingPhase>)> {
+) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)> {
     let rebuild_cmd = build_rebuild_command_with_manifest_and_log_format(
         repo,
         args,
@@ -688,11 +681,7 @@ fn run_darwin_rebuild(
         NixOutputMode::from_verbose(args.verbose),
         !args.timing,
     )?;
-    Ok((
-        output.code,
-        combined_stream_output(&output.stdout, &output.stderr),
-        phases,
-    ))
+    Ok((output, phases))
 }
 
 fn native_rebuild_output_enabled(args: &RebuildArgs) -> bool {
@@ -736,20 +725,16 @@ fn do_split_darwin_rebuild(
         Err(err) => return SplitDarwinResult::Handled(Err(err)),
     };
     phases.push(build.phase);
-    if build.code != 0 {
-        return SplitDarwinResult::Handled(Ok((
-            build.code,
-            combined_stream_output(&build.stdout, &build.stderr),
-            phases,
-            RebuildOutcome::Rebuilt,
-        )));
+    if build.output.code != 0 {
+        return SplitDarwinResult::Handled(Ok((build.output, phases, RebuildOutcome::Rebuilt)));
     }
 
-    let Some(system_config) = parse_system_config_path(&build.stdout) else {
+    let Some(system_config) = parse_system_config_path(&build.output.stdout) else {
         ctx.printer
             .warn("Split darwin rebuild could not parse nix build output; falling back");
         return SplitDarwinResult::Fallback(None);
     };
+    ctx.printer.success("System configuration built");
 
     let (current_system, compare_phase) =
         match timed_phase("profile-compare", || Ok(current_system_profile_target())) {
@@ -761,8 +746,7 @@ fn do_split_darwin_rebuild(
     if current_system.as_deref() == Some(system_config.as_str()) {
         phases.push(ok_phase("already-current", 0));
         return SplitDarwinResult::Handled(Ok((
-            0,
-            String::new(),
+            CapturedCommand::captured(0, String::new(), String::new()),
             phases,
             RebuildOutcome::AlreadyCurrent,
         )));
@@ -783,7 +767,11 @@ fn do_split_darwin_rebuild(
     if let Some(((code, output), phase)) = sudo_auth {
         phases.push(phase);
         if code != 0 {
-            return SplitDarwinResult::Handled(Ok((code, output, phases, RebuildOutcome::Rebuilt)));
+            return SplitDarwinResult::Handled(Ok((
+                CapturedCommand::presented(code, String::new(), output),
+                phases,
+                RebuildOutcome::Rebuilt,
+            )));
         }
     }
 
@@ -793,14 +781,10 @@ fn do_split_darwin_rebuild(
             Err(err) => return SplitDarwinResult::Handled(Err(err)),
         };
     phases.push(set_profile_phase);
-    if set_profile.0 != 0 {
-        return SplitDarwinResult::Handled(Ok((
-            set_profile.0,
-            set_profile.1,
-            phases,
-            RebuildOutcome::Rebuilt,
-        )));
+    if set_profile.code != 0 {
+        return SplitDarwinResult::Handled(Ok((set_profile, phases, RebuildOutcome::Rebuilt)));
     }
+    ctx.printer.success("System profile updated");
 
     let (activate, activate_phase) = match activate_system(
         ctx,
@@ -813,18 +797,11 @@ fn do_split_darwin_rebuild(
         Err(err) => return SplitDarwinResult::Handled(Err(err)),
     };
     phases.push(activate_phase);
-    SplitDarwinResult::Handled(Ok((
-        activate.0,
-        activate.1,
-        phases,
-        RebuildOutcome::Rebuilt,
-    )))
+    SplitDarwinResult::Handled(Ok((activate, phases, RebuildOutcome::Rebuilt)))
 }
 
 struct SplitBuildOutput {
-    code: i32,
-    stdout: String,
-    stderr: String,
+    output: CapturedCommand,
     phase: TimingPhase,
 }
 
@@ -833,7 +810,6 @@ fn build_split_system_config(
     attr: &str,
     output_mode: RebuildOutputMode,
 ) -> anyhow::Result<SplitBuildOutput> {
-    let mut build_stderr = String::new();
     let (build_program, build_args) =
         split_nix_build_command_with_log_format(attr, output_mode.build.log_format().as_arg());
     let build_arg_refs: Vec<&str> = build_args.iter().map(String::as_str).collect();
@@ -845,14 +821,11 @@ fn build_split_system_config(
             output_mode.build,
             output_mode.render_progress,
         )?;
-        build_stderr = output.stderr;
-        Ok((output.code, output.stdout))
+        Ok(output)
     })?;
-    phase.status = exit_status(build.0);
+    phase.status = exit_status(build.code);
     Ok(SplitBuildOutput {
-        code: build.0,
-        stdout: build.1,
-        stderr: build_stderr,
+        output: build,
         phase,
     })
 }
@@ -903,7 +876,7 @@ pub(super) fn split_nix_build_command_with_log_format(
 }
 
 enum SplitDarwinResult {
-    Handled(anyhow::Result<(i32, String, Vec<TimingPhase>, RebuildOutcome)>),
+    Handled(anyhow::Result<(CapturedCommand, Vec<TimingPhase>, RebuildOutcome)>),
     Fallback(Option<String>),
 }
 
@@ -912,7 +885,7 @@ fn set_system_profile(
     use_sudo: bool,
     render_progress: bool,
     system_config: &str,
-) -> anyhow::Result<((i32, String), TimingPhase)> {
+) -> anyhow::Result<(CapturedCommand, TimingPhase)> {
     let (output, mut phase) = timed_phase("profile-set", || {
         ctx.printer.action("Updating system profile");
         run_split_nix_command(
@@ -924,7 +897,7 @@ fn set_system_profile(
         )
         .map(|(output, _)| output)
     })?;
-    phase.status = exit_status(output.0);
+    phase.status = exit_status(output.code);
     Ok((output, phase))
 }
 
@@ -934,7 +907,7 @@ fn activate_system(
     output_mode: ActivationOutputMode,
     render_progress: bool,
     system_config: &str,
-) -> anyhow::Result<((i32, String), TimingPhase)> {
+) -> anyhow::Result<(CapturedCommand, TimingPhase)> {
     let mut child_phases = Vec::new();
     let (output, mut phase) = timed_phase("activate", || {
         ctx.printer.action("Activating system");
@@ -946,7 +919,11 @@ fn activate_system(
                 ctx,
                 Some(log_format),
             )?;
-            return Ok((code, String::new()));
+            return Ok(CapturedCommand::presented(
+                code,
+                String::new(),
+                String::new(),
+            ));
         }
         let (output, phases) = run_split_nix_command(
             use_sudo,
@@ -958,7 +935,7 @@ fn activate_system(
         child_phases = phases;
         Ok(output)
     })?;
-    phase.status = exit_status(output.0);
+    phase.status = exit_status(output.code);
     phase.children = child_phases;
     Ok((output, phase))
 }
@@ -987,7 +964,7 @@ fn run_split_nix_command(
     args: &[&str],
     log_format: NixLogFormat,
     render_progress: bool,
-) -> anyhow::Result<((i32, String), Vec<TimingPhase>)> {
+) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)> {
     let (runner, runner_args) = split_command_invocation(use_sudo, program, args, Some(log_format));
     let env = nix_config_env(use_sudo, Some(log_format));
     let (output, phases) = run_stdout_collecting_nix_stderr_with_env_profiled(
@@ -997,13 +974,7 @@ fn run_split_nix_command(
         env.as_ref().map(<[(&str, &str); 1]>::as_slice),
         render_progress,
     )?;
-    Ok((
-        (
-            output.code,
-            combined_stream_output(&output.stdout, &output.stderr),
-        ),
-        phases,
-    ))
+    Ok((output, phases))
 }
 
 fn nix_config_env(

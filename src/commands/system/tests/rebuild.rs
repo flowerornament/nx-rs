@@ -240,22 +240,22 @@ fn split_darwin_defaults_on_for_darwin_and_allows_opt_out() {
 
 #[test]
 fn sudo_password_classifier_detects_noninteractive_prompt_denial() {
-    let output = CapturedCommand {
-        code: 1,
-        stdout: String::new(),
-        stderr: "sudo: a password is required\n".to_string(),
-    };
+    let output = CapturedCommand::captured(
+        1,
+        String::new(),
+        "sudo: a password is required\n".to_string(),
+    );
 
     assert!(sudo_password_required(&output));
 }
 
 #[test]
 fn sudo_password_classifier_allows_command_usage_failure() {
-    let output = CapturedCommand {
-        code: 1,
-        stdout: "darwin-rebuild [--help] {edit | switch | activate | build | check}\n".to_string(),
-        stderr: String::new(),
-    };
+    let output = CapturedCommand::captured(
+        1,
+        "darwin-rebuild [--help] {edit | switch | activate | build | check}\n".to_string(),
+        String::new(),
+    );
 
     assert!(!sudo_password_required(&output));
 }

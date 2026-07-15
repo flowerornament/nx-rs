@@ -20,6 +20,31 @@ pub struct CapturedCommand {
     pub code: i32,
     pub stdout: String,
     pub stderr: String,
+    stderr_presented: bool,
+}
+
+impl CapturedCommand {
+    pub(crate) fn captured(code: i32, stdout: String, stderr: String) -> Self {
+        Self {
+            code,
+            stdout,
+            stderr,
+            stderr_presented: false,
+        }
+    }
+
+    pub(crate) const fn stderr_was_presented(&self) -> bool {
+        self.stderr_presented
+    }
+
+    pub(crate) fn presented(code: i32, stdout: String, stderr: String) -> Self {
+        Self {
+            code,
+            stdout,
+            stderr,
+            stderr_presented: true,
+        }
+    }
 }
 
 pub fn command_path(name: &str) -> Option<String> {
@@ -48,6 +73,16 @@ pub fn first_nonempty_output(output: &CapturedCommand) -> &str {
     }
 }
 
+/// Returns command output that has not already been shown to the user.
+pub fn first_unpresented_output(output: &CapturedCommand) -> &str {
+    let stderr = output.stderr.trim();
+    if !output.stderr_was_presented() && !stderr.is_empty() {
+        stderr
+    } else {
+        output.stdout.trim()
+    }
+}
+
 struct StreamedCommand {
     code: i32,
     collected: Option<String>,
@@ -56,6 +91,7 @@ struct StreamedCommand {
 struct StderrCapture {
     bytes: Vec<u8>,
     phases: Vec<TimingPhase>,
+    presented: bool,
 }
 
 #[derive(Debug)]
@@ -67,17 +103,6 @@ struct StreamedLine {
 enum StderrTeeMode {
     Raw,
     Nix { render_progress: bool },
-}
-
-impl StderrTeeMode {
-    fn renders_nix_output_live(self) -> bool {
-        matches!(
-            self,
-            Self::Nix {
-                render_progress: true
-            }
-        ) && terminal_stdio_available()
-    }
 }
 
 /// Run a command and parse stdout as JSON while suppressing stderr noise.
@@ -124,11 +149,11 @@ pub fn run_captured_command_with_env(
         .output()
         .with_context(|| format!("command execution failed ({program})"))?;
 
-    Ok(CapturedCommand {
-        code: output.status.code().unwrap_or(1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    })
+    Ok(CapturedCommand::captured(
+        output.status.code().unwrap_or(1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    ))
 }
 
 pub fn run_indented_command(
@@ -270,18 +295,21 @@ fn run_stdout_collecting_stderr_with_env_profiled(
     let status = child.wait().context("waiting for child process")?;
     let stdout = String::from_utf8_lossy(&join_collector("stdout", stdout_handle)?).into_owned();
     let stderr = join_stderr_collector(stderr_handle)?;
-    replay_success_diagnostics(
+    let replayed = replay_success_diagnostics(
         status.success(),
         stderr_mode,
+        stderr.presented,
         &stderr.bytes,
         &mut io::stderr(),
     )?;
+    let stderr_presented = stderr.presented || replayed;
 
     Ok((
         CapturedCommand {
             code: status.code().unwrap_or(1),
             stdout,
             stderr: String::from_utf8_lossy(&stderr.bytes).into_owned(),
+            stderr_presented,
         },
         stderr.phases,
     ))
@@ -290,12 +318,13 @@ fn run_stdout_collecting_stderr_with_env_profiled(
 fn replay_success_diagnostics(
     success: bool,
     mode: StderrTeeMode,
+    presented: bool,
     diagnostics: &[u8],
     stderr: &mut impl Write,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let replay = success
         && matches!(mode, StderrTeeMode::Nix { .. })
-        && !mode.renders_nix_output_live()
+        && !presented
         && !diagnostics.is_empty();
     if replay {
         stderr
@@ -305,7 +334,7 @@ fn replay_success_diagnostics(
             .flush()
             .context("flushing captured Nix diagnostics")?;
     }
-    Ok(())
+    Ok(replay)
 }
 
 fn run_streaming_command_with_env(
@@ -434,6 +463,7 @@ fn tee_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Result<S
     Ok(StderrCapture {
         bytes,
         phases: Vec::new(),
+        presented: true,
     })
 }
 
@@ -482,6 +512,7 @@ fn tee_nix_stderr_stream(
     Ok(StderrCapture {
         bytes: diagnostics,
         phases: profiler.finish(),
+        presented: should_render_progress,
     })
 }
 
@@ -589,6 +620,29 @@ mod tests {
     use crate::output::style::OutputStyle;
 
     struct FailingReader;
+
+    #[test]
+    fn failure_detail_skips_stderr_that_was_already_presented() {
+        let output = CapturedCommand {
+            code: 1,
+            stdout: "stdout detail\n".to_string(),
+            stderr: "stderr detail\n".to_string(),
+            stderr_presented: true,
+        };
+
+        assert_eq!(first_unpresented_output(&output), "stdout detail");
+    }
+
+    #[test]
+    fn failure_detail_prefers_unpresented_stderr() {
+        let output = CapturedCommand::captured(
+            1,
+            "stdout detail\n".to_string(),
+            "stderr detail\n".to_string(),
+        );
+
+        assert_eq!(first_unpresented_output(&output), "stderr detail");
+    }
 
     impl Read for FailingReader {
         fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
@@ -765,6 +819,7 @@ mod tests {
             StderrTeeMode::Nix {
                 render_progress: false,
             },
+            false,
             &diagnostics,
             &mut stderr,
         )

@@ -104,10 +104,10 @@ ci:
 ci-record:
     @scripts/quality-gate.sh record
 
-# Show the command-output gallery after verifying upgrade and rebuild routing.
+# Show representative command output in a disposable environment.
 [group('develop')]
-demo-nix-output:
-    @scripts/demo-nix-output.sh
+demo-output:
+    @scripts/demo-output.sh
 
 # Update release versions and scaffold changelog.
 [group('release')]

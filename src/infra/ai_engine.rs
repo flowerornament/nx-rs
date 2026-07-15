@@ -1009,11 +1009,11 @@ mod tests {
         ];
         let decision = resolve_routing_run_result(
             "ripgrep",
-            Ok(CapturedCommand {
-                code: 0,
-                stdout: "packages/nix/dev.nix".to_string(),
-                stderr: String::new(),
-            }),
+            Ok(CapturedCommand::captured(
+                0,
+                "packages/nix/dev.nix".to_string(),
+                String::new(),
+            )),
             &candidates,
             "packages/nix/cli.nix",
         );

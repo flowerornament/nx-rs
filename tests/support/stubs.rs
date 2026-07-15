@@ -174,7 +174,11 @@ case "$program" in
 
     if [ "${1:-}" = "flake" ] && [ "${2:-}" = "check" ]; then
       if [ "$mode" = "flake_check_fail" ]; then
-        echo "stub nix flake check failed" >&2
+        if [ "$output_demo" = "1" ]; then
+          echo 'error: flake evaluation failed' >&2
+        else
+          echo "stub nix flake check failed" >&2
+        fi
         exit 1
       fi
       if [ "$output_demo" = "1" ]; then
@@ -240,7 +244,7 @@ case "$program" in
         emit '@nix {"action":"result","fields":[12,51,3,0],"id":1,"type":105}'
         emit '@nix {"action":"start","fields":["https://cache.nixos.org/nar/long-demo-path"],"id":2,"level":0,"parent":0,"text":"","type":101}'
         emit '@nix {"action":"result","fields":[67108864,536870912,0,0],"id":2,"type":105}'
-        emit '@nix {"action":"msg","level":1,"msg":"warning: demo diagnostic interrupts progress\ncontinuation remains aligned"}'
+        emit '@nix {"action":"msg","level":1,"msg":"warning: substituter response was slow\ncontinuing with cached metadata"}'
         emit '@nix {"action":"result","fields":[36,51,2,0],"id":1,"type":105}'
         emit '@nix {"action":"result","fields":[402653184,536870912,0,0],"id":2,"type":105}'
         emit '@nix {"action":"result","fields":[51,51,0,0],"id":1,"type":105}'
@@ -427,16 +431,23 @@ case "$program" in
           exit 1
         fi
         if [ "$output_demo" = "1" ]; then
-          printf 'copying paths...\rbuilding derivations...\ractivation dependencies ready\n' >&2
+          printf '  copying paths...\r  building derivations...\r  activation dependencies ready\n' >&2
         else
           echo '@nix {"action":"start","id":1,"level":0,"parent":0,"text":"copying paths","type":103}' >&2
           echo '@nix {"action":"start","id":2,"level":0,"parent":0,"text":"building derivations","type":104}' >&2
         fi
-        echo "setting up /etc..." >&2
-        echo "Homebrew bundle..." >&2
-        echo "Activating home-manager configuration for test" >&2
-        echo "Activating linkGeneration" >&2
-        echo "stub activate ok"
+        if [ "$output_demo" = "1" ]; then
+          echo "  setting up /etc..." >&2
+          echo "  applying Homebrew bundle..." >&2
+          echo "  activating Home Manager..." >&2
+          echo "  linking generation..." >&2
+        else
+          echo "setting up /etc..." >&2
+          echo "Homebrew bundle..." >&2
+          echo "Activating home-manager configuration for test" >&2
+          echo "Activating linkGeneration" >&2
+          echo "stub activate ok"
+        fi
         exit 0
         ;;
     esac

@@ -955,26 +955,47 @@ fn gh_auth_token() -> String {
 }
 
 fn nix_access_tokens_config(token: &str) -> Option<String> {
-    (!token.is_empty()).then(|| format!("access-tokens = github.com={token}"))
+    (!token.is_empty()).then(|| format!("extra-access-tokens = github.com={token}"))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct NixConfig(String);
+
+impl NixConfig {
+    fn inherited_with(setting: &str) -> Self {
+        Self::compose(std::env::var("NIX_CONFIG").ok().as_deref(), setting)
+    }
+
+    pub(super) fn compose(inherited: Option<&str>, setting: &str) -> Self {
+        let inherited = inherited
+            .map(str::trim_end)
+            .filter(|value| !value.is_empty());
+        Self(inherited.map_or_else(
+            || setting.to_string(),
+            |value| format!("{value}\n{setting}"),
+        ))
+    }
+
+    pub(super) fn command_env(&self) -> [(&str, &str); 1] {
+        [("NIX_CONFIG", &self.0)]
+    }
 }
 
 #[derive(Debug, Default)]
 struct NixCommandEnv {
-    nix_config: Option<String>,
+    nix_config: Option<NixConfig>,
 }
 
 impl NixCommandEnv {
     fn from_gh() -> Self {
         Self {
-            nix_config: nix_access_tokens_config(&gh_auth_token()),
+            nix_config: nix_access_tokens_config(&gh_auth_token())
+                .map(|setting| NixConfig::inherited_with(&setting)),
         }
     }
 
     fn with_command_env<R>(&self, run: impl FnOnce(Option<&[(&str, &str)]>) -> R) -> R {
-        let env_pairs = self
-            .nix_config
-            .as_deref()
-            .map(|config| [("NIX_CONFIG", config)]);
+        let env_pairs = self.nix_config.as_ref().map(NixConfig::command_env);
         run(env_pairs.as_ref().map(<[(&str, &str); 1]>::as_slice))
     }
 }

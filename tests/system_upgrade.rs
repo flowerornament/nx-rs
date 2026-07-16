@@ -65,7 +65,6 @@ const SUDO_SET_HOME_ARG: &str = "-H";
 const ROOT_ENV_PROGRAM: &str = "/usr/bin/env";
 const ROOT_HOME_ENV_ARG: &str = "HOME=/var/root";
 const NIX_REMOTE_DAEMON_ENV_ARG: &str = "NIX_REMOTE=daemon";
-const NIX_CONFIG_INTERNAL_JSON_ARG: &str = "NIX_CONFIG=log-format = internal-json";
 const FLAKE_UPDATE_ARGS: &[&str] = &["--log-format", "internal-json", "flake", "update"];
 
 const UPGRADE_COMMIT_ARGS: &[&str] = &["upgrade", "--skip-brew", "--skip-rebuild", "--no-ai"];
@@ -130,7 +129,7 @@ const NIXPKGS_PREFETCH_ARGS: &[&str] = &[
     "--json",
     "github:NixOS/nixpkgs/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 ];
-const UPGRADE_NIX_CONFIG: &str = "access-tokens = github.com=ghp_system_matrix_token";
+const UPGRADE_NIX_CONFIG: &str = "extra-access-tokens = github.com=ghp_system_matrix_token";
 
 const UPGRADE_FLAKE_LOCK_OLD: &str = r#"{
   "nodes": {
@@ -347,8 +346,9 @@ const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
             ROOT_ENV_PROGRAM,
             ROOT_HOME_ENV_ARG,
             NIX_REMOTE_DAEMON_ENV_ARG,
-            NIX_CONFIG_INTERNAL_JSON_ARG,
             "nix-env",
+            "--log-format",
+            "internal-json",
             "-p",
             "/nix/var/nix/profiles/system",
             "--set",
@@ -363,7 +363,6 @@ const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
             ROOT_ENV_PROGRAM,
             ROOT_HOME_ENV_ARG,
             NIX_REMOTE_DAEMON_ENV_ARG,
-            NIX_CONFIG_INTERNAL_JSON_ARG,
             "/nix/store/new-system/activate",
         ],
     ),

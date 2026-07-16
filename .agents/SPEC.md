@@ -509,9 +509,9 @@ Experimental split Darwin rebuild:
 - If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
 - Otherwise reports successful build and profile-update phase completion, then runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
 - If direct split activation would require an interactive sudo prompt but the legacy `sudo darwin-rebuild` path is available non-interactively, falls back to legacy `darwin-rebuild` to preserve passwordless sudoers setups.
-- In interactive terminals, profile updates and direct activation use Nix's native `bar` format; `--verbose` selects `bar-with-logs`. Direct activation inherits all stdio. Captured activation and non-interactive `darwin-rebuild` fallback use `internal-json`. Nx owns the log format for managed user-facing Nix commands and removes conflicting passthrough selections.
+- In interactive terminals, profile updates use Nix's native `bar` format; `--verbose` selects `bar-with-logs`. Direct activation inherits all stdio so the activation script and nested tools retain their normal terminal behavior. Captured activation retains raw diagnostics but cannot impose a log format on nested commands. Non-interactive `darwin-rebuild` fallback uses `internal-json`. Nx owns the log format for Nix commands it invokes directly and removes conflicting passthrough selections.
 - Non-interactive runs and `--timing` do not render transient progress. They retain decoded diagnostics for retry/error detection and derive timing phases from typed Nix activities.
-- If rebuild fails with a Nix fixed-output hash mismatch, parse the `specified` and `got` hashes. If exactly one tracked `.nix` file contains the exact specified hash string and that file has no pre-existing staged or unstaged changes, update that occurrence to the got hash and retry rebuild. Disable automatic repair when `NX_NO_AUTO_HASH_FIX=1` (also accepting `true`, `yes`, or `on`). Stop automatic repairs after three fixed-output hash mismatches in one command and require manual review.
+- If a captured non-interactive or `--timing` rebuild fails with a Nix fixed-output hash mismatch, parse the `specified` and `got` hashes. If exactly one tracked `.nix` file contains the exact specified hash string and that file has no pre-existing staged or unstaged changes, update that occurrence to the got hash and retry rebuild. Disable automatic repair when `NX_NO_AUTO_HASH_FIX=1` (also accepting `true`, `yes`, or `on`). Stop automatic repairs after three fixed-output hash mismatches in one command and require manual review.
 - Captured non-interactive and `--timing` runs retry a bounded number of times after clearing Nix git/tarball/fetcher caches when output reports lazy source object lookup failures. Interactive native failures are shown directly and are never re-executed solely for diagnosis.
 - Retries after file descriptor exhaustion by clearing tarball/fetcher caches; root cache cleanup must be non-interactive.
 
@@ -550,7 +550,7 @@ High-level phases:
   - Before rebuilding, run a binary cache preflight: `nix build <repo_root>#darwinConfigurations.<host>.system --dry-run`, parse the will-be-built and will-be-fetched sections, and list up to 10 source-build derivation names (store hash prefix and `.drv` suffix stripped).
   - When source builds exceed `NX_CACHE_MISS_THRESHOLD` (default 5), warn that the binary cache has likely not caught up with the new nixpkgs revision and, in interactive terminals, prompt to continue (default no). Declining exits `0` before rebuild/commit, keeps the updated `flake.lock`, and prints the `git checkout flake.lock` revert hint.
   - Non-interactive sessions and preflight dry-run failures are warning-only; the rebuild remains authoritative. The preflight applies to Darwin repos (manifest platform `darwin` or no manifest) with a resolvable host.
-  - If rebuild fails with a Nix fixed-output hash mismatch, parse the `specified` and `got` hashes.
+  - If a captured non-interactive or `--timing` rebuild fails with a Nix fixed-output hash mismatch, parse the `specified` and `got` hashes.
   - If exactly one tracked `.nix` file contains the exact specified hash string and that file has no pre-existing staged or unstaged changes, update that occurrence to the got hash and retry rebuild.
   - Print the repaired file, line number, old hash, and new hash when automatic repair runs.
   - Disable automatic repair when `NX_NO_AUTO_HASH_FIX=1` (also accepting `true`, `yes`, or `on`).
@@ -586,7 +586,7 @@ Dry-run behavior:
 ## 11. Upgrade/Changelog Contracts
 
 - `stream_nix_update`:
-  - fetches `gh auth token` and passes it via `NIX_CONFIG=access-tokens = github.com=...` when available.
+  - fetches `gh auth token` and appends `extra-access-tokens = github.com=...` to inherited `NIX_CONFIG` when available, preserving existing token entries.
   - runs either `nix flake update` or `nix flake update <input...>` depending on whether targeted inputs were requested.
   - retries once if output indicates known fetcher-cache corruption.
   - corruption retry clears `~/.cache/nix/gitv3` and `~/.cache/nix/fetcher-cache-v4.sqlite`.
@@ -628,11 +628,12 @@ Dry-run behavior:
   cleanup, and top-level layout remain centralized.
 - Captured package/source lookups (`search`, `info`, install resolution, and Homebrew
   outdated checks) use shared loading scopes rather than one-off progress printers.
-- Interactive user-facing Nix updates, checks, builds, profile updates, and activation use
-  Nix's native `bar` renderer unchanged; `--verbose` selects `bar-with-logs`. Nx headings
-  remain in its own style, while native Nix rows are exempt from the two-space indentation
-  invariant. Non-interactive and `--timing` execution use `internal-json` for diagnostics
-  and timing data.
+- Interactive Nix updates, checks, builds, and profile updates use Nix's native `bar`
+  renderer unchanged; `--verbose` selects `bar-with-logs`. Interactive activation inherits
+  the terminal and preserves each nested tool's normal output. Nx headings remain in its own
+  style, while native child output is exempt from the two-space indentation invariant.
+  Non-interactive and `--timing` direct Nix commands use `internal-json` for diagnostics and
+  timing data; captured activation retains raw diagnostics.
 - Machine-readable Nix queries and dry-run planning remain fully captured because their
   stdout/stderr is command data. Structured warnings remain visible in non-interactive runs.
 - Store and generation maintenance commands stream their human result lines because the

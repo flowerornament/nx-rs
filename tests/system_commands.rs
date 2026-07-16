@@ -73,7 +73,6 @@ const SUDO_SET_HOME_ARG: &str = "-H";
 const ROOT_ENV_PROGRAM: &str = "/usr/bin/env";
 const ROOT_HOME_ENV_ARG: &str = "HOME=/var/root";
 const NIX_REMOTE_DAEMON_ENV_ARG: &str = "NIX_REMOTE=daemon";
-const NIX_CONFIG_INTERNAL_JSON_ARG: &str = "NIX_CONFIG=log-format = internal-json";
 
 const UPDATE_SUCCESS_CALLS: &[ExpectedCall] = &[ExpectedCall::new(
     "nix",
@@ -323,8 +322,9 @@ const SPLIT_REBUILD_PROFILE_SET_CALL: ExpectedCall = ExpectedCall::new(
         ROOT_ENV_PROGRAM,
         ROOT_HOME_ENV_ARG,
         NIX_REMOTE_DAEMON_ENV_ARG,
-        NIX_CONFIG_INTERNAL_JSON_ARG,
         "nix-env",
+        "--log-format",
+        "internal-json",
         "-p",
         "/nix/var/nix/profiles/system",
         "--set",
@@ -340,7 +340,6 @@ const SPLIT_REBUILD_ACTIVATE_CALL: ExpectedCall = ExpectedCall::new(
         ROOT_ENV_PROGRAM,
         ROOT_HOME_ENV_ARG,
         NIX_REMOTE_DAEMON_ENV_ARG,
-        NIX_CONFIG_INTERNAL_JSON_ARG,
         "/nix/store/new-system/activate",
     ],
 );

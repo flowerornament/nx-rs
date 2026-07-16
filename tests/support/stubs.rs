@@ -61,7 +61,7 @@ assert_native_nix_terminal() {
     exit 1
   fi
   case "$log_format" in
-    bar|bar-with-logs) ;;
+    bar|bar-with-logs|default) ;;
     *)
       echo "stub expected a native Nix log format, got ${log_format:-none}" >&2
       exit 1
@@ -447,12 +447,8 @@ case "$program" in
           exit 1
         fi
         if [ "$output_demo" = "1" ]; then
-          expected_format="${NIX_CONFIG#log-format = }"
-          log_format="$expected_format"
+          log_format="default"
           emit_native_nix_progress "activation"
-        else
-          echo '@nix {"action":"start","id":1,"level":0,"parent":0,"text":"copying paths","type":103}' >&2
-          echo '@nix {"action":"start","id":2,"level":0,"parent":0,"text":"building derivations","type":104}' >&2
         fi
         if [ "$output_demo" = "1" ]; then
           echo "  setting up /etc..." >&2

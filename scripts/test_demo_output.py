@@ -138,7 +138,7 @@ class DemoOutputTest(unittest.TestCase):
             native_progress("bar", "flake inputs"): 1,
             native_progress("bar", "flake check"): 2,
             native_progress("bar", "system build"): 1,
-            native_progress("bar", "activation"): 1,
+            native_progress("default", "activation"): 1,
             native_progress("bar-with-logs", "flake check"): 1,
         }
         for sequence, count in expected.items():

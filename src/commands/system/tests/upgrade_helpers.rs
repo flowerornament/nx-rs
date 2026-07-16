@@ -32,6 +32,24 @@ fn flake_update_selects_native_or_structured_nix_output() {
 }
 
 #[test]
+fn nix_config_appends_token_without_replacing_inherited_settings() {
+    let inherited = NixConfig::compose(
+        Some("substituters = https://cache.example\n\n"),
+        "extra-access-tokens = github.com=secret",
+    );
+    assert_eq!(
+        inherited.command_env()[0].1,
+        "substituters = https://cache.example\nextra-access-tokens = github.com=secret"
+    );
+
+    let standalone = NixConfig::compose(None, "extra-access-tokens = github.com=secret");
+    assert_eq!(
+        standalone.command_env()[0].1,
+        "extra-access-tokens = github.com=secret"
+    );
+}
+
+#[test]
 fn flake_compare_url_uses_short_revs() {
     let url = flake_compare_url(&sample_input_change());
     assert_eq!(

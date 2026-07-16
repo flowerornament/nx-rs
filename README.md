@@ -499,24 +499,24 @@ Runs `darwin-rebuild switch` for the managed repo.
 - Use `--preflight` to stop after lint, git, and flake checks without switching.
 - Use `--timing` to print phase timings after recording them locally.
 - Use `--verbose` to ask Nix for full build logs during rebuild phases.
-- Darwin split rebuilds raise Nix's file descriptor limit and retry bounded
-  source-cache failures before surfacing an error.
+- Structured Darwin split rebuilds raise Nix's file descriptor limit and retry
+  bounded source-cache failures before surfacing an error.
 - Interactive checks, builds, profile updates, and `darwin-rebuild` use Nix's
   native colored `bar` renderer unchanged. `--verbose` selects
   `bar-with-logs`. Nx captures split-build stdout only to read the resulting
   store path; Nix still owns terminal stderr.
-- Non-interactive runs and `--timing` use Nix's `internal-json` protocol for
-  diagnostics, timing, cache recovery, and safe hash repair. Interactive native
+- Direct Nix commands in non-interactive runs and `--timing` use Nix's
+  `internal-json` protocol for diagnostics, timing, cache recovery, and safe
+  hash repair. Captured activation retains raw diagnostics. Interactive native
   failures are already visible and are never re-executed solely for diagnosis.
 - If split activation would need an interactive sudo prompt and passwordless
   `sudo darwin-rebuild` is available, `nx` falls back to that path.
-- Interactive activation output passes through directly with `NIX_CONFIG`
-  selecting Nix's native `bar` log format, so Nix, Homebrew, and Home Manager
-  keep their normal progress behavior.
-- If rebuild reports a fixed-output hash mismatch, `nx rebuild` updates the
-  unique clean matching hash in a tracked `.nix` file and retries. It prints the
-  file, line, old hash, and new hash. Set `NX_NO_AUTO_HASH_FIX=1` to require a
-  manual edit.
+- Interactive activation inherits the terminal directly, so Nix, Homebrew, and
+  Home Manager keep their normal progress behavior.
+- If a structured rebuild reports a fixed-output hash mismatch, `nx rebuild`
+  updates the unique clean matching hash in a tracked `.nix` file and retries.
+  It prints the file, line, old hash, and new hash. Set
+  `NX_NO_AUTO_HASH_FIX=1` to require a manual edit.
 - Additional args after `--` pass through to the underlying `darwin-rebuild`
   command except `--log-format`, which nx owns for managed Nix output.
 
@@ -544,15 +544,16 @@ Runs the upgrade flow for either the whole repo or named flake inputs.
 - After changed GitHub-backed inputs are written to `flake.lock`, `nx upgrade`
   prefetches those exact revisions so lazy source caches are warm before flake
   check and rebuild.
-- If rebuild reports a fixed-output hash mismatch, `nx` updates the unique clean
-  matching hash in a tracked `.nix` file, retries, and includes that file in the
-  upgrade commit. It prints the file, line, old hash, and new hash. If repair is
-  unsafe, it prints the exact next action.
+- If a structured rebuild reports a fixed-output hash mismatch, `nx` updates
+  the unique clean matching hash in a tracked `.nix` file, retries, and includes
+  that file in the upgrade commit. It prints the file, line, old hash, and new
+  hash. If repair is unsafe, it prints the exact next action.
 - Homebrew update checks show live loading feedback before upgrade details are
   rendered.
 - Interactive flake updates, checks, and builds preserve Nix's native colored
   `bar` progress exactly; native Nix rows are intentionally not indented by nx.
-- Use `--verbose` to select Nix's native `bar-with-logs` output.
+- Use `--verbose` to select Nix's native `bar-with-logs` output for direct Nix
+  phases.
 - Targeted input upgrades skip the Homebrew phase by default.
 - Use `--skip-brew`, `--skip-rebuild`, or `--skip-commit` to trim the flow.
 - Use `--no-ai` to disable AI-generated summaries and recovery prompts.

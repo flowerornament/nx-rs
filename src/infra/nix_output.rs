@@ -71,35 +71,11 @@ pub(crate) enum NixLogFormat {
 }
 
 impl NixLogFormat {
-    pub(crate) const fn for_native_terminal(verbose: bool) -> Self {
-        if verbose {
-            Self::BarWithLogs
-        } else {
-            Self::Bar
-        }
-    }
-
     pub(crate) const fn as_arg(self) -> &'static str {
         match self {
             Self::InternalJson => "internal-json",
             Self::Bar => "bar",
             Self::BarWithLogs => "bar-with-logs",
-        }
-    }
-
-    pub(crate) const fn as_config(self) -> &'static str {
-        match self {
-            Self::InternalJson => "log-format = internal-json",
-            Self::Bar => "log-format = bar",
-            Self::BarWithLogs => "log-format = bar-with-logs",
-        }
-    }
-
-    pub(crate) const fn as_env_assignment(self) -> &'static str {
-        match self {
-            Self::InternalJson => "NIX_CONFIG=log-format = internal-json",
-            Self::Bar => "NIX_CONFIG=log-format = bar",
-            Self::BarWithLogs => "NIX_CONFIG=log-format = bar-with-logs",
         }
     }
 }

@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- preserves Nix's native colored `bar` and `bar-with-logs` terminal renderers unchanged across interactive update, check, build, profile-update, and rebuild paths, while retaining structured diagnostics and recovery for non-interactive execution
+- preserves Nix's native colored `bar` and `bar-with-logs` terminal renderers unchanged across direct interactive update, check, build, and profile-update paths; activation inherits the terminal unchanged, while non-interactive direct Nix execution retains structured diagnostics and recovery
+- preserves inherited `NIX_CONFIG` settings and token entries when nx appends its GitHub token bridge
 - removes nx's legacy aggregate Nix progress renderer and its `console` dependency, leaving terminal presentation to Nix and keeping only the structured-event decoder needed for diagnostics and timing
 - makes `just demo-output` use nx's colored status language and prove native passthrough from exact ANSI, carriage-return, and erase-line child bytes before snapshotting the final terminal screen
 - keeps cache-preflight details and rebuild completion statuses attached to their action groups without stray blank rows

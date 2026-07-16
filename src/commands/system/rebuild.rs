@@ -36,7 +36,6 @@ const SUDO_SET_HOME_ARG: &str = "-H";
 const ROOT_HOME_ENV: &str = "HOME=/var/root";
 const NIX_REMOTE_DAEMON_ENV: &str = "NIX_REMOTE=daemon";
 const ENV_WRAPPER: &str = "/usr/bin/env";
-const NIX_CONFIG_ENV_KEY: &str = "NIX_CONFIG";
 const NO_AUTO_HASH_FIX_ENV: &str = "NX_NO_AUTO_HASH_FIX";
 const MAX_AUTO_HASH_FIXES: usize = 3;
 const MAX_REBUILD_ATTEMPTS: usize = 8;
@@ -73,7 +72,7 @@ impl RebuildOutputMode {
         let native_activation = native_rebuild_output_enabled(args);
         Self {
             build: NixOutputMode::for_terminal(args.verbose, native_activation),
-            activation: ActivationOutputMode::from_args(args, native_activation),
+            activation: ActivationOutputMode::from_terminal(native_activation),
         }
     }
 }
@@ -81,22 +80,15 @@ impl RebuildOutputMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActivationOutputMode {
     Captured,
-    Native(NixLogFormat),
+    Native,
 }
 
 impl ActivationOutputMode {
-    const fn from_args(args: &RebuildArgs, native_enabled: bool) -> Self {
+    const fn from_terminal(native_enabled: bool) -> Self {
         if native_enabled {
-            Self::Native(NixLogFormat::for_native_terminal(args.verbose))
+            Self::Native
         } else {
             Self::Captured
-        }
-    }
-
-    const fn nix_log_format(self) -> Option<NixLogFormat> {
-        match self {
-            Self::Captured => None,
-            Self::Native(format) => Some(format),
         }
     }
 }
@@ -865,26 +857,17 @@ fn activate_system(
     let mut child_phases = Vec::new();
     let (output, mut phase) = timed_phase("activate", || {
         ctx.printer.action("Activating system");
-        if let Some(log_format) = output_mode.nix_log_format() {
-            let code = run_split_command_native(
-                use_sudo,
-                &format!("{system_config}/activate"),
-                &[],
-                ctx,
-                Some(log_format),
-            )?;
+        if output_mode == ActivationOutputMode::Native {
+            let code =
+                run_split_command_native(use_sudo, &format!("{system_config}/activate"), &[], ctx)?;
             return Ok(CapturedCommand::presented(
                 code,
                 String::new(),
                 String::new(),
             ));
         }
-        let (output, phases) = run_split_nix_command(
-            use_sudo,
-            &format!("{system_config}/activate"),
-            &[],
-            NixOutputMode::Structured,
-        )?;
+        let (output, phases) =
+            run_split_command_captured(use_sudo, &format!("{system_config}/activate"), &[])?;
         child_phases = phases;
         Ok(output)
     })?;
@@ -898,17 +881,9 @@ fn run_split_command_native(
     program: &str,
     args: &[&str],
     ctx: &SystemContext<'_>,
-    log_format: Option<NixLogFormat>,
 ) -> anyhow::Result<i32> {
-    let (runner, runner_args) = split_command_invocation(use_sudo, program, args, log_format);
-    let env = nix_config_env(use_sudo, log_format);
-    run_native_command_with_env(
-        runner,
-        &runner_args,
-        None,
-        env.as_ref().map(<[(&str, &str); 1]>::as_slice),
-        ctx.printer,
-    )
+    let (runner, runner_args) = split_command_invocation(use_sudo, program, args);
+    run_native_command_with_env(runner, &runner_args, None, None, ctx.printer)
 }
 
 fn run_split_nix_command(
@@ -917,47 +892,44 @@ fn run_split_nix_command(
     args: &[&str],
     output_mode: NixOutputMode,
 ) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)> {
-    let log_format = output_mode.log_format();
-    let (runner, runner_args) = split_command_invocation(use_sudo, program, args, Some(log_format));
-    let env = nix_config_env(use_sudo, Some(log_format));
-    let (output, phases) = run_nix_command_with_stdout_profiled(
-        runner,
-        &runner_args,
-        None,
-        env.as_ref().map(<[(&str, &str); 1]>::as_slice),
-        output_mode,
-    )?;
+    let base_args = args.iter().map(ToString::to_string).collect::<Vec<_>>();
+    let command_args = output_mode.command_args(&base_args);
+    let arg_refs = command_args.iter().map(String::as_str).collect::<Vec<_>>();
+    let (runner, runner_args) = split_command_invocation(use_sudo, program, &arg_refs);
+    let (output, phases) =
+        run_nix_command_with_stdout_profiled(runner, &runner_args, None, None, output_mode)?;
     Ok((output, phases))
 }
 
-fn nix_config_env(
+fn run_split_command_captured(
     use_sudo: bool,
-    log_format: Option<NixLogFormat>,
-) -> Option<[(&'static str, &'static str); 1]> {
-    (!use_sudo)
-        .then_some(log_format)
-        .flatten()
-        .map(|format| [(NIX_CONFIG_ENV_KEY, format.as_config())])
+    program: &str,
+    args: &[&str],
+) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)> {
+    let (runner, runner_args) = split_command_invocation(use_sudo, program, args);
+    run_nix_command_with_stdout_profiled(
+        runner,
+        &runner_args,
+        None,
+        None,
+        NixOutputMode::Structured,
+    )
 }
 
 fn split_command_invocation<'a>(
     use_sudo: bool,
     program: &'a str,
     args: &'a [&'a str],
-    log_format: Option<NixLogFormat>,
 ) -> (&'a str, Vec<&'a str>) {
     if !use_sudo {
         return (program, args.to_vec());
     }
 
-    let mut sudo_args = Vec::with_capacity(args.len() + 6);
+    let mut sudo_args = Vec::with_capacity(args.len() + 5);
     sudo_args.push(SUDO_SET_HOME_ARG);
     sudo_args.push(ENV_WRAPPER);
     sudo_args.push(ROOT_HOME_ENV);
     sudo_args.push(NIX_REMOTE_DAEMON_ENV);
-    if let Some(format) = log_format {
-        sudo_args.push(format.as_env_assignment());
-    }
     sudo_args.push(program);
     sudo_args.extend(args.iter().copied());
     ("sudo", sudo_args)

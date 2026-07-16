@@ -471,8 +471,9 @@ Network behavior:
 
 ## 10.2 `update`
 
-- Runs `nix flake update` with `--log-format internal-json` and the shared structured Nix progress renderer.
-- Accepts passthrough args.
+- In an interactive terminal, runs `nix flake update` with `--log-format bar`, inheriting stdin and stderr so Nix renders its native colored progress UI unchanged.
+- In non-interactive execution, uses `--log-format internal-json` and retains decoded diagnostics.
+- Accepts passthrough args except conflicting `--log-format` selections, which nx removes.
 - Success message instructs `nx rebuild` or `nx upgrade`.
 
 ## 10.3 `test`
@@ -502,16 +503,16 @@ Experimental split Darwin rebuild:
 - `NX_SPLIT_DARWIN=1` enables the split path for Darwin repos without a manifest.
 - Applies only to Darwin manifests using the default `darwin-rebuild` command and no passthrough args.
 - Falls back to the default rebuild path when the split path cannot confidently preserve behavior.
-- Runs `nix build --no-link --print-out-paths --log-format internal-json <repo_root>#darwinConfigurations.<host>.system` under a raised file descriptor limit.
-- Captured Nix commands use Nix's structured activity protocol. In interactive terminals, nx aggregates build counts, copy/download progress, phases, and the active operation into one throttled live status line bounded to the current terminal width, clearing it as soon as the final activity stops. Nix message records interrupt the live row and render as two-space-indented diagnostics while remaining unchanged in the bounded tail used for retry and failure detection. A failed command replays captured diagnostics only when they were not already presented. `--verbose` streams Nix stderr with `bar-with-logs`.
+- Runs `nix build --no-link --print-out-paths <repo_root>#darwinConfigurations.<host>.system` under a raised file descriptor limit. Interactive runs select `--log-format bar`; `--verbose` selects `bar-with-logs`; non-interactive and `--timing` runs select `internal-json`.
+- Interactive user-facing Nix commands inherit stdin and stderr. Nx may capture stdout when it is command data, such as the split build's resulting store path, but it never parses, prefixes, indents, or re-renders native Nix terminal output.
 - Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get LocalHostName`, then `hostname -s`.
 - If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
 - Otherwise reports successful build and profile-update phase completion, then runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
 - If direct split activation would require an interactive sudo prompt but the legacy `sudo darwin-rebuild` path is available non-interactively, falls back to legacy `darwin-rebuild` to preserve passwordless sudoers setups.
-- In interactive terminals, direct activation inherits stdio and sets `NIX_CONFIG` to Nix's native `bar` format; `--verbose` selects `bar-with-logs`. Captured activation and `darwin-rebuild` fallback use `internal-json` unless the user passed a log format explicitly.
+- In interactive terminals, profile updates and direct activation use Nix's native `bar` format; `--verbose` selects `bar-with-logs`. Direct activation inherits all stdio. Captured activation and non-interactive `darwin-rebuild` fallback use `internal-json`. Nx owns the log format for managed user-facing Nix commands and removes conflicting passthrough selections.
 - Non-interactive runs and `--timing` do not render transient progress. They retain decoded diagnostics for retry/error detection and derive timing phases from typed Nix activities.
 - If rebuild fails with a Nix fixed-output hash mismatch, parse the `specified` and `got` hashes. If exactly one tracked `.nix` file contains the exact specified hash string and that file has no pre-existing staged or unstaged changes, update that occurrence to the got hash and retry rebuild. Disable automatic repair when `NX_NO_AUTO_HASH_FIX=1` (also accepting `true`, `yes`, or `on`). Stop automatic repairs after three fixed-output hash mismatches in one command and require manual review.
-- Retries a bounded number of times after clearing Nix git/tarball/fetcher caches when flake check or rebuild output reports lazy source object lookup failures.
+- Captured non-interactive and `--timing` runs retry a bounded number of times after clearing Nix git/tarball/fetcher caches when output reports lazy source object lookup failures. Interactive native failures are shown directly and are never re-executed solely for diagnosis.
 - Retries after file descriptor exhaustion by clearing tarball/fetcher caches; root cache cleanup must be non-interactive.
 
 Routing lint rules:
@@ -627,18 +628,19 @@ Dry-run behavior:
   cleanup, and top-level layout remain centralized.
 - Captured package/source lookups (`search`, `info`, install resolution, and Homebrew
   outdated checks) use shared loading scopes rather than one-off progress printers.
-- User-facing Nix updates, checks, builds, and captured activation commands use
-  `internal-json`; nx renders aggregate activity progress in interactive terminals and
-  retains decoded diagnostics. `--verbose` uses `bar-with-logs`, while directly inherited
-  activation uses Nix's native `bar`.
+- Interactive user-facing Nix updates, checks, builds, profile updates, and activation use
+  Nix's native `bar` renderer unchanged; `--verbose` selects `bar-with-logs`. Nx headings
+  remain in its own style, while native Nix rows are exempt from the two-space indentation
+  invariant. Non-interactive and `--timing` execution use `internal-json` for diagnostics
+  and timing data.
 - Machine-readable Nix queries and dry-run planning remain fully captured because their
-  stdout/stderr is command data. `--timing` suppresses transient progress, and structured
-  warnings remain visible in non-interactive runs.
+  stdout/stderr is command data. Structured warnings remain visible in non-interactive runs.
 - Store and generation maintenance commands stream their human result lines because the
   deleted paths and generations are the user-facing payload, not fetch/build progress.
-- `just demo-output` runs representative commands in a real pseudo-terminal. Its normalized
-  final screen is snapshot-tested, including colors, carriage-return cleanup, vertical rhythm,
-  detail indentation, and exactly-once diagnostics.
+- `just demo-output` runs representative commands in a real pseudo-terminal. Tests verify
+  exact native child byte sequences before snapshotting the normalized final screen, including
+  `bar`, `bar-with-logs`, colors, carriage returns, erase-line controls, vertical rhythm, and
+  exactly-once diagnostics.
 - Dry-run install output includes `Dry Run`.
 - Dry-run remove output includes `Would remove`.
 - Rebuild flow invokes streaming command path when preflight and flake-check pass.

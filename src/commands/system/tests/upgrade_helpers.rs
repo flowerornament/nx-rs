@@ -14,15 +14,19 @@ fn sample_upgrade_args() -> UpgradeArgs {
 }
 
 #[test]
-fn flake_update_selects_structured_or_verbose_nix_output() {
+fn flake_update_selects_native_or_structured_nix_output() {
     let base = vec!["flake".to_string(), "update".to_string()];
 
     assert_eq!(
-        nix_update_output_args(&base, false),
+        NixOutputMode::for_terminal(false, false).command_args(&base),
         ["--log-format", "internal-json", "flake", "update"]
     );
     assert_eq!(
-        nix_update_output_args(&base, true),
+        NixOutputMode::for_terminal(false, true).command_args(&base),
+        ["--log-format", "bar", "flake", "update"]
+    );
+    assert_eq!(
+        NixOutputMode::for_terminal(true, true).command_args(&base),
         ["--log-format", "bar-with-logs", "flake", "update"]
     );
 }

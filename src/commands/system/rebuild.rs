@@ -5,12 +5,11 @@ use std::time::Instant;
 use crate::cli::RebuildArgs;
 use crate::commands::context::SystemContext;
 use crate::domain::manifest::{Manifest, PlatformKind};
-use crate::infra::nix_output::{NixLogFormat, NixOutputMode};
+use crate::infra::nix_output::{NixLogFormat, NixOutputMode, without_log_format_args};
 use crate::infra::shell::{
     CapturedCommand, first_nonempty_output, first_unpresented_output, run_captured_command,
     run_indented_command_collecting_with_env, run_native_command_with_env,
-    run_stdout_collecting_nix_stderr_with_env_profiled, run_stdout_collecting_tee_stderr_with_env,
-    terminal_stdio_available,
+    run_nix_command_with_stdout, run_nix_command_with_stdout_profiled, terminal_stdio_available,
 };
 use crate::infra::timing::{
     TimingCommand, TimingPhase, TimingRecord, TimingSession, append_timing, timing_detail_lines,
@@ -67,16 +66,14 @@ pub(super) struct RebuildCommandResult {
 struct RebuildOutputMode {
     build: NixOutputMode,
     activation: ActivationOutputMode,
-    render_progress: bool,
 }
 
 impl RebuildOutputMode {
     fn from_args(args: &RebuildArgs) -> Self {
         let native_activation = native_rebuild_output_enabled(args);
         Self {
-            build: NixOutputMode::from_verbose(args.verbose),
+            build: NixOutputMode::for_terminal(args.verbose, native_activation),
             activation: ActivationOutputMode::from_args(args, native_activation),
-            render_progress: !args.timing,
         }
     }
 }
@@ -147,7 +144,9 @@ fn run_rebuild(
         };
     }
 
-    let flake_code = timing.record_result_phase("flake-check", || check_flake(ctx, !args.timing));
+    let flake_output =
+        NixOutputMode::for_terminal(args.verbose, !args.timing && terminal_stdio_available());
+    let flake_code = timing.record_result_phase("flake-check", || check_flake(ctx, flake_output));
     if let Some(code) = flake_code {
         return RebuildCommandResult {
             code,
@@ -318,10 +317,10 @@ fn check_git_preflight(ctx: &SystemContext<'_>) -> Result<(), i32> {
     Err(1)
 }
 
-fn check_flake(ctx: &SystemContext<'_>, render_progress: bool) -> Result<(), i32> {
+fn check_flake(ctx: &SystemContext<'_>, output_mode: NixOutputMode) -> Result<(), i32> {
     let repo = ctx.repo_root.display().to_string();
     let base_args = vec!["flake".to_string(), "check".to_string(), repo];
-    let args = NixOutputMode::Structured.command_args(&base_args);
+    let args = output_mode.command_args(&base_args);
     let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
 
     for attempt in 0..2 {
@@ -331,19 +330,14 @@ fn check_flake(ctx: &SystemContext<'_>, render_progress: bool) -> Result<(), i32
             ctx.printer.action("Retrying flake check");
         }
 
-        let output = match run_stdout_collecting_nix_stderr_with_env_profiled(
-            "nix",
-            &arg_refs,
-            None,
-            None,
-            render_progress,
-        ) {
-            Ok((output, _)) => output,
-            Err(err) => {
-                ctx.printer.error(&format!("Flake check failed: {err:#}"));
-                return Err(1);
-            }
-        };
+        let output =
+            match run_nix_command_with_stdout_profiled("nix", &arg_refs, None, None, output_mode) {
+                Ok((output, _)) => output,
+                Err(err) => {
+                    ctx.printer.error(&format!("Flake check failed: {err:#}"));
+                    return Err(1);
+                }
+            };
 
         if output.code == 0 {
             ctx.printer.success("Flake check passed");
@@ -656,11 +650,14 @@ fn run_darwin_rebuild(
     use_sudo: bool,
     rebuild_command_override: Option<&str>,
 ) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)> {
+    let output_mode =
+        NixOutputMode::for_terminal(args.verbose, native_rebuild_output_enabled(args));
     let rebuild_cmd = build_rebuild_command_with_manifest_and_log_format(
         repo,
         args,
         manifest,
         rebuild_command_override,
+        output_mode.log_format(),
     );
 
     let (runner, runner_args): (&str, Vec<&str>) = if use_sudo {
@@ -673,12 +670,8 @@ fn run_darwin_rebuild(
         (first.as_str(), rest.iter().map(String::as_str).collect())
     };
 
-    let (output, phases) = run_nix_output_profiled(
-        runner,
-        &runner_args,
-        NixOutputMode::from_verbose(args.verbose),
-        !args.timing,
-    )?;
+    let (output, phases) =
+        run_nix_command_with_stdout_profiled(runner, &runner_args, None, None, output_mode)?;
     Ok((output, phases))
 }
 
@@ -774,7 +767,7 @@ fn do_split_darwin_rebuild(
     }
 
     let (set_profile, set_profile_phase) =
-        match set_system_profile(ctx, use_sudo, output_mode.render_progress, &system_config) {
+        match set_system_profile(ctx, use_sudo, output_mode.build, &system_config) {
             Ok(result) => result,
             Err(err) => return SplitDarwinResult::Handled(Err(err)),
         };
@@ -784,16 +777,11 @@ fn do_split_darwin_rebuild(
     }
     ctx.printer.success("System profile updated");
 
-    let (activate, activate_phase) = match activate_system(
-        ctx,
-        use_sudo,
-        output_mode.activation,
-        output_mode.render_progress,
-        &system_config,
-    ) {
-        Ok(result) => result,
-        Err(err) => return SplitDarwinResult::Handled(Err(err)),
-    };
+    let (activate, activate_phase) =
+        match activate_system(ctx, use_sudo, output_mode.activation, &system_config) {
+            Ok(result) => result,
+            Err(err) => return SplitDarwinResult::Handled(Err(err)),
+        };
     phases.push(activate_phase);
     SplitDarwinResult::Handled(Ok((activate, phases, RebuildOutcome::Rebuilt)))
 }
@@ -813,11 +801,12 @@ fn build_split_system_config(
     let build_arg_refs: Vec<&str> = build_args.iter().map(String::as_str).collect();
     let (build, mut phase) = timed_phase("build", || {
         ctx.printer.action("Building system configuration");
-        let output = run_nix_output(
+        let output = run_nix_command_with_stdout(
             &build_program,
             &build_arg_refs,
+            None,
+            None,
             output_mode.build,
-            output_mode.render_progress,
         )?;
         Ok(output)
     })?;
@@ -826,37 +815,6 @@ fn build_split_system_config(
         output: build,
         phase,
     })
-}
-
-fn run_nix_output(
-    program: &str,
-    args: &[&str],
-    mode: NixOutputMode,
-    render_progress: bool,
-) -> anyhow::Result<crate::infra::shell::CapturedCommand> {
-    Ok(run_nix_output_profiled(program, args, mode, render_progress)?.0)
-}
-
-fn run_nix_output_profiled(
-    program: &str,
-    args: &[&str],
-    mode: NixOutputMode,
-    render_progress: bool,
-) -> anyhow::Result<(crate::infra::shell::CapturedCommand, Vec<TimingPhase>)> {
-    if mode.is_verbose() {
-        Ok((
-            run_stdout_collecting_tee_stderr_with_env(program, args, None, None)?,
-            Vec::new(),
-        ))
-    } else {
-        run_stdout_collecting_nix_stderr_with_env_profiled(
-            program,
-            args,
-            None,
-            None,
-            render_progress,
-        )
-    }
 }
 
 pub(super) fn split_nix_build_command_with_log_format(
@@ -881,7 +839,7 @@ enum SplitDarwinResult {
 fn set_system_profile(
     ctx: &SystemContext<'_>,
     use_sudo: bool,
-    render_progress: bool,
+    output_mode: NixOutputMode,
     system_config: &str,
 ) -> anyhow::Result<(CapturedCommand, TimingPhase)> {
     let (output, mut phase) = timed_phase("profile-set", || {
@@ -890,8 +848,7 @@ fn set_system_profile(
             use_sudo,
             "nix-env",
             &["-p", SYSTEM_PROFILE, "--set", system_config],
-            NixLogFormat::InternalJson,
-            render_progress,
+            output_mode,
         )
         .map(|(output, _)| output)
     })?;
@@ -903,7 +860,6 @@ fn activate_system(
     ctx: &SystemContext<'_>,
     use_sudo: bool,
     output_mode: ActivationOutputMode,
-    render_progress: bool,
     system_config: &str,
 ) -> anyhow::Result<(CapturedCommand, TimingPhase)> {
     let mut child_phases = Vec::new();
@@ -927,8 +883,7 @@ fn activate_system(
             use_sudo,
             &format!("{system_config}/activate"),
             &[],
-            NixLogFormat::InternalJson,
-            render_progress,
+            NixOutputMode::Structured,
         )?;
         child_phases = phases;
         Ok(output)
@@ -960,17 +915,17 @@ fn run_split_nix_command(
     use_sudo: bool,
     program: &str,
     args: &[&str],
-    log_format: NixLogFormat,
-    render_progress: bool,
+    output_mode: NixOutputMode,
 ) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)> {
+    let log_format = output_mode.log_format();
     let (runner, runner_args) = split_command_invocation(use_sudo, program, args, Some(log_format));
     let env = nix_config_env(use_sudo, Some(log_format));
-    let (output, phases) = run_stdout_collecting_nix_stderr_with_env_profiled(
+    let (output, phases) = run_nix_command_with_stdout_profiled(
         runner,
         &runner_args,
         None,
         env.as_ref().map(<[(&str, &str); 1]>::as_slice),
-        render_progress,
+        output_mode,
     )?;
     Ok((output, phases))
 }
@@ -1188,7 +1143,13 @@ pub(super) fn build_rebuild_command_with_manifest(
     args: &RebuildArgs,
     manifest: Option<&Manifest>,
 ) -> Vec<String> {
-    build_rebuild_command_with_manifest_and_log_format(repo, args, manifest, None)
+    build_rebuild_command_with_manifest_and_log_format(
+        repo,
+        args,
+        manifest,
+        None,
+        NixLogFormat::InternalJson,
+    )
 }
 
 fn build_rebuild_command_with_manifest_and_log_format(
@@ -1196,6 +1157,7 @@ fn build_rebuild_command_with_manifest_and_log_format(
     args: &RebuildArgs,
     manifest: Option<&Manifest>,
     rebuild_command_override: Option<&str>,
+    log_format: NixLogFormat,
 ) -> Vec<String> {
     let rebuild_bin = rebuild_command_override
         .or_else(|| manifest.map(|m| m.platform.rebuild_command.as_str()))
@@ -1207,20 +1169,17 @@ fn build_rebuild_command_with_manifest_and_log_format(
         "--flake".to_string(),
         repo.to_string(),
     ];
-    if rebuild_supports_nix_log_format(rebuild_bin) && !has_log_format_arg(&args.passthrough) {
-        let format = NixOutputMode::from_verbose(args.verbose).log_format();
-        rebuild_args.extend(["--log-format".to_string(), format.as_arg().to_string()]);
+    if rebuild_supports_nix_log_format(rebuild_bin) {
+        rebuild_args.extend(["--log-format".to_string(), log_format.as_arg().to_string()]);
+        rebuild_args.extend(without_log_format_args(&args.passthrough));
+    } else {
+        rebuild_args.extend(args.passthrough.iter().cloned());
     }
-    rebuild_args.extend(args.passthrough.iter().cloned());
     rebuild_args
 }
 
 fn rebuild_supports_nix_log_format(rebuild_bin: &str) -> bool {
     rebuild_bin.rsplit('/').next() == Some("darwin-rebuild")
-}
-
-fn has_log_format_arg(args: &[String]) -> bool {
-    args.iter().any(|arg| arg == "--log-format")
 }
 
 /// Clear root's nix tarball pack cache to reduce open file pressure during rebuild.

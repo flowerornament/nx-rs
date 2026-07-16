@@ -10,8 +10,8 @@ use crate::infra::ai_engine::DEFAULT_CODEX_MODEL;
 use crate::infra::nix_output::NixOutputMode;
 use crate::infra::shell::{
     first_nonempty_output, first_unpresented_output, run_captured_command,
-    run_captured_command_with_env, run_indented_command, run_stdout_collecting_nix_stderr_with_env,
-    run_stdout_collecting_tee_stderr_with_env,
+    run_captured_command_with_env, run_indented_command, run_nix_command_with_stdout,
+    terminal_stdio_available,
 };
 use crate::output::printer::Printer;
 
@@ -805,25 +805,13 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext, nix_env: &NixCommandE
             ctx.printer.action("Retrying flake update");
         }
 
-        let nix_args = nix_update_output_args(&base_args, args.flow.verbose);
+        let output_mode =
+            NixOutputMode::for_terminal(args.flow.verbose, terminal_stdio_available());
+        let nix_args = output_mode.command_args(&base_args);
         let (program, cmd_args) = build_nix_command(&nix_args, raise_nofile);
         let arg_refs: Vec<&str> = cmd_args.iter().map(String::as_str).collect();
         let output = match nix_env.with_command_env(|env| {
-            if args.flow.verbose {
-                run_stdout_collecting_tee_stderr_with_env(
-                    &program,
-                    &arg_refs,
-                    Some(&ctx.repo_root),
-                    env,
-                )
-            } else {
-                run_stdout_collecting_nix_stderr_with_env(
-                    &program,
-                    &arg_refs,
-                    Some(&ctx.repo_root),
-                    env,
-                )
-            }
+            run_nix_command_with_stdout(&program, &arg_refs, Some(&ctx.repo_root), env, output_mode)
         }) {
             Ok(result) => result,
             Err(err) => {
@@ -866,10 +854,6 @@ fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext, nix_env: &NixCommandE
     }
 
     false
-}
-
-pub(super) fn nix_update_output_args(base_args: &[String], verbose: bool) -> Vec<String> {
-    NixOutputMode::from_verbose(verbose).command_args(base_args)
 }
 
 fn combined_command_output(output: &crate::infra::shell::CapturedCommand) -> String {

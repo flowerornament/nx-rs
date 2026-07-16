@@ -73,7 +73,7 @@ fn rebuild_command_uses_manifest_rebuild_command() {
 }
 
 #[test]
-fn rebuild_command_respects_passthrough_log_format() {
+fn rebuild_command_owns_log_format() {
     let args = RebuildArgs {
         preflight: false,
         timing: false,
@@ -89,7 +89,7 @@ fn rebuild_command_respects_passthrough_log_format() {
             "--flake".to_string(),
             "/test".to_string(),
             "--log-format".to_string(),
-            "raw".to_string(),
+            "internal-json".to_string(),
         ]
     );
 }
@@ -178,7 +178,9 @@ fn split_build_log_format_uses_structured_output_by_default() {
         "internal-json"
     );
     assert_eq!(
-        NixOutputMode::Verbose.log_format().as_arg(),
+        NixOutputMode::for_terminal(true, true)
+            .log_format()
+            .as_arg(),
         "bar-with-logs"
     );
 }

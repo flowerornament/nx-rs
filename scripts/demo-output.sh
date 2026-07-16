@@ -90,6 +90,9 @@ run_nx success list
 scenario 'nx rebuild --preflight'
 run_nx success rebuild --preflight
 
+scenario 'nx rebuild --preflight --verbose'
+run_nx success rebuild --preflight --verbose
+
 scenario 'nx rebuild --preflight  # expected failure'
 if run_nx flake_check_fail rebuild --preflight; then
   error 'Expected rebuild preflight to fail'

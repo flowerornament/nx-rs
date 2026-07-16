@@ -479,9 +479,10 @@ confirmation prompt.
 
 #### `update`
 
-Runs `nix flake update` with the same structured, in-place Nix progress used by
-`upgrade` and `rebuild`. Additional args after `--` pass through to the
-underlying flake update invocation.
+Runs `nix flake update`. In a terminal, Nix owns stderr and renders its native
+colored `bar` progress unchanged. Non-interactive execution uses structured
+diagnostics. Additional args after `--` pass through to the underlying flake
+update invocation except `--log-format`, which nx owns.
 
 ---
 
@@ -500,23 +501,24 @@ Runs `darwin-rebuild switch` for the managed repo.
 - Use `--verbose` to ask Nix for full build logs during rebuild phases.
 - Darwin split rebuilds raise Nix's file descriptor limit and retry bounded
   source-cache failures before surfacing an error.
-- Captured builds and `darwin-rebuild` fallback use Nix's `internal-json`
-  activity protocol. In a terminal, `nx` shows one throttled live line with
-  build counts, transfer progress, phases, and the active operation. Structured
-  diagnostics remain available for retry and failure handling. `--verbose`
-  uses `bar-with-logs` and streams full logs.
+- Interactive checks, builds, profile updates, and `darwin-rebuild` use Nix's
+  native colored `bar` renderer unchanged. `--verbose` selects
+  `bar-with-logs`. Nx captures split-build stdout only to read the resulting
+  store path; Nix still owns terminal stderr.
+- Non-interactive runs and `--timing` use Nix's `internal-json` protocol for
+  diagnostics, timing, cache recovery, and safe hash repair. Interactive native
+  failures are already visible and are never re-executed solely for diagnosis.
 - If split activation would need an interactive sudo prompt and passwordless
   `sudo darwin-rebuild` is available, `nx` falls back to that path.
 - Interactive activation output passes through directly with `NIX_CONFIG`
-  setting Nix's native `bar` log format, so Nix, Homebrew, and Home Manager keep
-  their normal progress behavior. Non-interactive runs and `--timing` retain
-  decoded diagnostics and derive timing phases from structured Nix activities.
+  selecting Nix's native `bar` log format, so Nix, Homebrew, and Home Manager
+  keep their normal progress behavior.
 - If rebuild reports a fixed-output hash mismatch, `nx rebuild` updates the
   unique clean matching hash in a tracked `.nix` file and retries. It prints the
   file, line, old hash, and new hash. Set `NX_NO_AUTO_HASH_FIX=1` to require a
   manual edit.
 - Additional args after `--` pass through to the underlying `darwin-rebuild`
-  command.
+  command except `--log-format`, which nx owns for managed Nix output.
 
 ---
 
@@ -548,14 +550,14 @@ Runs the upgrade flow for either the whole repo or named flake inputs.
   unsafe, it prints the exact next action.
 - Homebrew update checks show live loading feedback before upgrade details are
   rendered.
-- Flake updates use Nix's structured activity protocol by default, rendering
-  aggregate progress in place instead of printing every Git transfer frame.
-- Use `--verbose` to stream Nix's full `bar-with-logs` output.
+- Interactive flake updates, checks, and builds preserve Nix's native colored
+  `bar` progress exactly; native Nix rows are intentionally not indented by nx.
+- Use `--verbose` to select Nix's native `bar-with-logs` output.
 - Targeted input upgrades skip the Homebrew phase by default.
 - Use `--skip-brew`, `--skip-rebuild`, or `--skip-commit` to trim the flow.
 - Use `--no-ai` to disable AI-generated summaries and recovery prompts.
 - Additional args after `--` pass through to the underlying `nix flake update`
-  command.
+  command except `--log-format`, which nx owns.
 
 Examples:
 

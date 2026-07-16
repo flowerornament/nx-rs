@@ -109,6 +109,7 @@ class DemoOutputTest(unittest.TestCase):
 
     def test_final_terminal_screen_matches_reference(self) -> None:
         stream = run_demo()
+        self.assert_native_nix_passthrough(stream)
         screen = terminal_screen(stream)
         self.assertEqual(screen, SNAPSHOT.read_text())
         self.assertEqual(stream.count("error: flake evaluation failed"), 1)
@@ -132,6 +133,20 @@ class DemoOutputTest(unittest.TestCase):
                 self.assertEqual(lines[index - 1], "")
                 self.assertNotEqual(lines[index + 1], "")
 
+    def assert_native_nix_passthrough(self, stream: str) -> None:
+        expected = {
+            native_progress("bar", "flake inputs"): 1,
+            native_progress("bar", "flake check"): 2,
+            native_progress("bar", "system build"): 1,
+            native_progress("bar", "activation"): 1,
+            native_progress("bar-with-logs", "flake check"): 1,
+        }
+        for sequence, count in expected.items():
+            self.assertEqual(stream.count(sequence), count)
+
+        self.assertNotIn("  [nix-native:", stream)
+        self.assertNotIn("@nix ", stream)
+
 
 def line_style(stream: str, text: str) -> tuple[str, str]:
     match = re.search(
@@ -140,6 +155,13 @@ def line_style(stream: str, text: str) -> tuple[str, str]:
     if match is None:
         raise AssertionError(f"missing styled line: {text}")
     return match.group(1), match.group(2)
+
+
+def native_progress(log_format: str, label: str) -> str:
+    return (
+        f"\x1b[35m[nix-native:{log_format}]\x1b[0m {label} 1/2\r"
+        f"\x1b[2K\r\x1b[32m[nix-native:{log_format}]\x1b[0m {label} complete\r\n"
+    )
 
 
 if __name__ == "__main__":

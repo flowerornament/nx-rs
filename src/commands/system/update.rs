@@ -2,7 +2,9 @@ use crate::cli::UpdateArgs;
 use crate::commands::context::RepoContext;
 use crate::domain::upgrade::build_flake_update_args;
 use crate::infra::nix_output::NixOutputMode;
-use crate::infra::shell::{first_unpresented_output, run_stdout_collecting_nix_stderr_with_env};
+use crate::infra::shell::{
+    first_unpresented_output, run_nix_command_with_stdout, terminal_stdio_available,
+};
 use crate::output::printer::Printer;
 
 // ─── update ──────────────────────────────────────────────────────────────────
@@ -11,13 +13,15 @@ pub fn cmd_update(args: &UpdateArgs, ctx: &RepoContext<'_>) -> i32 {
     ctx.printer.action("Updating flake inputs");
 
     let base_args = build_flake_update_args(&[], &args.passthrough);
-    let nix_args = NixOutputMode::Structured.command_args(&base_args);
+    let output_mode = NixOutputMode::for_terminal(false, terminal_stdio_available());
+    let nix_args = output_mode.command_args(&base_args);
     let command_args = nix_args.iter().map(String::as_str).collect::<Vec<_>>();
-    let output = match run_stdout_collecting_nix_stderr_with_env(
+    let output = match run_nix_command_with_stdout(
         "nix",
         &command_args,
         Some(ctx.repo_root),
         None,
+        output_mode,
     ) {
         Ok(output) => output,
         Err(err) => {

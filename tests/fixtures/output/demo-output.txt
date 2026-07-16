@@ -20,6 +20,26 @@
 + Git preflight passed
 
 > Checking flake
+[nix-native:bar] flake check complete
++ Flake check passed
+  darwin host: test-host
+
+> Checking binary cache coverage
+  Source Builds (2)
+  starship-1.23.0
+  terminal-notifier-2.0.0
+  1 paths will be fetched from the binary cache
++ Rebuild preflight passed
+
+  $ nx rebuild --preflight --verbose
+> Checking nx routing metadata
++ Routing metadata passed
+
+> Checking tracked nix files
++ Git preflight passed
+
+> Checking flake
+[nix-native:bar-with-logs] flake check complete
 + Flake check passed
   darwin host: test-host
 
@@ -38,11 +58,12 @@
 + Git preflight passed
 
 > Checking flake
-  error: flake evaluation failed
+error: flake evaluation failed
 x Flake check failed
 
   $ nx upgrade
 > Updating flake inputs
+[nix-native:bar] flake inputs complete
 + All flake inputs up to date
 
 > Checking Homebrew updates
@@ -59,21 +80,21 @@ x Flake check failed
 + Git preflight passed
 
 > Checking flake
+[nix-native:bar] flake check complete
 + Flake check passed
 
 > Rebuilding system
   darwin host: test-host
 
 > Building system configuration
-  warning: substituter response was slow
-  continuing with cached metadata
+[nix-native:bar] system build complete
 + System configuration built
 
 > Updating system profile
 + System profile updated
 
 > Activating system
-  activation dependencies ready
+[nix-native:bar] activation complete
   setting up /etc...
   applying Homebrew bundle...
   activating Home Manager...

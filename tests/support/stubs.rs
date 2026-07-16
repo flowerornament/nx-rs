@@ -53,6 +53,29 @@ program="$(basename "$0")"
 log_path="${NX_SYSTEM_IT_LOG:?NX_SYSTEM_IT_LOG must be set}"
 mode="${NX_SYSTEM_IT_MODE:-success}"
 output_demo="${NX_OUTPUT_DEMO:-0}"
+log_format=""
+
+assert_native_nix_terminal() {
+  if [ ! -t 0 ] || [ ! -t 2 ]; then
+    echo "stub native Nix output did not inherit terminal stdin/stderr" >&2
+    exit 1
+  fi
+  case "$log_format" in
+    bar|bar-with-logs) ;;
+    *)
+      echo "stub expected a native Nix log format, got ${log_format:-none}" >&2
+      exit 1
+      ;;
+  esac
+}
+
+emit_native_nix_progress() {
+  label="$1"
+  assert_native_nix_terminal
+  printf '\033[35m[nix-native:%s]\033[0m %s 1/2\r' "$log_format" "$label" >&2
+  sleep 0.12
+  printf '\033[2K\r\033[32m[nix-native:%s]\033[0m %s complete\n' "$log_format" "$label" >&2
+}
 
 assert_root_nix_env() {
   if [ "${HOME:-}" != "/var/root" ]; then
@@ -126,6 +149,14 @@ case "$program" in
     exit 0
     ;;
   nix)
+    previous=""
+    for arg in "$@"; do
+      if [ "$previous" = "--log-format" ]; then
+        log_format="$arg"
+        break
+      fi
+      previous="$arg"
+    done
     if [ "${1:-}" = "--log-format" ]; then
       shift
       shift
@@ -150,9 +181,7 @@ case "$program" in
         printf '%s' "${NX_SYSTEM_IT_UPGRADE_NEW_LOCK:?NX_SYSTEM_IT_UPGRADE_NEW_LOCK must be set}" > flake.lock
       fi
       if [ "$output_demo" = "1" ]; then
-        echo '@nix {"action":"start","id":70,"level":0,"parent":0,"text":"fetching updated flake inputs","type":112}' >&2
-        sleep 0.18
-        echo '@nix {"action":"stop","id":70}' >&2
+        emit_native_nix_progress "flake inputs"
       else
         echo "stub nix flake command ok"
       fi
@@ -182,9 +211,7 @@ case "$program" in
         exit 1
       fi
       if [ "$output_demo" = "1" ]; then
-        echo '@nix {"action":"start","id":71,"level":0,"parent":0,"text":"evaluating flake checks","type":104}' >&2
-        sleep 0.18
-        echo '@nix {"action":"stop","id":71}' >&2
+        emit_native_nix_progress "flake check"
       else
         echo "stub nix flake check ok"
       fi
@@ -236,18 +263,7 @@ case "$program" in
         exit 0
       fi
       if [ "$output_demo" = "1" ]; then
-        emit() {
-          printf '%s\n' "$1" >&2
-          sleep 0.12
-        }
-        emit '@nix {"action":"start","id":1,"level":0,"parent":0,"text":"","type":104}'
-        emit '@nix {"action":"result","fields":[12,51,3,0],"id":1,"type":105}'
-        emit '@nix {"action":"start","fields":["https://cache.nixos.org/nar/long-demo-path"],"id":2,"level":0,"parent":0,"text":"","type":101}'
-        emit '@nix {"action":"result","fields":[67108864,536870912,0,0],"id":2,"type":105}'
-        emit '@nix {"action":"msg","level":1,"msg":"warning: substituter response was slow\ncontinuing with cached metadata"}'
-        emit '@nix {"action":"result","fields":[36,51,2,0],"id":1,"type":105}'
-        emit '@nix {"action":"result","fields":[402653184,536870912,0,0],"id":2,"type":105}'
-        emit '@nix {"action":"result","fields":[51,51,0,0],"id":1,"type":105}'
+        emit_native_nix_progress "system build"
       else
         echo '@nix {"action":"start","id":1,"level":0,"parent":0,"text":"copying paths","type":103}' >&2
         echo '@nix {"action":"start","id":2,"level":0,"parent":0,"text":"building derivations","type":104}' >&2
@@ -431,7 +447,9 @@ case "$program" in
           exit 1
         fi
         if [ "$output_demo" = "1" ]; then
-          printf '  copying paths...\r  building derivations...\r  activation dependencies ready\n' >&2
+          expected_format="${NIX_CONFIG#log-format = }"
+          log_format="$expected_format"
+          emit_native_nix_progress "activation"
         else
           echo '@nix {"action":"start","id":1,"level":0,"parent":0,"text":"copying paths","type":103}' >&2
           echo '@nix {"action":"start","id":2,"level":0,"parent":0,"text":"building derivations","type":104}' >&2

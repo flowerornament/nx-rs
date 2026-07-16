@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.5.31 - 2026-07-16
+
 - preserves Nix's native colored `bar` and `bar-with-logs` terminal renderers unchanged across direct interactive update, check, build, and profile-update paths; activation inherits the terminal unchanged, while non-interactive direct Nix execution retains structured diagnostics and recovery
 - preserves inherited `NIX_CONFIG` settings and token entries when nx appends its GitHub token bridge
 - removes nx's legacy aggregate Nix progress renderer and its `console` dependency, leaving terminal presentation to Nix and keeping only the structured-event decoder needed for diagnostics and timing

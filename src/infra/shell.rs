@@ -1,9 +1,14 @@
 use std::borrow::Cow;
+use std::collections::VecDeque;
+use std::fs::File;
 use std::io::{self, BufRead, BufReader, IsTerminal, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 use serde_json::Value;
@@ -193,19 +198,8 @@ pub fn run_native_command_with_env(
     cwd: Option<&Path>,
     env: Option<CommandEnv<'_>>,
     _printer: &Printer,
-) -> anyhow::Result<i32> {
-    let mut command = Command::new(program);
-    configure_command(&mut command, args, cwd, env);
-    command
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-
-    let status = command
-        .status()
-        .with_context(|| format!("failed to spawn {program}"))?;
-
-    Ok(status.code().unwrap_or(1))
+) -> anyhow::Result<CapturedCommand> {
+    run_native_command_observing_stderr(program, args, cwd, env, NativeStdout::Inherit)
 }
 
 pub fn run_nix_command_with_stdout(
@@ -241,22 +235,155 @@ fn run_stdout_collecting_native_stderr(
     cwd: Option<&Path>,
     env: Option<CommandEnv<'_>>,
 ) -> anyhow::Result<CapturedCommand> {
+    run_native_command_observing_stderr(program, args, cwd, env, NativeStdout::Capture)
+}
+
+#[derive(Clone, Copy)]
+enum NativeStdout {
+    Inherit,
+    Capture,
+}
+
+fn run_native_command_observing_stderr(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: Option<CommandEnv<'_>>,
+    stdout_mode: NativeStdout,
+) -> anyhow::Result<CapturedCommand> {
+    let terminal = io::stderr();
+    let termios = rustix::termios::tcgetattr(&terminal).ok();
+    let winsize = rustix::termios::tcgetwinsize(&terminal).ok();
+    let pty = rustix_openpty::openpty(termios.as_ref(), winsize.as_ref())
+        .map_err(|err| anyhow!("opening stderr pseudoterminal: {err}"))?;
+    let mut pty_termios = rustix::termios::tcgetattr(&pty.user)
+        .map_err(|err| anyhow!("reading stderr pseudoterminal settings: {err}"))?;
+    pty_termios
+        .output_modes
+        .remove(rustix::termios::OutputModes::OPOST);
+    rustix::termios::tcsetattr(
+        &pty.user,
+        rustix::termios::OptionalActions::Now,
+        &pty_termios,
+    )
+    .map_err(|err| anyhow!("configuring stderr pseudoterminal settings: {err}"))?;
+    let pty_user = rustix::io::dup(&pty.user)
+        .map_err(|err| anyhow!("duplicating stderr pseudoterminal: {err}"))?;
+    let flags = rustix::fs::fcntl_getfl(&pty.controller)
+        .map_err(|err| anyhow!("reading stderr pseudoterminal flags: {err}"))?;
+    rustix::fs::fcntl_setfl(&pty.controller, flags | rustix::fs::OFlags::NONBLOCK)
+        .map_err(|err| anyhow!("configuring stderr pseudoterminal: {err}"))?;
+
     let mut command = Command::new(program);
     configure_command(&mut command, args, cwd, env);
     command
         .stdin(Stdio::inherit())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
+        .stderr(Stdio::from(pty.user));
+    match stdout_mode {
+        NativeStdout::Inherit => command.stdout(Stdio::inherit()),
+        NativeStdout::Capture => command.stdout(Stdio::piped()),
+    };
 
-    let output = command
-        .output()
+    let mut child = command
+        .spawn()
         .with_context(|| format!("failed to spawn {program}"))?;
+    let stdout_handle = child
+        .stdout
+        .take()
+        .map(|stdout| thread::spawn(move || collect_stream("stdout", stdout)));
+    let child_done = Arc::new(AtomicBool::new(false));
+    let relay_done = Arc::clone(&child_done);
+    let stderr_handle = thread::spawn(move || {
+        relay_native_stderr(File::from(pty.controller), &pty_user, &relay_done)
+    });
+    let status = child.wait();
+    child_done.store(true, Ordering::Release);
+    stderr_handle.thread().unpark();
+    let status = status.context("waiting for child process")?;
+    let stdout = stdout_handle
+        .map(|handle| join_collector("stdout", handle))
+        .transpose()?
+        .unwrap_or_default();
+    let stderr = join_collector("stderr", stderr_handle)?;
 
     Ok(CapturedCommand::presented(
-        output.status.code().unwrap_or(1),
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-        String::new(),
+        status.code().unwrap_or(1),
+        String::from_utf8_lossy(&stdout).into_owned(),
+        String::from_utf8_lossy(&stderr).into_owned(),
     ))
+}
+
+fn relay_native_stderr(
+    mut stream: impl Read,
+    pty_user: &rustix::fd::OwnedFd,
+    child_done: &AtomicBool,
+) -> anyhow::Result<Vec<u8>> {
+    let mut diagnostics = VecDeque::new();
+    let mut buf = [0u8; 8192];
+    let mut stderr = io::stderr().lock();
+    let mut write_error = None;
+    let mut post_exit_bytes = 0usize;
+
+    loop {
+        let count = match stream.read(&mut buf) {
+            Ok(0) => break,
+            Ok(count) => count,
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                sync_pty_size(pty_user);
+                if child_done.load(Ordering::Acquire) {
+                    break;
+                }
+                thread::park_timeout(Duration::from_millis(100));
+                continue;
+            }
+            // PTY controllers report EIO when the final user descriptor closes.
+            Err(err) if err.raw_os_error() == Some(rustix::io::Errno::IO.raw_os_error()) => break,
+            Err(err) => return Err(err).context("reading native stderr stream"),
+        };
+        append_deque_tail(&mut diagnostics, &buf[..count], STDERR_TEE_CAPTURE_LIMIT);
+        if write_error.is_none()
+            && let Err(err) = stderr.write_all(&buf[..count])
+        {
+            write_error = Some(err);
+        }
+        if child_done.load(Ordering::Acquire) {
+            post_exit_bytes = post_exit_bytes.saturating_add(count);
+            if post_exit_bytes >= STDERR_TEE_CAPTURE_LIMIT {
+                break;
+            }
+        }
+    }
+
+    if write_error.is_none()
+        && let Err(err) = stderr.flush()
+    {
+        write_error = Some(err);
+    }
+    if let Some(err) = write_error {
+        return Err(err).context("relaying native stderr");
+    }
+    Ok(diagnostics.into_iter().collect())
+}
+
+fn sync_pty_size(pty_user: &rustix::fd::OwnedFd) {
+    if let Ok(winsize) = rustix::termios::tcgetwinsize(rustix::stdio::stderr()) {
+        let _ = rustix::termios::tcsetwinsize(pty_user, winsize);
+    }
+}
+
+fn append_deque_tail(bytes: &mut VecDeque<u8>, chunk: &[u8], limit: usize) {
+    if chunk.len() >= limit {
+        bytes.clear();
+        bytes.extend(&chunk[chunk.len() - limit..]);
+        return;
+    }
+
+    let excess = bytes
+        .len()
+        .saturating_add(chunk.len())
+        .saturating_sub(limit);
+    bytes.drain(..excess);
+    bytes.extend(chunk);
 }
 
 fn run_stdout_collecting_stderr_with_env_profiled(
@@ -665,10 +792,10 @@ mod tests {
     }
 
     #[test]
-    fn native_nix_output_captures_only_stdout() {
+    fn native_nix_output_preserves_a_tty_and_observes_stderr() {
         let args = [
             "-c",
-            "printf 'json\\n'; printf 'progress\\rprogress done\\n' >&2",
+            "test -t 2; printf 'json\\n'; printf 'progress\\rprogress done\\n' >&2",
         ];
 
         let output = run_nix_command_with_stdout("sh", &args, None, None, NixOutputMode::NativeBar)
@@ -676,8 +803,20 @@ mod tests {
 
         assert_eq!(output.code, 0);
         assert_eq!(output.stdout, "json\n");
-        assert!(output.stderr.is_empty());
+        assert_eq!(output.stderr, "progress\rprogress done\n");
         assert!(output.stderr_was_presented());
+    }
+
+    #[test]
+    fn native_stderr_relay_stops_with_direct_child() {
+        let printer = Printer::new(OutputStyle::from_flags(true, false, false));
+        let started = std::time::Instant::now();
+        let output =
+            run_native_command_with_env("sh", &["-c", "sleep 2 >&2 &"], None, None, &printer)
+                .expect("shell command should run");
+
+        assert_eq!(output.code, 0);
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]

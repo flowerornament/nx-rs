@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- heals Determinate Nix lazy-tree source-cache corruption at every rebuild boundary, including `darwin-rebuild switch`, profile update, and activation, while preserving native terminal-aware output through a byte-for-byte pseudoterminal relay and retrying only the failed phase
+
 ## v1.5.31 - 2026-07-16
 
 - preserves Nix's native colored `bar` and `bar-with-logs` terminal renderers unchanged across direct interactive update, check, build, and profile-update paths; activation inherits the terminal unchanged, while non-interactive direct Nix execution retains structured diagnostics and recovery

@@ -362,7 +362,6 @@ fn do_rebuild(
     let repo = ctx.repo_root.display().to_string();
     let manifest = ctx.config_files.manifest();
     let use_sudo = manifest.is_none_or(|m| m.platform.sudo);
-    let mut source_cache_retries = 0usize;
     let mut fd_exhaustion_retries = 0usize;
     let mut repaired_paths = Vec::new();
     let mut final_failure_output = None;
@@ -404,19 +403,8 @@ fn do_rebuild(
             super::upgrade::clear_user_tarball_pack_cache();
             super::upgrade::clear_user_fetcher_cache();
             if use_sudo {
-                clear_root_tarball_pack_cache_noninteractive();
+                let _ = clear_root_tarball_pack_cache_noninteractive();
             }
-            continue;
-        }
-
-        if super::upgrade::is_cache_corruption(&combined_output)
-            && source_cache_retries < MAX_SOURCE_CACHE_RETRIES
-        {
-            source_cache_retries += 1;
-            super::upgrade::clear_user_source_caches();
-            ctx.printer
-                .warn("Nix source cache corruption detected, clearing cache and retrying");
-            clear_root_git_cache_noninteractive();
             continue;
         }
 
@@ -613,19 +601,14 @@ fn do_rebuild_once(
             SplitDarwinResult::Handled(result) => return result,
             SplitDarwinResult::Fallback(rebuild_command_override) => {
                 ctx.printer.action("Running darwin-rebuild switch");
-                let (output, phases) = run_darwin_rebuild(
-                    args,
-                    manifest,
-                    repo,
-                    use_sudo,
-                    rebuild_command_override.as_deref(),
-                )?;
+                let (output, phases) =
+                    run_darwin_rebuild(args, ctx, rebuild_command_override.as_deref())?;
                 return Ok((output, phases, RebuildOutcome::Rebuilt));
             }
         }
     }
 
-    let (output, phases) = run_darwin_rebuild(args, manifest, repo, use_sudo, None)?;
+    let (output, phases) = run_darwin_rebuild(args, ctx, None)?;
     Ok((output, phases, RebuildOutcome::Rebuilt))
 }
 
@@ -637,15 +620,16 @@ enum RebuildOutcome {
 
 fn run_darwin_rebuild(
     args: &RebuildArgs,
-    manifest: Option<&Manifest>,
-    repo: &str,
-    use_sudo: bool,
+    ctx: &SystemContext<'_>,
     rebuild_command_override: Option<&str>,
 ) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)> {
+    let manifest = ctx.config_files.manifest();
+    let repo = ctx.repo_root.display().to_string();
+    let use_sudo = manifest.is_none_or(|manifest| manifest.platform.sudo);
     let output_mode =
         NixOutputMode::for_terminal(args.verbose, native_rebuild_output_enabled(args));
     let rebuild_cmd = build_rebuild_command_with_manifest_and_log_format(
-        repo,
+        &repo,
         args,
         manifest,
         rebuild_command_override,
@@ -662,9 +646,9 @@ fn run_darwin_rebuild(
         (first.as_str(), rest.iter().map(String::as_str).collect())
     };
 
-    let (output, phases) =
-        run_nix_command_with_stdout_profiled(runner, &runner_args, None, None, output_mode)?;
-    Ok((output, phases))
+    run_with_source_cache_recovery(ctx, use_sudo, || {
+        run_nix_command_with_stdout_profiled(runner, &runner_args, None, None, output_mode)
+    })
 }
 
 fn native_rebuild_output_enabled(args: &RebuildArgs) -> bool {
@@ -793,13 +777,16 @@ fn build_split_system_config(
     let build_arg_refs: Vec<&str> = build_args.iter().map(String::as_str).collect();
     let (build, mut phase) = timed_phase("build", || {
         ctx.printer.action("Building system configuration");
-        let output = run_nix_command_with_stdout(
-            &build_program,
-            &build_arg_refs,
-            None,
-            None,
-            output_mode.build,
-        )?;
+        let (output, _) = run_with_source_cache_recovery(ctx, false, || {
+            run_nix_command_with_stdout(
+                &build_program,
+                &build_arg_refs,
+                None,
+                None,
+                output_mode.build,
+            )
+            .map(|output| (output, Vec::new()))
+        })?;
         Ok(output)
     })?;
     phase.status = exit_status(build.code);
@@ -836,12 +823,14 @@ fn set_system_profile(
 ) -> anyhow::Result<(CapturedCommand, TimingPhase)> {
     let (output, mut phase) = timed_phase("profile-set", || {
         ctx.printer.action("Updating system profile");
-        run_split_nix_command(
-            use_sudo,
-            "nix-env",
-            &["-p", SYSTEM_PROFILE, "--set", system_config],
-            output_mode,
-        )
+        run_with_source_cache_recovery(ctx, use_sudo, || {
+            run_split_nix_command(
+                use_sudo,
+                "nix-env",
+                &["-p", SYSTEM_PROFILE, "--set", system_config],
+                output_mode,
+            )
+        })
         .map(|(output, _)| output)
     })?;
     phase.status = exit_status(output.code);
@@ -857,17 +846,14 @@ fn activate_system(
     let mut child_phases = Vec::new();
     let (output, mut phase) = timed_phase("activate", || {
         ctx.printer.action("Activating system");
-        if output_mode == ActivationOutputMode::Native {
-            let code =
-                run_split_command_native(use_sudo, &format!("{system_config}/activate"), &[], ctx)?;
-            return Ok(CapturedCommand::presented(
-                code,
-                String::new(),
-                String::new(),
-            ));
-        }
-        let (output, phases) =
-            run_split_command_captured(use_sudo, &format!("{system_config}/activate"), &[])?;
+        let program = format!("{system_config}/activate");
+        let (output, phases) = run_with_source_cache_recovery(ctx, use_sudo, || {
+            if output_mode == ActivationOutputMode::Native {
+                return run_split_command_native(use_sudo, &program, &[], ctx)
+                    .map(|output| (output, Vec::new()));
+            }
+            run_split_command_captured(use_sudo, &program, &[])
+        })?;
         child_phases = phases;
         Ok(output)
     })?;
@@ -881,9 +867,39 @@ fn run_split_command_native(
     program: &str,
     args: &[&str],
     ctx: &SystemContext<'_>,
-) -> anyhow::Result<i32> {
+) -> anyhow::Result<CapturedCommand> {
     let (runner, runner_args) = split_command_invocation(use_sudo, program, args);
     run_native_command_with_env(runner, &runner_args, None, None, ctx.printer)
+}
+
+fn run_with_source_cache_recovery(
+    ctx: &SystemContext<'_>,
+    use_sudo: bool,
+    mut run: impl FnMut() -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)>,
+) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)> {
+    for attempt in 0..=MAX_SOURCE_CACHE_RETRIES {
+        let result = run()?;
+        let output = &result.0;
+        if output.code == 0
+            || attempt == MAX_SOURCE_CACHE_RETRIES
+            || !super::upgrade::is_cache_corruption(&combined_stream_output(
+                &output.stdout,
+                &output.stderr,
+            ))
+        {
+            return Ok(result);
+        }
+
+        super::upgrade::clear_user_source_caches();
+        if use_sudo && !clear_root_git_cache_noninteractive() {
+            ctx.printer
+                .warn("Could not clear root Nix source cache non-interactively");
+        }
+        ctx.printer
+            .warn("Nix source cache corruption detected, clearing cache and retrying");
+    }
+
+    unreachable!("bounded retry loop always returns")
 }
 
 fn run_split_nix_command(
@@ -1155,19 +1171,24 @@ fn rebuild_supports_nix_log_format(rebuild_bin: &str) -> bool {
 }
 
 /// Clear root's nix tarball pack cache to reduce open file pressure during rebuild.
-fn clear_root_tarball_pack_cache_noninteractive() {
+fn clear_root_tarball_pack_cache_noninteractive() -> bool {
     let pack_dir = "/var/root/.cache/nix/tarball-cache-v2/objects/pack";
-    let _ = run_captured_command("sudo", &["-n", "rm", "-rf", pack_dir], None);
-    let _ = run_captured_command("sudo", &["-n", "mkdir", "-p", pack_dir], None);
+    command_succeeded("sudo", &["-n", "rm", "-rf", pack_dir])
+        && command_succeeded("sudo", &["-n", "mkdir", "-p", pack_dir])
 }
 
 /// Clear nix git caches under root to fix tree-builder corruption.
 ///
 /// Removes both the gitv3 object store (where corrupt git trees live)
 /// and the fetcher-cache sqlite (which indexes them).
-fn clear_root_git_cache_noninteractive() {
+fn clear_root_git_cache_noninteractive() -> bool {
     let gitv3_dir = "/var/root/.cache/nix/gitv3";
     let fetcher_db = "/var/root/.cache/nix/fetcher-cache-v4.sqlite";
-    let _ = run_captured_command("sudo", &["-n", "rm", "-rf", gitv3_dir], None);
-    let _ = run_captured_command("sudo", &["-n", "rm", "-f", fetcher_db], None);
+    let git_cleared = command_succeeded("sudo", &["-n", "rm", "-rf", gitv3_dir]);
+    let fetcher_cleared = command_succeeded("sudo", &["-n", "rm", "-f", fetcher_db]);
+    git_cleared && fetcher_cleared
+}
+
+fn command_succeeded(program: &str, args: &[&str]) -> bool {
+    run_captured_command(program, args, None).is_ok_and(|output| output.code == 0)
 }

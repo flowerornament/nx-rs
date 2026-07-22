@@ -259,6 +259,19 @@ const REBUILD_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
     ),
 ];
 
+const SPLIT_REBUILD_NIX_BUILD_CALL: ExpectedCall = ExpectedCall::new(
+    "nix",
+    EXPECTED_CWD_REPO_ROOT,
+    &[
+        "build",
+        "--no-link",
+        "--print-out-paths",
+        "--log-format",
+        "internal-json",
+        "<REPO_ROOT>#darwinConfigurations.test-host.system",
+    ],
+);
+
 const SPLIT_REBUILD_BUILD_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
@@ -268,18 +281,7 @@ const SPLIT_REBUILD_BUILD_CALLS: &[ExpectedCall] = &[
         EXPECTED_CWD_REPO_ROOT,
         &["--get", "LocalHostName"],
     ),
-    ExpectedCall::new(
-        "nix",
-        EXPECTED_CWD_REPO_ROOT,
-        &[
-            "build",
-            "--no-link",
-            "--print-out-paths",
-            "--log-format",
-            "internal-json",
-            "<REPO_ROOT>#darwinConfigurations.test-host.system",
-        ],
-    ),
+    SPLIT_REBUILD_NIX_BUILD_CALL,
 ];
 
 const SPLIT_REBUILD_SUDO_CHECK_CALL: ExpectedCall =
@@ -361,6 +363,31 @@ const ROOT_FETCHER_CACHE_CLEAR_CALL: ExpectedCall = ExpectedCall::new(
     ],
 );
 
+const DARWIN_REBUILD_SUDO_SWITCH_CALL: ExpectedCall = ExpectedCall::new(
+    "sudo",
+    EXPECTED_CWD_REPO_ROOT,
+    &[
+        DARWIN_REBUILD_CMD,
+        "switch",
+        "--flake",
+        REPO_ROOT_TOKEN,
+        "--log-format",
+        "internal-json",
+    ],
+);
+
+const DARWIN_REBUILD_SWITCH_CALL: ExpectedCall = ExpectedCall::new(
+    "darwin-rebuild",
+    EXPECTED_CWD_REPO_ROOT,
+    &[
+        "switch",
+        "--flake",
+        REPO_ROOT_TOKEN,
+        "--log-format",
+        "internal-json",
+    ],
+);
+
 fn split_rebuild_calls(authorizes_sudo: bool) -> Vec<ExpectedCall> {
     let mut calls = Vec::with_capacity(SPLIT_REBUILD_BUILD_CALLS.len() + 4);
     calls.extend_from_slice(SPLIT_REBUILD_BUILD_CALLS);
@@ -388,29 +415,8 @@ fn split_rebuild_legacy_fallback_calls() -> Vec<ExpectedCall> {
     calls.extend_from_slice(SPLIT_REBUILD_BUILD_CALLS);
     calls.push(SPLIT_REBUILD_SUDO_CHECK_CALL);
     calls.push(SPLIT_REBUILD_LEGACY_SUDO_PROBE_CALL);
-    calls.push(ExpectedCall::new(
-        "sudo",
-        EXPECTED_CWD_REPO_ROOT,
-        &[
-            DARWIN_REBUILD_CMD,
-            "switch",
-            "--flake",
-            REPO_ROOT_TOKEN,
-            "--log-format",
-            "internal-json",
-        ],
-    ));
-    calls.push(ExpectedCall::new(
-        "darwin-rebuild",
-        EXPECTED_CWD_REPO_ROOT,
-        &[
-            "switch",
-            "--flake",
-            REPO_ROOT_TOKEN,
-            "--log-format",
-            "internal-json",
-        ],
-    ));
+    calls.push(DARWIN_REBUILD_SUDO_SWITCH_CALL);
+    calls.push(DARWIN_REBUILD_SWITCH_CALL);
     calls
 }
 
@@ -447,30 +453,40 @@ fn split_rebuild_run_current_legacy_fallback_calls() -> Vec<ExpectedCall> {
 }
 
 fn split_rebuild_cache_retry_calls() -> Vec<ExpectedCall> {
-    let mut calls = Vec::with_capacity(SPLIT_REBUILD_BUILD_CALLS.len() + 7);
+    let mut calls = Vec::with_capacity(SPLIT_REBUILD_BUILD_CALLS.len() + 4);
     calls.extend_from_slice(SPLIT_REBUILD_BUILD_CALLS);
-    calls.push(ROOT_GIT_CACHE_CLEAR_CALL);
-    calls.push(ROOT_FETCHER_CACHE_CLEAR_CALL);
-    calls.push(ExpectedCall::new(
-        "scutil",
-        EXPECTED_CWD_REPO_ROOT,
-        &["--get", "LocalHostName"],
-    ));
-    calls.push(ExpectedCall::new(
-        "nix",
-        EXPECTED_CWD_REPO_ROOT,
-        &[
-            "build",
-            "--no-link",
-            "--print-out-paths",
-            "--log-format",
-            "internal-json",
-            "<REPO_ROOT>#darwinConfigurations.test-host.system",
-        ],
-    ));
+    calls.push(SPLIT_REBUILD_NIX_BUILD_CALL);
     calls.push(SPLIT_REBUILD_SUDO_CHECK_CALL);
     calls.push(SPLIT_REBUILD_PROFILE_SET_CALL);
     calls.push(SPLIT_REBUILD_ACTIVATE_CALL);
+    calls
+}
+
+fn split_profile_set_cache_retry_calls() -> Vec<ExpectedCall> {
+    let mut calls = Vec::with_capacity(SPLIT_REBUILD_BUILD_CALLS.len() + 7);
+    calls.extend_from_slice(SPLIT_REBUILD_BUILD_CALLS);
+    calls.push(SPLIT_REBUILD_SUDO_CHECK_CALL);
+    calls.push(SPLIT_REBUILD_PROFILE_SET_CALL);
+    calls.push(ROOT_GIT_CACHE_CLEAR_CALL);
+    calls.push(ROOT_FETCHER_CACHE_CLEAR_CALL);
+    calls.push(SPLIT_REBUILD_PROFILE_SET_CALL);
+    calls.push(SPLIT_REBUILD_ACTIVATE_CALL);
+    calls
+}
+
+fn split_activation_cache_retry_calls() -> Vec<ExpectedCall> {
+    let mut calls = split_rebuild_calls(false);
+    calls.push(ROOT_GIT_CACHE_CLEAR_CALL);
+    calls.push(ROOT_FETCHER_CACHE_CLEAR_CALL);
+    calls.push(SPLIT_REBUILD_ACTIVATE_CALL);
+    calls
+}
+
+fn darwin_rebuild_cache_retry_calls() -> Vec<ExpectedCall> {
+    let mut calls = split_rebuild_legacy_fallback_calls();
+    calls.push(ROOT_GIT_CACHE_CLEAR_CALL);
+    calls.push(ROOT_FETCHER_CACHE_CLEAR_CALL);
+    calls.extend([DARWIN_REBUILD_SUDO_SWITCH_CALL, DARWIN_REBUILD_SWITCH_CALL]);
     calls
 }
 
@@ -945,18 +961,55 @@ fn split_darwin_rebuild_preserves_run_current_passwordless_legacy_sudo()
 
 #[test]
 fn split_darwin_rebuild_retries_source_cache_corruption() -> Result<(), Box<dyn Error>> {
+    assert_source_cache_recovery(
+        "split_rebuild_cache_corruption",
+        "split_build_cache_corruption",
+        &split_rebuild_cache_retry_calls(),
+    )
+}
+
+#[test]
+fn split_darwin_rebuild_retries_profile_source_cache_corruption() -> Result<(), Box<dyn Error>> {
+    assert_source_cache_recovery(
+        "split_profile_cache_corruption",
+        "split_profile_set_cache_corruption",
+        &split_profile_set_cache_retry_calls(),
+    )
+}
+
+#[test]
+fn split_darwin_rebuild_retries_activation_source_cache_corruption() -> Result<(), Box<dyn Error>> {
+    assert_source_cache_recovery(
+        "split_activation_cache_corruption",
+        "split_activate_cache_corruption",
+        &split_activation_cache_retry_calls(),
+    )
+}
+
+#[test]
+fn darwin_rebuild_switch_retries_source_cache_corruption() -> Result<(), Box<dyn Error>> {
+    assert_source_cache_recovery(
+        "darwin_rebuild_switch_cache_corruption",
+        "darwin_rebuild_cache_corruption",
+        &darwin_rebuild_cache_retry_calls(),
+    )
+}
+
+fn assert_source_cache_recovery(
+    case_id: &str,
+    mode: &str,
+    expected_calls: &[ExpectedCall],
+) -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
     let nx_bin = resolve_nx_bin(&workspace_root)?;
-    let expected_calls = split_rebuild_cache_retry_calls();
-
     let RunResult { stdout, stderr, .. } = run_split_rebuild(
         &nx_bin,
         &repo_base,
-        "split_rebuild_cache_corruption",
-        "split_build_cache_corruption",
+        case_id,
+        mode,
         &[("NX_SPLIT_DARWIN", "1")],
-        &expected_calls,
+        expected_calls,
     )?;
 
     assert!(
@@ -967,7 +1020,6 @@ fn split_darwin_rebuild_retries_source_cache_corruption() -> Result<(), Box<dyn 
         stdout.contains("System rebuilt"),
         "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-
     Ok(())
 }
 
@@ -1230,7 +1282,12 @@ fn case_stdin(case_id: &str) -> Option<&'static str> {
 }
 
 fn should_ignore_snapshot_path(rel_path: &str) -> bool {
-    rel_path == LOG_FILE_NAME || rel_path == STUB_DIR_NAME || rel_path.starts_with(".system-stubs/")
+    rel_path == LOG_FILE_NAME
+        || rel_path
+            .strip_prefix(LOG_FILE_NAME)
+            .is_some_and(|suffix| suffix.starts_with(".state/"))
+        || rel_path == STUB_DIR_NAME
+        || rel_path.starts_with(".system-stubs/")
 }
 
 fn assert_activation_timing(home_dir: &Path, case_id: &str) -> Result<(), Box<dyn Error>> {

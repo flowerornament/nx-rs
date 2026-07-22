@@ -88,6 +88,15 @@ assert_root_nix_env() {
   fi
 }
 
+first_attempt() {
+  marker="$1"
+  if [ -f "$marker" ]; then
+    return 1
+  fi
+  mkdir -p "$(dirname "$marker")"
+  : > "$marker"
+}
+
 line="${program}	${PWD}"
 if [ "${NIX_CONFIG:-}" != "" ]; then
   line="${line}	ENV:NIX_CONFIG=${NIX_CONFIG}"
@@ -169,8 +178,7 @@ case "$program" in
       fi
       if [ "$mode" = "upgrade_cache_corruption" ]; then
         marker="${HOME}/.nx-system-it-cache-corruption-once"
-        if [ ! -f "$marker" ]; then
-          : > "$marker"
+        if first_attempt "$marker"; then
           echo "error: failed to insert entry: invalid object specified"
           exit 1
         fi
@@ -191,8 +199,7 @@ case "$program" in
     if [ "${1:-}" = "flake" ] && [ "${2:-}" = "prefetch" ]; then
       if [ "$mode" = "upgrade_prefetch_cache_corruption" ]; then
         marker="${HOME}/.nx-system-it-prefetch-cache-corruption-once"
-        if [ ! -f "$marker" ]; then
-          : > "$marker"
+        if first_attempt "$marker"; then
           echo "error: looking up file '«github:NixOS/nixpkgs/bbbbbbb»/README.md': object not found - no match for id (abc123)" >&2
           exit 1
         fi
@@ -242,8 +249,7 @@ case "$program" in
       fi
       if [ "$mode" = "split_build_cache_corruption" ]; then
         marker="${HOME}/.nx-system-it-split-build-cache-corruption-once"
-        if [ ! -f "$marker" ]; then
-          : > "$marker"
+        if first_attempt "$marker"; then
           echo "error: looking up file '«github:flowerornament/nx-rs/b9471c7»/scripts/test-home-manager-module.sh': object not found - no match for id (c2217e)" >&2
           exit 1
         fi
@@ -342,7 +348,7 @@ case "$program" in
         echo "sudo: a password is required" >&2
         exit 1
       fi
-      if [ "$mode" = "split_sudo_prompt_legacy_available" ]; then
+      if [ "$mode" = "split_sudo_prompt_legacy_available" ] || [ "$mode" = "darwin_rebuild_cache_corruption" ]; then
         echo "sudo: a password is required" >&2
         exit 1
       fi
@@ -354,7 +360,7 @@ case "$program" in
     fi
 
     if [ "${1:-}" = "-n" ] && [ "${2:-}" = "-l" ] && [ "${3:-}" = "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild" ]; then
-      if [ "$mode" = "split_sudo_prompt_legacy_available" ]; then
+      if [ "$mode" = "split_sudo_prompt_legacy_available" ] || [ "$mode" = "darwin_rebuild_cache_corruption" ]; then
         shift
         shift
         printf '%s' "$1"
@@ -431,6 +437,13 @@ case "$program" in
 
     if [ "${1:-}" = "nix-env" ]; then
       assert_root_nix_env
+      if [ "$mode" = "split_profile_set_cache_corruption" ]; then
+        marker="${NX_SYSTEM_IT_LOG}.state/profile-cache-corruption-once"
+        if first_attempt "$marker"; then
+          echo "error: looking up file '«github:NixOS/nixpkgs/rev»/pkgs/top-level/all-packages.nix': object not found - no match for id (profile)" >&2
+          exit 1
+        fi
+      fi
       if [ "$mode" = "split_profile_set_fail" ]; then
         echo "stub nix-env failed" >&2
         exit 1
@@ -442,6 +455,13 @@ case "$program" in
     case "${1:-}" in
       /nix/store/*/activate)
         assert_root_nix_env
+        if [ "$mode" = "split_activate_cache_corruption" ]; then
+          marker="${NX_SYSTEM_IT_LOG}.state/activate-cache-corruption-once"
+          if first_attempt "$marker"; then
+            echo "error: looking up file '«github:NixOS/nixpkgs/rev»/modules/module-list.nix': object not found - no match for id (activate)" >&2
+            exit 1
+          fi
+        fi
         if [ "$mode" = "split_activate_fail" ]; then
           echo "stub activate failed" >&2
           exit 1
@@ -542,10 +562,16 @@ case "$program" in
     exit 1
     ;;
   darwin-rebuild)
+    if [ "$mode" = "darwin_rebuild_cache_corruption" ]; then
+      marker="${NX_SYSTEM_IT_LOG}.state/switch-cache-corruption-once"
+      if first_attempt "$marker"; then
+        echo "error: looking up file '«github:NixOS/nixpkgs/rev»/flake.nix': object not found - no match for id (switch)" >&2
+        exit 1
+      fi
+    fi
     if [ "$mode" = "upgrade_hash_repair" ]; then
       marker="${HOME}/.nx-system-it-hash-repair-once"
-      if [ ! -f "$marker" ]; then
-        : > "$marker"
+      if first_attempt "$marker"; then
         echo "error: hash mismatch in fixed-output derivation '/nix/store/example-npm-deps.drv':" >&2
         echo "         specified: sha256-old" >&2
         echo "            got:    sha256-new" >&2

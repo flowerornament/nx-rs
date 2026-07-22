@@ -503,16 +503,22 @@ Runs `darwin-rebuild switch` for the managed repo.
   bounded source-cache failures before surfacing an error.
 - Interactive checks, builds, profile updates, and `darwin-rebuild` use Nix's
   native colored `bar` renderer unchanged. `--verbose` selects
-  `bar-with-logs`. Nx captures split-build stdout only to read the resulting
-  store path; Nix still owns terminal stderr.
+  `bar-with-logs`. Nx gives stderr a pseudoterminal and relays its bytes
+  unchanged while retaining a bounded diagnostic tail; split-build stdout is
+  captured only to read the resulting store path.
 - Direct Nix commands in non-interactive runs and `--timing` use Nix's
   `internal-json` protocol for diagnostics, timing, cache recovery, and safe
-  hash repair. Captured activation retains raw diagnostics. Interactive native
-  failures are already visible and are never re-executed solely for diagnosis.
+  hash repair. Native and captured failures both retain enough diagnostics for
+  bounded source-cache recovery without a diagnostic-only rerun.
 - If split activation would need an interactive sudo prompt and passwordless
   `sudo darwin-rebuild` is available, `nx` falls back to that path.
-- Interactive activation inherits the terminal directly, so Nix, Homebrew, and
-  Home Manager keep their normal progress behavior.
+- Interactive activation inherits stdin and stdout and receives a
+  pseudoterminal-backed stderr, so Nix, Homebrew, and Home Manager keep their
+  terminal-aware progress behavior.
+- Lazy source-cache failures retry at the phase that observed them: split
+  build, profile update, activation, or the complete legacy
+  `darwin-rebuild switch` re-evaluation. Root-owned phases clear root's source
+  cache as well as the invoking user's cache.
 - If a structured rebuild reports a fixed-output hash mismatch, `nx rebuild`
   updates the unique clean matching hash in a tracked `.nix` file and retries.
   It prints the file, line, old hash, and new hash. Set

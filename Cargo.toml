@@ -22,6 +22,8 @@ walkdir = "2.5.0"
 claude-codes = { version = "2.1.52", default-features = false, features = ["types", "sync-client"] }
 uuid = { version = "1", features = ["v4"] }
 clap_complete = "4.6.0"
+rustix-openpty = "0.2.0"
+rustix = { version = "1.1.4", features = ["fs", "std", "stdio", "termios"] }
 
 [dev-dependencies]
 insta = { version = "1.46.3", features = ["json"] }

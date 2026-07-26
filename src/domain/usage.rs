@@ -2,15 +2,17 @@ use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
-use crate::infra::shell_history::ShellHistoryEntry;
+use crate::domain::package::{PackageDeclaration, PackageSource};
 
 const DEFAULT_USAGE_ALIAS_CATALOG: &[(&str, &str)] = &[
+    ("agda", "agdaWithoutMailutils"),
     ("awk", "gawk"),
     ("aws", "awscli2"),
     ("aws", "awscli"),
     ("bd", "steveyegge/beads/bd"),
     ("bq", "google-cloud-sdk"),
     ("btm", "bottom"),
+    ("cabal", "cabal-install"),
     ("claude", "claude-code"),
     ("cmp", "diffutils"),
     ("codex", "codex-cli"),
@@ -27,6 +29,8 @@ const DEFAULT_USAGE_ALIAS_CATALOG: &[(&str, &str)] = &[
     ("dropdb", "postgresql"),
     ("dropuser", "postgresql"),
     ("egrep", "gnugrep"),
+    ("elixir", "beam.packages.erlang_28.elixir_1_20"),
+    ("emcc", "emscripten"),
     ("ffplay", "ffmpeg"),
     ("ffprobe", "ffmpeg"),
     ("fgrep", "gnugrep"),
@@ -63,6 +67,7 @@ const DEFAULT_USAGE_ALIAS_CATALOG: &[(&str, &str)] = &[
     ("ps2pdf", "ghostscript"),
     ("psql", "postgresql"),
     ("python", "python3"),
+    ("python3", "python3"),
     ("rga", "ripgrep-all"),
     ("rg", "ripgrep"),
     ("scp", "openssh"),
@@ -87,60 +92,20 @@ const DEFAULT_USAGE_ALIAS_CATALOG: &[(&str, &str)] = &[
     ("yq", "yq-go"),
 ];
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeclaredPackage {
-    pub name: String,
-    pub source: UsageSource,
-    pub location: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum UsageSource {
-    Nix,
-    Homebrew,
-    Cask,
-    Mas,
-    Service,
-}
-
-impl UsageSource {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Nix => "nix",
-            Self::Homebrew => "homebrew",
-            Self::Cask => "cask",
-            Self::Mas => "mas",
-            Self::Service => "service",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum UsageStatus {
-    Recent,
-    Old,
-    Unknown,
-    Protected,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-#[serde(rename_all = "kebab-case")]
-#[allow(dead_code)]
 pub enum EvidenceConfidence {
     None,
-    Weak,
     Medium,
     Strong,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EvidenceKind {
     ShellHistory,
-    Policy,
+    Spotlight,
+    Process,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -151,21 +116,320 @@ pub struct EvidenceItem {
     pub confidence: EvidenceConfidence,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum UsageArtifact {
+    Command {
+        name: String,
+        attribution: ArtifactAttribution,
+    },
+    Application {
+        path: String,
+        attribution: ArtifactAttribution,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ArtifactAttribution {
+    InstalledOwner,
+    StoreNameHeuristic,
+    PackageMetadata,
+    ExpectedName,
+}
+
+impl ArtifactAttribution {
+    #[must_use]
+    pub const fn confidence(self) -> EvidenceConfidence {
+        match self {
+            Self::InstalledOwner | Self::PackageMetadata => EvidenceConfidence::Strong,
+            Self::StoreNameHeuristic | Self::ExpectedName => EvidenceConfidence::Medium,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditablePlan {
+    artifacts: Vec<UsageArtifact>,
+}
+
+impl AuditablePlan {
+    #[must_use]
+    pub fn new(artifacts: Vec<UsageArtifact>) -> Option<Self> {
+        (!artifacts.is_empty()).then_some(Self { artifacts })
+    }
+
+    #[must_use]
+    pub fn artifacts(&self) -> &[UsageArtifact] {
+        &self.artifacts
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuditPlan {
+    Auditable(AuditablePlan),
+    NotAuditable { reason: String },
+    InventoryUncertain { reason: String },
+    Protected { reason: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EvidenceProvider {
+    ArtifactDiscovery,
+    HomebrewMetadata,
+    TimestampedShellHistory,
+    UntimestampedShellHistory,
+    Spotlight,
+    ProcessSnapshot,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct EvidenceCoverage {
+    pub providers: Vec<EvidenceProvider>,
+    pub limitations: Vec<EvidenceLimitation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EvidenceLimitation {
+    pub provider: EvidenceProvider,
+    pub message: String,
+}
+
+impl EvidenceCoverage {
+    pub fn add_provider(&mut self, provider: EvidenceProvider) {
+        if !self.providers.contains(&provider) {
+            self.providers.push(provider);
+        }
+    }
+
+    pub fn add_limitation(&mut self, provider: EvidenceProvider, message: impl Into<String>) {
+        let limitation = EvidenceLimitation {
+            provider,
+            message: message.into(),
+        };
+        if !self.limitations.contains(&limitation) {
+            self.limitations.push(limitation);
+        }
+    }
+
+    #[must_use]
+    fn covers(&self, artifacts: &[UsageArtifact]) -> bool {
+        artifacts.iter().all(|artifact| {
+            let (usage_provider, attribution) = match artifact {
+                UsageArtifact::Command { attribution, .. } => {
+                    (EvidenceProvider::TimestampedShellHistory, attribution)
+                }
+                UsageArtifact::Application { attribution, .. } => {
+                    (EvidenceProvider::Spotlight, attribution)
+                }
+            };
+            let attribution_covered = match attribution {
+                ArtifactAttribution::InstalledOwner | ArtifactAttribution::StoreNameHeuristic => {
+                    self.providers
+                        .contains(&EvidenceProvider::ArtifactDiscovery)
+                }
+                ArtifactAttribution::PackageMetadata => {
+                    self.providers.contains(&EvidenceProvider::HomebrewMetadata)
+                }
+                ArtifactAttribution::ExpectedName => true,
+            };
+            self.providers.contains(&usage_provider) && attribution_covered
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UsageVerdict {
+    ObservedRecent,
+    ObservedUndated,
+    ObservedStale,
+    NoEvidence,
+    InsufficientEvidence,
+    NotAuditable,
+    InventoryUncertain,
+    Protected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ReviewCandidate {
+    pub observed_at: i64,
+    pub evidence: EvidenceKind,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct UsageRecord {
     pub name: String,
-    pub source: UsageSource,
-    pub location: Option<String>,
-    pub status: UsageStatus,
+    pub source: PackageSource,
+    pub declarations: Vec<crate::domain::package::DeclarationSite>,
+    pub verdict: UsageVerdict,
     pub last_seen: Option<i64>,
     pub confidence: EvidenceConfidence,
+    pub candidate: Option<ReviewCandidate>,
+    #[serde(skip_serializing)]
+    pub artifacts: Vec<UsageArtifact>,
+    pub coverage: EvidenceCoverage,
     pub evidence: Vec<EvidenceItem>,
-    pub suggestions: Vec<String>,
+    #[serde(skip_serializing)]
+    pub(crate) detail: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UsageAuditOptions {
-    pub since_seconds: u64,
+impl UsageRecord {
+    #[must_use]
+    pub const fn is_candidate(&self) -> bool {
+        self.candidate.is_some()
+    }
+
+    #[must_use]
+    pub fn explanation(&self) -> &str {
+        self.detail
+            .as_deref()
+            .unwrap_or_else(|| verdict_explanation(self.verdict))
+    }
+
+    #[must_use]
+    pub fn suggestions(&self) -> Vec<String> {
+        let mut suggestions = vec![format!("nx where {}", self.name)];
+        if self.is_candidate() {
+            suggestions.push(format!("nx remove --dry-run {}", self.name));
+        }
+        suggestions
+    }
+}
+
+pub fn classify_usage(
+    declaration: &PackageDeclaration,
+    plan: AuditPlan,
+    mut evidence: Vec<EvidenceItem>,
+    coverage: EvidenceCoverage,
+    cutoff_epoch_secs: i64,
+) -> UsageRecord {
+    deduplicate_evidence(&mut evidence);
+    let last_seen = evidence.iter().filter_map(|item| item.timestamp).max();
+    let (verdict, artifacts, detail) = match plan {
+        AuditPlan::Protected { reason } => (UsageVerdict::Protected, Vec::new(), Some(reason)),
+        AuditPlan::NotAuditable { reason } => {
+            (UsageVerdict::NotAuditable, Vec::new(), Some(reason))
+        }
+        AuditPlan::InventoryUncertain { reason } => {
+            (UsageVerdict::InventoryUncertain, Vec::new(), Some(reason))
+        }
+        AuditPlan::Auditable(plan) => {
+            let verdict = if last_seen.is_some_and(|timestamp| timestamp >= cutoff_epoch_secs) {
+                UsageVerdict::ObservedRecent
+            } else if !evidence.is_empty() {
+                if evidence.iter().any(|item| item.timestamp.is_none()) {
+                    UsageVerdict::ObservedUndated
+                } else {
+                    UsageVerdict::ObservedStale
+                }
+            } else if coverage.covers(plan.artifacts()) {
+                UsageVerdict::NoEvidence
+            } else {
+                UsageVerdict::InsufficientEvidence
+            };
+            (verdict, plan.artifacts, None)
+        }
+    };
+    let latest_evidence = last_seen.and_then(|last_seen| {
+        evidence
+            .iter()
+            .filter(|item| item.timestamp == Some(last_seen))
+            .max_by_key(|item| item.confidence)
+    });
+    let confidence = latest_evidence.map_or_else(
+        || {
+            evidence
+                .iter()
+                .filter(|item| item.timestamp.is_none())
+                .map(|item| item.confidence)
+                .max()
+                .unwrap_or(EvidenceConfidence::None)
+        },
+        |item| item.confidence,
+    );
+    let candidate = (verdict == UsageVerdict::ObservedStale && coverage.covers(&artifacts))
+        .then_some(latest_evidence)
+        .flatten()
+        .filter(|item| item.confidence == EvidenceConfidence::Strong)
+        .and_then(|item| {
+            item.timestamp.map(|observed_at| ReviewCandidate {
+                observed_at,
+                evidence: item.kind,
+            })
+        });
+
+    UsageRecord {
+        name: declaration.name.clone(),
+        source: declaration.source,
+        declarations: declaration.sites.clone(),
+        verdict,
+        last_seen,
+        confidence,
+        candidate,
+        artifacts,
+        coverage,
+        evidence,
+        detail,
+    }
+}
+
+fn verdict_explanation(verdict: UsageVerdict) -> &'static str {
+    match verdict {
+        UsageVerdict::ObservedRecent => "recent use was observed",
+        UsageVerdict::ObservedUndated => "use was observed without reliable recency",
+        UsageVerdict::ObservedStale => "the latest observation is outside the selected window",
+        UsageVerdict::NoEvidence => {
+            "no use was observed; absence from local evidence is not proof of inactivity"
+        }
+        UsageVerdict::InsufficientEvidence => {
+            "available evidence cannot support an inactivity judgment"
+        }
+        UsageVerdict::NotAuditable => "this package has no supported usage artifact",
+        UsageVerdict::InventoryUncertain => "package artifact ownership could not be established",
+        UsageVerdict::Protected => "package is protected by policy",
+    }
+}
+
+fn deduplicate_evidence(evidence: &mut Vec<EvidenceItem>) {
+    let mut seen = HashSet::new();
+    evidence.retain(|item| {
+        seen.insert((
+            item.kind,
+            item.summary.clone(),
+            item.timestamp,
+            item.confidence,
+        ))
+    });
+    evidence.sort_by(|left, right| {
+        right
+            .timestamp
+            .cmp(&left.timestamp)
+            .then_with(|| left.summary.cmp(&right.summary))
+    });
+}
+
+#[must_use]
+pub fn protection_reason(package: &PackageDeclaration) -> Option<&'static str> {
+    if package.source == PackageSource::Service {
+        return Some("active service declarations are protected from usage pruning");
+    }
+
+    [
+        "bash",
+        "darwin-rebuild",
+        "fish",
+        "git",
+        "home-manager",
+        "neovim",
+        "nix",
+        "nx",
+        "vim",
+        "zsh",
+    ]
+    .contains(&package.name.as_str())
+    .then_some("core shell, editor, package manager, or nx workflow tool")
 }
 
 pub fn parse_since_seconds(value: &str) -> Option<u64> {
@@ -189,230 +453,48 @@ pub fn default_usage_aliases_for_packages<'a>(
         .map(str::to_ascii_lowercase)
         .collect::<HashSet<_>>();
 
-    let mut aliases = HashMap::new();
-    for (alias, package) in DEFAULT_USAGE_ALIAS_CATALOG {
-        if package_match_names.contains(*package) {
-            aliases
-                .entry((*alias).to_string())
-                .or_insert_with(|| (*package).to_string());
-        }
-    }
-    aliases
-}
-
-pub fn audit_usage_records(
-    packages: &[DeclaredPackage],
-    shell_history: &[ShellHistoryEntry],
-    package_aliases: &HashMap<String, String>,
-    now_epoch_secs: i64,
-    options: UsageAuditOptions,
-) -> Vec<UsageRecord> {
-    let since_seconds = i64::try_from(options.since_seconds).unwrap_or(i64::MAX);
-    let cutoff = now_epoch_secs.saturating_sub(since_seconds);
-    let history_index = ShellHistoryIndex::new(shell_history);
-    packages
+    DEFAULT_USAGE_ALIAS_CATALOG
         .iter()
-        .map(|package| audit_package(package, &history_index, package_aliases, cutoff))
+        .filter(|(_, package)| package_match_names.contains(*package))
+        .map(|(alias, package)| ((*alias).to_string(), (*package).to_string()))
         .collect()
 }
 
-fn audit_package(
-    package: &DeclaredPackage,
-    history_index: &ShellHistoryIndex<'_>,
+#[must_use]
+pub fn aliases_for_package(
+    package: &str,
     package_aliases: &HashMap<String, String>,
-    cutoff_epoch_secs: i64,
-) -> UsageRecord {
-    let mut evidence = history_index.evidence_for_package(package, package_aliases);
-    let protected_reason = protection_reason(package);
-    if let Some(reason) = protected_reason {
-        evidence.push(EvidenceItem {
-            kind: EvidenceKind::Policy,
-            summary: reason.to_string(),
-            timestamp: None,
-            confidence: EvidenceConfidence::Strong,
-        });
+) -> Vec<String> {
+    let mut aliases = package_match_names(package)
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    if let Some(cli_name) = aliases
+        .last()
+        .and_then(|name| name.strip_suffix("-cli"))
+        .map(str::to_string)
+    {
+        push_unique(&mut aliases, cli_name);
     }
 
-    let last_seen = evidence.iter().filter_map(|item| item.timestamp).max();
-    let confidence = evidence
+    for (alias, target) in DEFAULT_USAGE_ALIAS_CATALOG
         .iter()
-        .map(|item| item.confidence)
-        .max()
-        .unwrap_or(EvidenceConfidence::None);
-    let status = if protected_reason.is_some() {
-        UsageStatus::Protected
-    } else if last_seen.is_some_and(|timestamp| timestamp >= cutoff_epoch_secs) {
-        UsageStatus::Recent
-    } else if last_seen.is_some() {
-        UsageStatus::Old
-    } else {
-        UsageStatus::Unknown
-    };
-
-    UsageRecord {
-        name: package.name.clone(),
-        source: package.source,
-        location: package.location.clone(),
-        status,
-        last_seen,
-        confidence,
-        evidence,
-        suggestions: suggestions(&package.name),
-    }
-}
-
-struct ShellHistoryIndex<'a> {
-    by_command: HashMap<&'a str, Vec<&'a ShellHistoryEntry>>,
-}
-
-impl<'a> ShellHistoryIndex<'a> {
-    fn new(shell_history: &'a [ShellHistoryEntry]) -> Self {
-        let mut by_command: HashMap<&'a str, Vec<&'a ShellHistoryEntry>> = HashMap::new();
-        for entry in shell_history {
-            if let Some(command) = command_word(&entry.command) {
-                by_command.entry(command).or_default().push(entry);
-            }
-        }
-        Self { by_command }
-    }
-
-    fn evidence_for_package(
-        &self,
-        package: &DeclaredPackage,
-        package_aliases: &HashMap<String, String>,
-    ) -> Vec<EvidenceItem> {
-        command_aliases(&package.name, package_aliases)
-            .into_iter()
-            .filter_map(|command| {
-                self.by_command
-                    .get(command.as_str())
-                    .map(|entries| (command, entries))
-            })
-            .flat_map(|(command, entries)| {
-                entries.iter().map(move |entry| EvidenceItem {
-                    kind: EvidenceKind::ShellHistory,
-                    summary: shell_history_summary(&command, entry.started_at_epoch_secs),
-                    timestamp: entry.started_at_epoch_secs,
-                    confidence: if entry.started_at_epoch_secs.is_some() {
-                        EvidenceConfidence::Strong
-                    } else {
-                        EvidenceConfidence::Medium
-                    },
-                })
-            })
-            .collect()
-    }
-}
-
-fn shell_history_summary(command: &str, timestamp: Option<i64>) -> String {
-    if timestamp.is_some() {
-        format!("command `{command}` appeared in timestamped shell history")
-    } else {
-        format!("command `{command}` appeared in untimestamped shell history")
-    }
-}
-
-fn command_word(command: &str) -> Option<&str> {
-    let mut tokens = command.split_whitespace().peekable();
-    while let Some(token) = tokens.next() {
-        if token.contains('=') && !token.starts_with('-') {
-            continue;
-        }
-        if matches!(token, "command" | "noglob") {
-            continue;
-        }
-        if matches!(token, "env" | "sudo" | "time") {
-            skip_wrapper_options(token, &mut tokens);
-            continue;
-        }
-        if token.starts_with('-') {
-            continue;
-        }
-        return Some(token.rsplit('/').next().unwrap_or(token));
-    }
-    None
-}
-
-fn skip_wrapper_options<'a>(
-    wrapper: &str,
-    tokens: &mut std::iter::Peekable<impl Iterator<Item = &'a str>>,
-) {
-    while let Some(option) = tokens.next_if(|token| token.starts_with('-')) {
-        if wrapper_option_takes_value(wrapper, option)
-            && !option.contains('=')
-            && !short_option_has_inline_value(option)
-        {
-            tokens.next();
-        }
-    }
-}
-
-fn wrapper_option_takes_value(wrapper: &str, option: &str) -> bool {
-    match wrapper {
-        "env" => matches!(
-            option,
-            "-u" | "--unset" | "-C" | "--chdir" | "-S" | "--split-string"
-        ),
-        "sudo" => matches!(
-            option,
-            "-A" | "-a"
-                | "-b"
-                | "-C"
-                | "-c"
-                | "-D"
-                | "-g"
-                | "-h"
-                | "-p"
-                | "-R"
-                | "-r"
-                | "-T"
-                | "-t"
-                | "-U"
-                | "-u"
-                | "--askpass"
-                | "--auth-type"
-                | "--background"
-                | "--close-from"
-                | "--chdir"
-                | "--group"
-                | "--host"
-                | "--prompt"
-                | "--chroot"
-                | "--role"
-                | "--command-timeout"
-                | "--type"
-                | "--other-user"
-                | "--user"
-        ),
-        _ => false,
-    }
-}
-
-fn short_option_has_inline_value(option: &str) -> bool {
-    option.starts_with('-') && !option.starts_with("--") && option.len() > 2
-}
-
-fn command_aliases(package: &str, package_aliases: &HashMap<String, String>) -> Vec<String> {
-    let slash_bare = package.rsplit('/').next().unwrap_or(package);
-    let bare = slash_bare.rsplit('.').next().unwrap_or(slash_bare);
-    let mut aliases = Vec::new();
-    let package_names = package_match_names(package);
-    push_alias(&mut aliases, package);
-    push_alias(&mut aliases, slash_bare);
-    push_alias(&mut aliases, bare);
-
-    if let Some(cli_name) = bare.strip_suffix("-cli") {
-        push_alias(&mut aliases, cli_name);
-    }
-
-    for (alias, target) in package_aliases {
-        if package_names
+        .map(|(alias, target)| (*alias, *target))
+        .chain(
+            package_aliases
+                .iter()
+                .map(|(alias, target)| (alias.as_str(), target.as_str())),
+        )
+    {
+        if package_match_names(package)
             .iter()
             .any(|name| name.eq_ignore_ascii_case(target))
         {
-            push_alias(&mut aliases, alias);
+            push_unique(&mut aliases, alias.to_string());
         }
     }
+
     aliases
 }
 
@@ -420,52 +502,18 @@ fn package_match_names(package: &str) -> Vec<&str> {
     let slash_bare = package.rsplit('/').next().unwrap_or(package);
     let bare = slash_bare.rsplit('.').next().unwrap_or(slash_bare);
     let mut names = Vec::new();
-    push_borrowed_unique(&mut names, package);
-    push_borrowed_unique(&mut names, slash_bare);
-    push_borrowed_unique(&mut names, bare);
+    for name in [package, slash_bare, bare] {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
     names
 }
 
-fn push_borrowed_unique<'a>(values: &mut Vec<&'a str>, value: &'a str) {
+fn push_unique(values: &mut Vec<String>, value: String) {
     if !values.contains(&value) {
         values.push(value);
     }
-}
-
-fn push_alias(aliases: &mut Vec<String>, alias: &str) {
-    if !aliases.iter().any(|existing| existing == alias) {
-        aliases.push(alias.to_string());
-    }
-}
-
-fn protection_reason(package: &DeclaredPackage) -> Option<&'static str> {
-    if package.source == UsageSource::Service {
-        return Some("active service declarations are protected from usage pruning");
-    }
-
-    let name = package.name.as_str();
-    let protected = [
-        "bash",
-        "darwin-rebuild",
-        "fish",
-        "git",
-        "home-manager",
-        "neovim",
-        "nix",
-        "nx",
-        "vim",
-        "zsh",
-    ];
-    protected
-        .contains(&name)
-        .then_some("core shell, editor, package manager, or nx workflow tool")
-}
-
-fn suggestions(name: &str) -> Vec<String> {
-    vec![
-        format!("nx where {name}"),
-        format!("nx remove --dry-run {name}"),
-    ]
 }
 
 fn split_duration(value: &str) -> Option<(u64, &str)> {
@@ -484,230 +532,230 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{
-        DeclaredPackage, EvidenceConfidence, UsageAuditOptions, UsageSource, UsageStatus,
-        audit_usage_records, command_word, default_usage_aliases_for_packages, parse_since_seconds,
+        ArtifactAttribution, AuditPlan, AuditablePlan, EvidenceConfidence, EvidenceCoverage,
+        EvidenceItem, EvidenceKind, EvidenceProvider, UsageArtifact, UsageVerdict,
+        aliases_for_package, classify_usage, parse_since_seconds,
     };
-    use crate::infra::shell_history::ShellHistoryEntry;
+    use crate::domain::package::{
+        DeclarationKind, DeclarationSite, PackageDeclaration, PackageSource,
+    };
 
     #[test]
-    fn parse_since_accepts_supported_units() {
+    fn parses_supported_usage_windows() {
         assert_eq!(parse_since_seconds("30d"), Some(30 * 86_400));
         assert_eq!(parse_since_seconds("12w"), Some(12 * 7 * 86_400));
         assert_eq!(parse_since_seconds("6mo"), Some(6 * 30 * 86_400));
         assert_eq!(parse_since_seconds("1y"), Some(365 * 86_400));
-    }
-
-    #[test]
-    fn parse_since_rejects_unknown_shapes() {
-        assert_eq!(parse_since_seconds("90"), None);
-        assert_eq!(parse_since_seconds("d90"), None);
         assert_eq!(parse_since_seconds("2h"), None);
     }
 
     #[test]
-    fn default_usage_aliases_include_verified_catalog_entries_for_declared_packages() {
-        let aliases = default_usage_aliases_for_packages([
-            "ripgrep",
-            "nodejs",
-            "python3",
-            "imagemagick",
-            "gnugrep",
-            "neovim",
-            "yq-go",
-            "sqlite",
-            "postgresql",
-            "docker-client",
-            "wireguard-tools",
-            "gnupg",
-            "openssh",
-            "gawk",
-            "diffutils",
-            "ffmpeg",
-            "ghostscript",
-            "poppler-utils",
-        ]);
+    fn no_evidence_is_visible_but_never_actionable() {
+        let mut coverage = EvidenceCoverage::default();
+        coverage.add_provider(EvidenceProvider::ArtifactDiscovery);
+        coverage.add_provider(EvidenceProvider::TimestampedShellHistory);
+        let plan = AuditPlan::Auditable(
+            AuditablePlan::new(vec![UsageArtifact::Command {
+                name: "jq".to_string(),
+                attribution: ArtifactAttribution::InstalledOwner,
+            }])
+            .expect("artifact should be auditable"),
+        );
 
-        assert_eq!(aliases.get("rg").map(String::as_str), Some("ripgrep"));
-        assert_eq!(aliases.get("node").map(String::as_str), Some("nodejs"));
-        assert_eq!(aliases.get("npm").map(String::as_str), Some("nodejs"));
-        assert_eq!(aliases.get("python").map(String::as_str), Some("python3"));
-        assert_eq!(
-            aliases.get("magick").map(String::as_str),
-            Some("imagemagick")
-        );
-        assert_eq!(aliases.get("grep").map(String::as_str), Some("gnugrep"));
-        assert_eq!(aliases.get("nvim").map(String::as_str), Some("neovim"));
-        assert_eq!(aliases.get("yq").map(String::as_str), Some("yq-go"));
-        assert_eq!(aliases.get("sqlite3").map(String::as_str), Some("sqlite"));
-        assert_eq!(aliases.get("psql").map(String::as_str), Some("postgresql"));
-        assert_eq!(
-            aliases.get("docker").map(String::as_str),
-            Some("docker-client")
-        );
-        assert_eq!(
-            aliases.get("wg-quick").map(String::as_str),
-            Some("wireguard-tools")
-        );
-        assert_eq!(aliases.get("gpg").map(String::as_str), Some("gnupg"));
-        assert_eq!(aliases.get("ssh").map(String::as_str), Some("openssh"));
-        assert_eq!(aliases.get("awk").map(String::as_str), Some("gawk"));
-        assert_eq!(aliases.get("diff").map(String::as_str), Some("diffutils"));
-        assert_eq!(aliases.get("ffprobe").map(String::as_str), Some("ffmpeg"));
-        assert_eq!(
-            aliases.get("ps2pdf").map(String::as_str),
-            Some("ghostscript")
-        );
-        assert_eq!(
-            aliases.get("pdftotext").map(String::as_str),
-            Some("poppler-utils")
-        );
-        assert!(!aliases.contains_key("vim"));
-        assert!(!aliases.contains_key("sg"));
+        let record = classify_usage(&package("jq"), plan, Vec::new(), coverage, 100);
+        assert_eq!(record.verdict, UsageVerdict::NoEvidence);
+        assert!(!record.is_candidate());
     }
 
     #[test]
-    fn command_word_skips_wrappers_and_env_assignments() {
-        assert_eq!(
-            command_word("RUST_LOG=debug sudo /opt/bin/rg foo"),
-            Some("rg")
+    fn missing_required_provider_is_insufficient_not_unused() {
+        let plan = AuditPlan::Auditable(
+            AuditablePlan::new(vec![UsageArtifact::Application {
+                path: "/Applications/Ghostty.app".to_string(),
+                attribution: ArtifactAttribution::PackageMetadata,
+            }])
+            .expect("artifact should be auditable"),
         );
-        assert_eq!(command_word("sudo -E rg src"), Some("rg"));
-        assert_eq!(command_word("sudo -u root rg src"), Some("rg"));
-        assert_eq!(command_word("env -u FOO rg src"), Some("rg"));
-        assert_eq!(command_word("time -p rg src"), Some("rg"));
-        assert_eq!(
-            command_word("env FOO=bar command nvim README.md"),
-            Some("nvim")
+
+        let record = classify_usage(
+            &package("ghostty"),
+            plan,
+            Vec::new(),
+            EvidenceCoverage::default(),
+            100,
         );
+        assert_eq!(record.verdict, UsageVerdict::InsufficientEvidence);
     }
 
     #[test]
-    fn shell_history_scores_recent_old_and_unknown_records() {
-        let packages = vec![package("ripgrep"), package("fd"), package("graphviz")];
-        let history = vec![
-            ShellHistoryEntry {
-                command: "rg src".to_string(),
-                started_at_epoch_secs: Some(1_000),
-                duration_secs: Some(1),
+    fn undated_observation_never_becomes_a_candidate() {
+        let plan = AuditPlan::Auditable(
+            AuditablePlan::new(vec![UsageArtifact::Command {
+                name: "nixd".to_string(),
+                attribution: ArtifactAttribution::InstalledOwner,
+            }])
+            .expect("artifact should be auditable"),
+        );
+        let evidence = vec![EvidenceItem {
+            kind: EvidenceKind::ShellHistory,
+            summary: "undated shell observation".to_string(),
+            timestamp: None,
+            confidence: EvidenceConfidence::Medium,
+        }];
+
+        let record = classify_usage(
+            &package("nixd"),
+            plan,
+            evidence,
+            EvidenceCoverage::default(),
+            100,
+        );
+        assert_eq!(record.verdict, UsageVerdict::ObservedUndated);
+        assert!(!record.is_candidate());
+    }
+
+    #[test]
+    fn undated_evidence_overrides_an_old_timestamp() {
+        let mut coverage = EvidenceCoverage::default();
+        coverage.add_provider(EvidenceProvider::TimestampedShellHistory);
+        let plan = AuditPlan::Auditable(
+            AuditablePlan::new(vec![UsageArtifact::Command {
+                name: "nixd".to_string(),
+                attribution: ArtifactAttribution::InstalledOwner,
+            }])
+            .expect("artifact should be auditable"),
+        );
+        let evidence = vec![
+            EvidenceItem {
+                kind: EvidenceKind::ShellHistory,
+                summary: "old shell observation".to_string(),
+                timestamp: Some(50),
+                confidence: EvidenceConfidence::Strong,
             },
-            ShellHistoryEntry {
-                command: "fd Cargo".to_string(),
-                started_at_epoch_secs: Some(100),
-                duration_secs: None,
+            EvidenceItem {
+                kind: EvidenceKind::ShellHistory,
+                summary: "undated shell observation".to_string(),
+                timestamp: None,
+                confidence: EvidenceConfidence::Medium,
             },
         ];
 
-        let records = audit_usage_records(
-            &packages,
-            &history,
-            &HashMap::from([("rg".to_string(), "ripgrep".to_string())]),
-            1_000,
-            UsageAuditOptions { since_seconds: 200 },
-        );
+        let record = classify_usage(&package("nixd"), plan, evidence, coverage, 100);
 
-        assert_eq!(records[0].status, UsageStatus::Recent);
-        assert_eq!(records[0].confidence, EvidenceConfidence::Strong);
-        assert_eq!(records[1].status, UsageStatus::Old);
-        assert_eq!(records[2].status, UsageStatus::Unknown);
+        assert_eq!(record.verdict, UsageVerdict::ObservedUndated);
+        assert!(!record.is_candidate());
+        assert_eq!(record.suggestions(), vec!["nx where nixd"]);
     }
 
     #[test]
-    fn untimestamped_shell_history_is_medium_evidence_but_not_recent() {
-        let records = audit_usage_records(
-            &[package("bat")],
-            &[ShellHistoryEntry {
-                command: "bat README.md".to_string(),
-                started_at_epoch_secs: None,
-                duration_secs: None,
-            }],
-            &package_aliases(),
-            1_000,
-            UsageAuditOptions { since_seconds: 200 },
+    fn expected_command_names_cannot_create_review_candidates() {
+        let mut coverage = EvidenceCoverage::default();
+        coverage.add_provider(EvidenceProvider::TimestampedShellHistory);
+        let plan = AuditPlan::Auditable(
+            AuditablePlan::new(vec![UsageArtifact::Command {
+                name: "tool".to_string(),
+                attribution: ArtifactAttribution::ExpectedName,
+            }])
+            .expect("artifact should be auditable"),
         );
+        let evidence = vec![EvidenceItem {
+            kind: EvidenceKind::ShellHistory,
+            summary: "expected command appeared".to_string(),
+            timestamp: Some(50),
+            confidence: EvidenceConfidence::Medium,
+        }];
 
-        assert_eq!(records[0].status, UsageStatus::Unknown);
-        assert_eq!(records[0].confidence, EvidenceConfidence::Medium);
-        assert_eq!(
-            records[0].evidence[0].summary,
-            "command `bat` appeared in untimestamped shell history"
-        );
+        let record = classify_usage(&package("tool"), plan, evidence, coverage, 100);
+
+        assert_eq!(record.verdict, UsageVerdict::ObservedStale);
+        assert!(!record.is_candidate());
+        assert_eq!(record.suggestions(), vec!["nx where tool"]);
     }
 
     #[test]
-    fn manifest_aliases_match_common_command_names() {
-        let records = audit_usage_records(
-            &[
-                package("steveyegge/beads/bd"),
-                package("codex-cli"),
-                package("claude-code"),
-                package("ast-grep"),
-            ],
-            &[
-                ShellHistoryEntry {
-                    command: "bd ready".to_string(),
-                    started_at_epoch_secs: None,
-                    duration_secs: None,
-                },
-                ShellHistoryEntry {
-                    command: "codex --version".to_string(),
-                    started_at_epoch_secs: None,
-                    duration_secs: None,
-                },
-                ShellHistoryEntry {
-                    command: "claude -p status".to_string(),
-                    started_at_epoch_secs: None,
-                    duration_secs: None,
-                },
-                ShellHistoryEntry {
-                    command: "sg run --pattern TODO".to_string(),
-                    started_at_epoch_secs: None,
-                    duration_secs: None,
-                },
-            ],
-            &HashMap::from([
-                ("bd".to_string(), "steveyegge/beads/bd".to_string()),
-                ("codex".to_string(), "codex-cli".to_string()),
-                ("claude".to_string(), "claude-code".to_string()),
-                ("sg".to_string(), "ast-grep".to_string()),
-            ]),
-            1_000,
-            UsageAuditOptions { since_seconds: 200 },
+    fn newer_medium_evidence_cannot_borrow_strength_from_older_evidence() {
+        let mut coverage = EvidenceCoverage::default();
+        coverage.add_provider(EvidenceProvider::ArtifactDiscovery);
+        coverage.add_provider(EvidenceProvider::TimestampedShellHistory);
+        let plan = AuditPlan::Auditable(
+            AuditablePlan::new(vec![UsageArtifact::Command {
+                name: "tool".to_string(),
+                attribution: ArtifactAttribution::InstalledOwner,
+            }])
+            .expect("artifact should be auditable"),
         );
+        let evidence = vec![
+            EvidenceItem {
+                kind: EvidenceKind::ShellHistory,
+                summary: "strong old observation".to_string(),
+                timestamp: Some(25),
+                confidence: EvidenceConfidence::Strong,
+            },
+            EvidenceItem {
+                kind: EvidenceKind::ShellHistory,
+                summary: "medium newer observation".to_string(),
+                timestamp: Some(50),
+                confidence: EvidenceConfidence::Medium,
+            },
+        ];
 
-        assert!(records.iter().all(|record| {
-            record.status == UsageStatus::Unknown
-                && record.confidence == EvidenceConfidence::Medium
-                && !record.evidence.is_empty()
-        }));
+        let record = classify_usage(&package("tool"), plan, evidence, coverage, 100);
+
+        assert_eq!(record.verdict, UsageVerdict::ObservedStale);
+        assert_eq!(record.last_seen, Some(50));
+        assert!(!record.is_candidate());
     }
 
     #[test]
-    fn services_are_protected() {
-        let records = audit_usage_records(
-            &[DeclaredPackage {
-                name: "sops-nix".to_string(),
-                source: UsageSource::Service,
-                location: None,
-            }],
-            &[],
-            &package_aliases(),
-            1_000,
-            UsageAuditOptions { since_seconds: 200 },
+    fn candidate_requires_usage_and_artifact_coverage() {
+        let plan = AuditPlan::Auditable(
+            AuditablePlan::new(vec![UsageArtifact::Command {
+                name: "tool".to_string(),
+                attribution: ArtifactAttribution::InstalledOwner,
+            }])
+            .expect("artifact should be auditable"),
         );
+        let evidence = vec![EvidenceItem {
+            kind: EvidenceKind::ShellHistory,
+            summary: "strong stale observation".to_string(),
+            timestamp: Some(50),
+            confidence: EvidenceConfidence::Strong,
+        }];
+        let mut incomplete = EvidenceCoverage::default();
+        incomplete.add_provider(EvidenceProvider::TimestampedShellHistory);
 
-        assert_eq!(records[0].status, UsageStatus::Protected);
-        assert_eq!(records[0].confidence, EvidenceConfidence::Strong);
+        let record = classify_usage(
+            &package("tool"),
+            plan.clone(),
+            evidence.clone(),
+            incomplete,
+            100,
+        );
+        assert!(!record.is_candidate());
+
+        let mut complete = EvidenceCoverage::default();
+        complete.add_provider(EvidenceProvider::ArtifactDiscovery);
+        complete.add_provider(EvidenceProvider::TimestampedShellHistory);
+        let record = classify_usage(&package("tool"), plan, evidence, complete, 100);
+        assert!(record.is_candidate());
     }
 
-    fn package(name: &str) -> DeclaredPackage {
-        DeclaredPackage {
+    #[test]
+    fn aliases_combine_catalog_and_manifest_hints() {
+        let aliases = HashMap::from([("node24".to_string(), "nodejs".to_string())]);
+        let names = aliases_for_package("nodejs", &aliases);
+        assert!(names.contains(&"node".to_string()));
+        assert!(names.contains(&"node24".to_string()));
+    }
+
+    fn package(name: &str) -> PackageDeclaration {
+        PackageDeclaration {
             name: name.to_string(),
-            source: UsageSource::Nix,
-            location: None,
+            source: PackageSource::Nix,
+            sites: vec![DeclarationSite {
+                location: "packages.nix:1".to_string(),
+                kind: DeclarationKind::Package,
+            }],
         }
-    }
-
-    fn package_aliases() -> HashMap<String, String> {
-        HashMap::new()
     }
 }

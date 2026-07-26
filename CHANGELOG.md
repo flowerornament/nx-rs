@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- replaces the heuristic `nx unused` command with `nx usage`, a typed local evidence report that parses Nix declarations structurally, preserves duplicate declaration sites, resolves installed command and application artifacts, extracts shell pipelines with tree-sitter, and explains each verdict with provider coverage and limitations
+- limits review candidates to strong stale observations with verified artifact attribution, evidence coverage spanning the selected cutoff, and no conflicting undated observation; unobserved, inferred-name, unauditable, and inventory-uncertain packages remain visible but non-actionable
+- adds deterministic usage system coverage, bounded artifact summaries for human and JSON output, Spotlight and process observations for applications, imported-history timestamp cohort handling, protected-package reporting, and manifest-health visibility
 ## v1.5.32 - 2026-07-24
 
 - heals Determinate Nix lazy-tree source-cache corruption at every rebuild boundary, including `darwin-rebuild switch`, profile update, and activation, while preserving native terminal-aware output through a byte-for-byte pseudoterminal relay and retrying only the failed phase

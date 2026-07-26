@@ -32,6 +32,8 @@ pub fn install_stubs(stub_dir: &Path) -> Result<(), Box<dyn Error>> {
         "scutil",
         "hostname",
         "df",
+        "mdls",
+        "ps",
     ] {
         write_executable(&stub_dir.join(program), STUB_SCRIPT)?;
     }

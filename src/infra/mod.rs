@@ -16,3 +16,4 @@ pub mod shell_history;
 pub mod sources;
 pub mod text;
 pub mod timing;
+pub mod usage_evidence;

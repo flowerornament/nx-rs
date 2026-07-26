@@ -33,10 +33,8 @@ const INSTALLED_JSON_ARGS: &[&str] = &["installed", "ripgrep", "--json"];
 const INFO_BLEEDING_EDGE_ARGS: &[&str] = &["info", "ripgrep", "--bleeding-edge"];
 const INFO_JSON_HM_MODULE_ARGS: &[&str] = &["info", "git", "--json"];
 const INFO_JSON_DARWIN_SERVICE_ARGS: &[&str] = &["info", "yabai", "--json"];
-const UNUSED_NIX_ARGS: &[&str] = &[
-    "unused", "--source", "nix", "--since", "30d", "--limit", "5",
-];
-const UNUSED_JSON_ARGS: &[&str] = &["unused", "--no-history", "--json"];
+const USAGE_NIX_ARGS: &[&str] = &["usage", "--source", "nix", "--since", "30d", "--limit", "5"];
+const USAGE_JSON_ARGS: &[&str] = &["usage", "--no-history", "--json"];
 
 const INFO_FOUND_STDOUT: &[&str] = &[
     "ripgrep  installed (nxs)",
@@ -84,6 +82,8 @@ where
     let stub_dir = tmp.path().join(STUB_DIR_NAME);
     fs::create_dir_all(&stub_dir)?;
     install_stubs(&stub_dir)?;
+    let evidence_root = tmp.path().join(".usage-evidence");
+    fs::create_dir_all(&evidence_root)?;
     let log_path = tmp.path().join(LOG_FILE_NAME);
     let home_dir = TempDir::new()?;
     let now_epoch_secs = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -104,6 +104,8 @@ where
         .env("TERM", "dumb")
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("NX_SYSTEM_IT_LOG", &log_path)
+        .env("NX_USAGE_COMMAND_ROOTS", &evidence_root)
+        .env("NX_USAGE_APPLICATION_ROOTS", &evidence_root)
         .env("PATH", prepend_path(&stub_dir))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -319,16 +321,14 @@ fn system_query_surface() -> Result<(), Box<dyn Error>> {
             },
         ),
         (
-            "unused_nix_plain_renders_review_candidates",
+            "usage_nix_plain_renders_review_candidates",
             QueryCase {
-                args: UNUSED_NIX_ARGS,
+                args: USAGE_NIX_ARGS,
                 expected_exit: 0,
                 stdout_contains: &[
-                    "Package Usage Audit (30d)",
-                    "Review candidates",
-                    "lua5_4",
-                    "fd",
-                    "nx remove --dry-run lua5_4",
+                    "Package Usage (30d)",
+                    "Review candidates (0)",
+                    "2 unobserved (not candidates)",
                 ],
             },
         ),
@@ -384,21 +384,21 @@ fn system_query_list_json_snapshot() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn system_query_unused_json_snapshot() -> Result<(), Box<dyn Error>> {
+fn system_query_usage_json_snapshot() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
     let nx_bin = resolve_nx_bin(&workspace_root)?;
 
     assert_query_json_snapshot(
-        "system_query_unused_json_no_history",
+        "system_query_usage_json_no_history",
         &nx_bin,
         &repo_base,
-        UNUSED_JSON_ARGS,
+        USAGE_JSON_ARGS,
     )
 }
 
 #[test]
-fn system_query_unused_include_protected_controls_human_and_json_output()
+fn system_query_usage_include_protected_controls_human_and_json_output()
 -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
@@ -407,17 +407,17 @@ fn system_query_unused_include_protected_controls_human_and_json_output()
     let hidden = run_query_command(
         &nx_bin,
         &repo_base,
-        &["unused", "--no-history", "--limit", "20"],
+        &["usage", "--no-history", "--limit", "20"],
     )?;
     let hidden_stdout = String::from_utf8_lossy(&hidden.output.stdout);
     assert!(!hidden_stdout.contains("test-agent"));
-    assert!(hidden_stdout.contains("Protected hidden: 1"));
+    assert!(hidden_stdout.contains("1 protected package hidden"));
 
     let included = run_query_command(
         &nx_bin,
         &repo_base,
         &[
-            "unused",
+            "usage",
             "--no-history",
             "--include-protected",
             "--limit",
@@ -426,13 +426,13 @@ fn system_query_unused_include_protected_controls_human_and_json_output()
     )?;
     let included_stdout = String::from_utf8_lossy(&included.output.stdout);
     assert!(included_stdout.contains("test-agent"));
-    assert!(included_stdout.contains("protected by policy"));
-    assert!(!included_stdout.contains("Protected hidden"));
+    assert!(included_stdout.contains("active service declarations are protected"));
+    assert!(!included_stdout.contains("protected package hidden"));
 
     let included_json = run_query_command(
         &nx_bin,
         &repo_base,
-        &["unused", "--no-history", "--include-protected", "--json"],
+        &["usage", "--no-history", "--include-protected", "--json"],
     )?;
     let included_json: Value = serde_json::from_slice(&included_json.output.stdout)?;
     assert!(has_record(&included_json, "test-agent"));
@@ -447,7 +447,7 @@ fn has_record(output: &Value, name: &str) -> bool {
 }
 
 #[test]
-fn system_query_unused_uses_manifest_aliases_as_command_evidence() -> Result<(), Box<dyn Error>> {
+fn system_query_usage_uses_manifest_aliases_as_command_evidence() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
     let nx_bin = resolve_nx_bin(&workspace_root)?;
@@ -455,7 +455,7 @@ fn system_query_unused_uses_manifest_aliases_as_command_evidence() -> Result<(),
     let run = run_query_command_with_setup(
         &nx_bin,
         &repo_base,
-        &["unused", "--source", "nix", "--since", "30d", "--json"],
+        &["usage", "--source", "nix", "--since", "30d", "--json"],
         |repo_root| {
             let nx_dir = repo_root.join(".nx");
             fs::create_dir_all(&nx_dir)?;
@@ -485,11 +485,11 @@ rg = "ripgrep"
         .and_then(|records| records.iter().find(|record| record["name"] == "ripgrep"))
         .expect("ripgrep record");
 
-    assert_eq!(ripgrep["status"], "recent");
-    assert_eq!(ripgrep["confidence"], "strong");
+    assert_eq!(ripgrep["verdict"], "observed-recent");
+    assert_eq!(ripgrep["confidence"], "medium");
     assert_eq!(
         ripgrep["evidence"][0]["summary"],
-        "command `rg` appeared in timestamped shell history"
+        "command `rg` appeared once in shell history"
     );
 
     Ok(())

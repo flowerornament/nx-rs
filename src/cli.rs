@@ -19,7 +19,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "list",
     "info",
     "status",
-    "unused",
+    "usage",
     "installed",
     "profile",
     "lint",
@@ -42,7 +42,7 @@ const TYPO_GUARDED_COMMANDS: &[&str] = &[
     "search",
     "where",
     "status",
-    "unused",
+    "usage",
     "installed",
     "profile",
     "lint",
@@ -67,7 +67,7 @@ const WHERE_HELP: &str = "Examples:\n  nx where ripgrep\n\nNotes:\n  - `where` s
 const LIST_HELP: &str = "Examples:\n  nx list\n  nx list nix --verbose\n  nx list homebrew --json\n\nNotes:\n  - Source filters are `nix`, `homebrew`, and `mas`.";
 const INFO_HELP: &str = "Examples:\n  nx info ripgrep\n  nx info ripgrep --nur\n  nx info ripgrep --source homebrew\n  nx info ripgrep --verbose\n\nNotes:\n  - `info` shares the package-query pipeline with `search` and install resolution.\n  - Metadata/source collection shows loading feedback while lookups run.\n  - `--verbose` includes query diagnostics in addition to package metadata.";
 const STATUS_HELP: &str = "Examples:\n  nx status\n  nx status --json\n\nNotes:\n  - `status` is a read-only package distribution summary for the managed repo.";
-const UNUSED_HELP: &str = "Examples:\n  nx unused\n  nx unused --since 30d\n  nx unused --source nix --json\n  nx unused --history ~/.zsh_history --verbose\n\nNotes:\n  - `unused` is a read-only advisory audit of declared packages with little local evidence of recent use.\n  - It scans shell history locally, treats untimestamped entries as lower-confidence evidence, and never reports or stores raw command history.\n  - Absence of evidence is only a review signal; use `nx remove --dry-run <package>` before removing anything.";
+const USAGE_HELP: &str = "Examples:\n  nx usage\n  nx usage jq\n  nx usage --since 30d\n  nx usage --source nix --json\n  nx usage --history ~/.zsh_history --verbose\n\nNotes:\n  - `usage` reports observed package use, evidence coverage, and conservative review candidates.\n  - It resolves installed command ownership, parses shell pipelines, and observes application bundles through Spotlight and the current process snapshot.\n  - Packages without suitable artifacts or sufficient evidence remain explicitly unauditable or uncertain.\n  - It never reports or stores raw command history and never removes packages.";
 const INSTALLED_HELP: &str = "Examples:\n  nx installed ripgrep fd\n  nx installed ripgrep --show-location\n  nx installed ripgrep fd --json\n\nNotes:\n  - Exit status is success only when every requested package is installed.";
 const PROFILE_HELP: &str = "Examples:\n  nx profile\n  nx profile --limit 20\n  nx profile --json\n\nNotes:\n  - `profile` reads local rebuild timing records from ~/.local/state/nx/timings.jsonl.\n  - Set NX_PROFILE_PATH to override the timing file location.";
 const LINT_HELP: &str = "Examples:\n  nx lint\n  nx lint --json\n\nNotes:\n  - `lint` checks first-line `# nx:` routing metadata and routing keyword overlap.";
@@ -185,8 +185,8 @@ pub enum CommandKind {
     Info(InfoArgs),
     #[command(about = "Show package distribution summary")]
     Status(StatusArgs),
-    #[command(about = "Audit declared packages for weak local usage evidence")]
-    Unused(UnusedArgs),
+    #[command(about = "Audit package usage with artifact-aware local evidence")]
+    Usage(UsageArgs),
     #[command(about = "Check whether package(s) are installed")]
     Installed(InstalledArgs),
     #[command(about = "Show recent local rebuild timings")]
@@ -662,9 +662,11 @@ pub struct StatusArgs {
 }
 
 #[derive(Debug, Clone, Parser)]
-#[command(after_long_help = UNUSED_HELP)]
+#[command(after_long_help = USAGE_HELP)]
 #[allow(clippy::struct_excessive_bools)]
-pub struct UnusedArgs {
+pub struct UsageArgs {
+    #[arg(value_name = "PACKAGE", help = "Explain the evidence for one package")]
+    pub package: Option<String>,
     #[arg(
         long,
         default_value = "90d",
@@ -693,11 +695,6 @@ pub struct UnusedArgs {
     pub history: Vec<std::path::PathBuf>,
     #[arg(long, help = "Skip shell history scanning")]
     pub no_history: bool,
-    #[arg(
-        long,
-        help = "Accepted for compatibility; Spotlight evidence is not collected yet"
-    )]
-    pub no_spotlight: bool,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -1562,10 +1559,11 @@ mod tests {
     }
 
     #[test]
-    fn unused_parses_audit_options() {
+    fn usage_parses_audit_options() {
         let cli = Cli::try_parse_from([
             "nx",
-            "unused",
+            "usage",
+            "jq",
             "--since",
             "30d",
             "--source",
@@ -1578,12 +1576,12 @@ mod tests {
             "--history",
             "~/.zsh_history",
             "--no-history",
-            "--no-spotlight",
         ])
-        .expect("parse unused options");
-        let CommandKind::Unused(args) = cli.command else {
-            panic!("expected unused command");
+        .expect("parse usage options");
+        let CommandKind::Usage(args) = cli.command else {
+            panic!("expected usage command");
         };
+        assert_eq!(args.package.as_deref(), Some("jq"));
         assert_eq!(args.since, "30d");
         assert_eq!(args.source, "nix");
         assert_eq!(args.limit, 10);
@@ -1595,7 +1593,6 @@ mod tests {
             vec![std::path::PathBuf::from("~/.zsh_history")]
         );
         assert!(args.no_history);
-        assert!(args.no_spotlight);
     }
 
     #[test]
@@ -1709,7 +1706,7 @@ mod tests {
         assert_subcommand_local_long_flags("where", &[]);
         assert_subcommand_local_long_flags("installed", &["json", "show-location"]);
         assert_subcommand_local_long_flags(
-            "unused",
+            "usage",
             &[
                 "since",
                 "source",
@@ -1719,7 +1716,6 @@ mod tests {
                 "verbose",
                 "history",
                 "no-history",
-                "no-spotlight",
             ],
         );
         assert_subcommand_local_long_flags("lint", &["json"]);

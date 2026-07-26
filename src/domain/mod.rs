@@ -4,6 +4,7 @@ pub mod generations;
 pub mod location;
 pub mod manifest;
 pub mod manifest_scan;
+pub mod package;
 pub mod plan;
 pub(crate) mod repo_scan;
 pub mod routing;

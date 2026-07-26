@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn parse_shell_history_includes_untimestamped_commands_without_duplicates() {
         let entries = parse_shell_history(
-            ": 1760000000:3;rg package\n#1760000010\nfd src\nbat README.md\n- cmd: nx unused\n  when: 1760000020\n",
+            ": 1760000000:3;rg package\n#1760000010\nfd src\nbat README.md\n- cmd: nx usage\n  when: 1760000020\n",
         );
 
         assert_eq!(
@@ -310,7 +310,7 @@ mod tests {
                     duration_secs: None,
                 },
                 ShellHistoryEntry {
-                    command: "nx unused".to_string(),
+                    command: "nx usage".to_string(),
                     started_at_epoch_secs: Some(1_760_000_020),
                     duration_secs: None,
                 },

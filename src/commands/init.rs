@@ -4,8 +4,9 @@ use std::path::Path;
 use crate::commands::context::InitContext;
 use crate::domain::manifest::{Manifest, SlotKind};
 use crate::domain::manifest_scan::manifest_from_scan;
+use crate::domain::package::PackageBuckets;
 use crate::domain::usage::default_usage_aliases_for_packages;
-use crate::infra::config_scan::{PackageBuckets, scan_packages};
+use crate::infra::config_scan::scan_packages;
 use crate::output::printer::Printer;
 
 pub fn cmd_init(refresh: bool, ctx: &InitContext<'_>) -> i32 {
@@ -53,7 +54,7 @@ pub fn cmd_init(refresh: bool, ctx: &InitContext<'_>) -> i32 {
 }
 
 fn seed_usage_alias_hints(manifest: &mut Manifest, repo_root: &Path) -> anyhow::Result<usize> {
-    let buckets = scan_packages(repo_root)?;
+    let buckets = scan_packages(repo_root)?.buckets();
     let mut added = 0;
 
     for (alias, package) in default_usage_aliases_for_packages(package_names(&buckets)) {

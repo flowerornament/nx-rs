@@ -1,0 +1,404 @@
+---
+source: tests/system_query.rs
+expression: value
+---
+{
+  "since": "90d",
+  "since_seconds": 7776000,
+  "manifest_health": {
+    "status": "missing"
+  },
+  "inventory_issues": [],
+  "hidden_protected": 1,
+  "summary": {
+    "observed_recent": 0,
+    "observed_undated": 0,
+    "observed_stale": 0,
+    "no_evidence": 0,
+    "insufficient_evidence": 5,
+    "not_auditable": 1,
+    "inventory_uncertain": 2,
+    "protected": 0,
+    "candidates": 0
+  },
+  "records": [
+    {
+      "name": "raycast",
+      "source": "cask",
+      "declarations": [
+        {
+          "location": "packages/homebrew/casks.nix:5",
+          "kind": {
+            "kind": "application"
+          }
+        }
+      ],
+      "verdict": "inventory-uncertain",
+      "last_seen": null,
+      "confidence": "none",
+      "candidate": null,
+      "coverage": {
+        "providers": [
+          "artifact-discovery",
+          "homebrew-metadata"
+        ],
+        "limitations": []
+      },
+      "evidence": [],
+      "explanation": "no installed artifact ownership matched this declaration",
+      "suggestions": [
+        "nx where raycast"
+      ],
+      "artifacts": {
+        "commands": {
+          "count": 0,
+          "truncated": false,
+          "examples": []
+        },
+        "applications": {
+          "count": 0,
+          "truncated": false,
+          "examples": []
+        }
+      }
+    },
+    {
+      "name": "htop",
+      "source": "homebrew",
+      "declarations": [
+        {
+          "location": "packages/homebrew/brews.nix:5",
+          "kind": {
+            "kind": "package"
+          }
+        }
+      ],
+      "verdict": "insufficient-evidence",
+      "last_seen": null,
+      "confidence": "none",
+      "candidate": null,
+      "coverage": {
+        "providers": [
+          "artifact-discovery"
+        ],
+        "limitations": [
+          {
+            "provider": "timestamped-shell-history",
+            "message": "shell history scanning was disabled"
+          }
+        ]
+      },
+      "evidence": [],
+      "explanation": "available evidence cannot support an inactivity judgment",
+      "suggestions": [
+        "nx where htop"
+      ],
+      "artifacts": {
+        "commands": {
+          "count": 1,
+          "truncated": false,
+          "examples": [
+            {
+              "value": "htop",
+              "attribution": "expected-name"
+            }
+          ]
+        },
+        "applications": {
+          "count": 0,
+          "truncated": false,
+          "examples": []
+        }
+      }
+    },
+    {
+      "name": "Xcode",
+      "source": "mas",
+      "declarations": [
+        {
+          "location": "system/darwin.nix:5",
+          "kind": {
+            "kind": "application"
+          }
+        }
+      ],
+      "verdict": "inventory-uncertain",
+      "last_seen": null,
+      "confidence": "none",
+      "candidate": null,
+      "coverage": {
+        "providers": [
+          "artifact-discovery"
+        ],
+        "limitations": []
+      },
+      "evidence": [],
+      "explanation": "installed application bundle could not be located",
+      "suggestions": [
+        "nx where Xcode"
+      ],
+      "artifacts": {
+        "commands": {
+          "count": 0,
+          "truncated": false,
+          "examples": []
+        },
+        "applications": {
+          "count": 0,
+          "truncated": false,
+          "examples": []
+        }
+      }
+    },
+    {
+      "name": "fd",
+      "source": "nix",
+      "declarations": [
+        {
+          "location": "packages/nix/cli.nix:6",
+          "kind": {
+            "kind": "package"
+          }
+        }
+      ],
+      "verdict": "insufficient-evidence",
+      "last_seen": null,
+      "confidence": "none",
+      "candidate": null,
+      "coverage": {
+        "providers": [
+          "artifact-discovery"
+        ],
+        "limitations": [
+          {
+            "provider": "timestamped-shell-history",
+            "message": "shell history scanning was disabled"
+          }
+        ]
+      },
+      "evidence": [],
+      "explanation": "available evidence cannot support an inactivity judgment",
+      "suggestions": [
+        "nx where fd"
+      ],
+      "artifacts": {
+        "commands": {
+          "count": 1,
+          "truncated": false,
+          "examples": [
+            {
+              "value": "fd",
+              "attribution": "expected-name"
+            }
+          ]
+        },
+        "applications": {
+          "count": 0,
+          "truncated": false,
+          "examples": []
+        }
+      }
+    },
+    {
+      "name": "lua5_4",
+      "source": "nix",
+      "declarations": [
+        {
+          "location": "packages/nix/cli.nix:7",
+          "kind": {
+            "kind": "package"
+          }
+        }
+      ],
+      "verdict": "insufficient-evidence",
+      "last_seen": null,
+      "confidence": "none",
+      "candidate": null,
+      "coverage": {
+        "providers": [
+          "artifact-discovery"
+        ],
+        "limitations": [
+          {
+            "provider": "timestamped-shell-history",
+            "message": "shell history scanning was disabled"
+          }
+        ]
+      },
+      "evidence": [],
+      "explanation": "available evidence cannot support an inactivity judgment",
+      "suggestions": [
+        "nx where lua5_4"
+      ],
+      "artifacts": {
+        "commands": {
+          "count": 1,
+          "truncated": false,
+          "examples": [
+            {
+              "value": "lua5_4",
+              "attribution": "expected-name"
+            }
+          ]
+        },
+        "applications": {
+          "count": 0,
+          "truncated": false,
+          "examples": []
+        }
+      }
+    },
+    {
+      "name": "python3",
+      "source": "nix",
+      "declarations": [
+        {
+          "location": "packages/nix/languages.nix:5",
+          "kind": {
+            "kind": "package"
+          }
+        },
+        {
+          "location": "packages/nix/languages.nix:6",
+          "kind": {
+            "kind": "runtime-environment"
+          }
+        }
+      ],
+      "verdict": "insufficient-evidence",
+      "last_seen": null,
+      "confidence": "none",
+      "candidate": null,
+      "coverage": {
+        "providers": [
+          "artifact-discovery"
+        ],
+        "limitations": [
+          {
+            "provider": "timestamped-shell-history",
+            "message": "shell history scanning was disabled"
+          }
+        ]
+      },
+      "evidence": [],
+      "explanation": "available evidence cannot support an inactivity judgment",
+      "suggestions": [
+        "nx where python3"
+      ],
+      "artifacts": {
+        "commands": {
+          "count": 2,
+          "truncated": false,
+          "examples": [
+            {
+              "value": "python3",
+              "attribution": "expected-name"
+            },
+            {
+              "value": "python",
+              "attribution": "expected-name"
+            }
+          ]
+        },
+        "applications": {
+          "count": 0,
+          "truncated": false,
+          "examples": []
+        }
+      }
+    },
+    {
+      "name": "requests",
+      "source": "nix",
+      "declarations": [
+        {
+          "location": "packages/nix/languages.nix:6",
+          "kind": {
+            "kind": "runtime-member",
+            "runtime": "python3"
+          }
+        }
+      ],
+      "verdict": "not-auditable",
+      "last_seen": null,
+      "confidence": "none",
+      "candidate": null,
+      "coverage": {
+        "providers": [
+          "artifact-discovery"
+        ],
+        "limitations": []
+      },
+      "evidence": [],
+      "explanation": "runtime member of python3; shell invocation cannot establish library use",
+      "suggestions": [
+        "nx where requests"
+      ],
+      "artifacts": {
+        "commands": {
+          "count": 0,
+          "truncated": false,
+          "examples": []
+        },
+        "applications": {
+          "count": 0,
+          "truncated": false,
+          "examples": []
+        }
+      }
+    },
+    {
+      "name": "ripgrep",
+      "source": "nix",
+      "declarations": [
+        {
+          "location": "packages/nix/cli.nix:5",
+          "kind": {
+            "kind": "package"
+          }
+        }
+      ],
+      "verdict": "insufficient-evidence",
+      "last_seen": null,
+      "confidence": "none",
+      "candidate": null,
+      "coverage": {
+        "providers": [
+          "artifact-discovery"
+        ],
+        "limitations": [
+          {
+            "provider": "timestamped-shell-history",
+            "message": "shell history scanning was disabled"
+          }
+        ]
+      },
+      "evidence": [],
+      "explanation": "available evidence cannot support an inactivity judgment",
+      "suggestions": [
+        "nx where ripgrep"
+      ],
+      "artifacts": {
+        "commands": {
+          "count": 2,
+          "truncated": false,
+          "examples": [
+            {
+              "value": "ripgrep",
+              "attribution": "expected-name"
+            },
+            {
+              "value": "rg",
+              "attribution": "expected-name"
+            }
+          ]
+        },
+        "applications": {
+          "count": 0,
+          "truncated": false,
+          "examples": []
+        }
+      }
+    }
+  ]
+}

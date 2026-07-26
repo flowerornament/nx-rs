@@ -13,4 +13,4 @@ pub mod search;
 pub mod secret;
 pub mod shared;
 pub mod system;
-pub mod unused;
+pub mod usage;

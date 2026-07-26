@@ -24,6 +24,9 @@ uuid = { version = "1", features = ["v4"] }
 clap_complete = "4.6.0"
 rustix-openpty = "0.2.0"
 rustix = { version = "1.1.4", features = ["fs", "std", "stdio", "termios"] }
+tree-sitter = "0.25"
+tree-sitter-bash = "0.25"
+chrono = "0.4"
 
 [dev-dependencies]
 insta = { version = "1.46.3", features = ["json"] }

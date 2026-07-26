@@ -18,7 +18,7 @@ use crate::commands::remove::cmd_remove;
 use crate::commands::search::cmd_search;
 use crate::commands::secret::cmd_secret;
 use crate::commands::system::{cmd_lint, cmd_rebuild, cmd_test, cmd_undo, cmd_update, cmd_upgrade};
-use crate::commands::unused::cmd_unused;
+use crate::commands::usage::cmd_usage;
 use crate::domain::config::ConfigFiles;
 use crate::domain::drift::ManifestHealth;
 use crate::domain::manifest_scan::scan_repo;
@@ -95,7 +95,7 @@ pub fn execute(cli: Cli) -> i32 {
         CommandKind::List(args) => cmd_list(&args, &ctx.query_context()),
         CommandKind::Info(args) => cmd_info(&args, &ctx.query_context()),
         CommandKind::Status(args) => cmd_status(&args, &ctx.query_context()),
-        CommandKind::Unused(args) => cmd_unused(&args, &ctx.query_context()),
+        CommandKind::Usage(args) => cmd_usage(&args, &ctx.query_context()),
         CommandKind::Installed(args) => cmd_installed(&args, &ctx.query_context()),
         CommandKind::Profile(_) => unreachable!("profile handled before repo setup"),
         CommandKind::Lint(args) => cmd_lint(&args, &ctx.system_context()),

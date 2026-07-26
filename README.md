@@ -232,8 +232,8 @@ nx where ripgrep
 # Show package distribution across nix/homebrew/mas sources
 nx status
 
-# Review packages with little local evidence of recent use
-nx unused
+# Review local package-use evidence
+nx usage
 ```
 
 Package changes:
@@ -262,7 +262,7 @@ nx search ripgrep
 nx info ripgrep
 nx list --plain
 nx installed ripgrep fd
-nx unused --since 30d
+nx usage --since 30d
 ```
 
 System and host maintenance:
@@ -433,21 +433,23 @@ Shows a read-only package distribution summary for the managed repo.
 
 ---
 
-#### `unused`
+#### `usage`
 
-Runs a read-only advisory audit for declared packages with little local evidence
-of recent use.
+Reports what nx can observe about declared package use without claiming that
+missing evidence proves inactivity.
 
+- `nx usage <package>` explains declaration sites, discovered artifacts,
+  attribution, observations, provider coverage, and limitations.
 - Supports `--since`, `--source`, `--limit`, `--include-protected`, `--json`,
-  `--verbose`, `--history`, `--no-history`, and `--no-spotlight`.
-- Scans shell history locally; timestamped entries are stronger evidence, while
-  untimestamped entries are shown as evidence without claiming recency. It does
-  not store raw commands, send telemetry, or auto-remove packages.
-- Uses `.nx/manifest.toml` `[aliases]` as local command evidence hints. `nx init`
-  seeds known aliases, and hand-written entries are preserved on refresh. For
-  example, `rg = "ripgrep"` makes `rg ...` count as evidence for `ripgrep`.
-- Rows are review candidates, not proof. Use `nx where <name>` and
-  `nx remove --dry-run <name>` before removing anything.
+  `--verbose`, `--history`, and `--no-history`.
+- Resolves Homebrew command ownership, treats Nix store-name matches as
+  non-actionable inference, parses shell pipelines, and observes application use
+  through Spotlight and the current process snapshot.
+- Only strong stale observations with verified attribution, coverage across the
+  selected cutoff, and no conflicting undated evidence become review
+  candidates. Packages with no observation remain explicitly non-actionable.
+- Keeps raw shell commands local and out of output. It never removes packages.
+- `usage` replaces the retired `unused` command.
 
 ---
 

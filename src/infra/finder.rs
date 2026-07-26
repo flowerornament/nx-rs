@@ -8,6 +8,7 @@ use anyhow::Context;
 use regex::Regex;
 
 use crate::domain::location::PackageLocation;
+use crate::domain::package::PackageBuckets;
 use crate::domain::source::normalize_name;
 use crate::infra::config_scan::{collect_nix_files, scan_packages};
 
@@ -89,7 +90,7 @@ pub fn find_package_fuzzy(name: &str, repo_root: &Path) -> anyhow::Result<Option
         }));
     }
 
-    let buckets = scan_packages(repo_root)?;
+    let buckets = scan_packages(repo_root)?.buckets();
     let all_candidates = all_packages(&buckets);
     if let Some(candidate) = find_fuzzy_match(name, &all_candidates)
         && let Some(location) = find_package_exact(&candidate, repo_root)?
@@ -336,7 +337,7 @@ fn find_fuzzy_match(query: &str, candidates: &[String]) -> Option<String> {
         .cloned()
 }
 
-fn all_packages(buckets: &crate::infra::config_scan::PackageBuckets) -> Vec<String> {
+fn all_packages(buckets: &PackageBuckets) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
 

@@ -49,7 +49,7 @@ Known commands:
 - `list`
 - `info`
 - `status`
-- `unused`
+- `usage`
 - `installed`
 - `profile`
 - `lint`
@@ -105,8 +105,9 @@ Defined at root callback:
   - options: `--json`, `--bleeding-edge`, `--nur`, `--source`, `--verbose`
 - `status`
   - options: `--json`
-- `unused`
-  - options: `--since`, `--source`, `--limit`, `--include-protected`, `--json`, `--verbose/-v`, `--history`, `--no-history`, `--no-spotlight`
+- `usage`
+  - args: `[package]`
+  - options: `--since`, `--source`, `--limit`, `--include-protected`, `--json`, `--verbose/-v`, `--history`, `--no-history`
 - `installed`
   - args: `<packages...>`
   - options: `--json`, `--show-location`
@@ -158,7 +159,7 @@ Defined at root callback:
 - `list`: `1` for invalid source filter; otherwise `0`.
 - `info`: `0` (including not-found); clap usage errors exit `2`.
 - `status`: `0`.
-- `unused`: `0` when audit renders; `1` on package scan/render failure; invalid filters or durations exit `2`.
+- `usage`: `0` when the report renders; `1` on package scan/render failure; invalid filters or durations exit `2`.
 - `installed`: `0` only if all requested packages are installed; clap usage errors exit `2`.
 - `profile`: `0` when timing records render successfully; `1` on timing file read/render failure.
 - `lint`: `0` when routing metadata passes; otherwise `1`.
@@ -438,19 +439,25 @@ Network behavior:
 
 - Produces total count + per-source distribution table.
 
-## 9.5 `unused`
+## 9.5 `usage`
 
-- Read-only advisory audit for declared packages with little local evidence of recent use.
-- Scans shell history from `HISTFILE`, common shell history files under `HOME`, and explicit `--history <PATH>` files unless `--no-history` is set.
-- Timestamped history produces strong evidence and can mark packages `recent` or `old`; untimestamped history produces medium evidence but keeps status `unknown`.
-- Command evidence uses generic package-name forms plus `.nx/manifest.toml` `[aliases]` entries inverted from `alias = "package"` to package evidence aliases.
-- `nx init` seeds known alias hints for declared packages; `nx init --refresh` preserves existing aliases and fills missing generated defaults.
-- Does not store raw commands, send telemetry, or auto-remove packages.
+- Read-only local evidence report for declared Nix, Homebrew, cask, MAS, and service packages.
+- Parses managed Nix files with `rnix`; static declarations retain every declaration site, generated commands and runtime members are typed explicitly, and opaque expressions become inventory issues instead of guessed package names.
+- Resolves Homebrew ownership from Cellar paths. Nix store output names, expected package names, and manifest aliases remain medium-confidence attribution and cannot create review candidates; cask metadata supplies strong command and application attribution.
+- Scans shell history from `HISTFILE`, common shell history files under `HOME`, and explicit `--history <PATH>` files unless `--no-history` is set. Tree-sitter extracts commands across pipelines and transparent wrappers.
+- Exact duplicate history records are removed. A timestamp attached to a
+  majority of the deduplicated history is treated as an imported cohort and
+  downgraded to undated; ordinary same-second commands retain their timestamps.
+- Untimestamped or temporally ambiguous history is positive undated evidence and blocks a stale observation from becoming a review candidate.
+- Application evidence uses Spotlight last-use metadata and a current process snapshot. Process absence and null Spotlight metadata are not treated as proof of inactivity.
+- Verdicts are `observed-recent`, `observed-undated`, `observed-stale`, `no-evidence`, `insufficient-evidence`, `not-auditable`, `inventory-uncertain`, and `protected`.
+- A review candidate requires a strong stale observation attributed to an installed owner or package metadata, applicable provider coverage spanning the selected cutoff, and no undated observation. `no-evidence` is visible but never actionable.
+- `nx usage <package>` explains declarations, artifacts and attribution, evidence, coverage, limitations, and safe next steps. Removal dry-run suggestions appear only for review candidates.
 - `--since <DURATION>` accepts `d`, `w`, `mo`, and `y` units; default `90d`.
 - `--source` accepts `all`, `nix`, `homebrew`, `cask`, `mas`, and `service` aliases.
-- Human output says "review candidates" and distinguishes "no command evidence found" from "command evidence has no timestamp"; it suggests `nx where <name>` plus `nx remove --dry-run <name>`.
-- JSON output includes stable `records[]` with `name`, `source`, `location`, `status`, `last_seen`, `confidence`, `evidence[]`, and `suggestions[]`.
+- JSON includes manifest health, inventory issues, hidden protected count, verdict summary, typed declaration sites, evidence coverage, and artifact counts with bounded examples. It never includes raw shell commands.
 - Protected services and core shell/editor/package-manager tools are hidden unless `--include-protected` is set.
+- `usage` replaces the retired `unused` command; no compatibility alias is provided.
 
 ## 9.6 `installed`
 
@@ -648,7 +655,7 @@ Dry-run behavior:
 - Rebuild flow invokes streaming command path when preflight and flake-check pass.
 - `list --plain` includes discovered package names.
 - `info --json` includes package name and source metadata.
-- `unused --json` includes stable records and never includes raw shell commands.
+- `usage --json` includes stable typed records and never includes raw shell commands.
 - `installed --json` includes queried package key.
 
 ## 14. Legacy Compatibility Notes

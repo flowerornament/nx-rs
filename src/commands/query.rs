@@ -9,11 +9,12 @@ use crate::commands::context::QueryContext;
 use crate::commands::shared::{SnippetMode, relative_location, show_snippet};
 use crate::domain::drift::{ManifestHealth, affects_routing, format_issue};
 use crate::domain::location::PackageLocation;
+use crate::domain::package::PackageBuckets;
 use crate::domain::source::{
     OVERLAY_PACKAGES, PackageSource, SourcePreferences, SourceResult, normalize_name,
 };
 use crate::infra::cache::MultiSourceCache;
-use crate::infra::config_scan::{PackageBuckets, collect_nix_files, scan_packages};
+use crate::infra::config_scan::{collect_nix_files, scan_packages};
 use crate::infra::finder::{PackageMatch, find_package, find_package_fuzzy};
 use crate::infra::package_query::{PackageQueryReport, query_package_quiet};
 use crate::infra::query_info::{
@@ -57,13 +58,14 @@ pub fn cmd_where(args: &WhereArgs, ctx: &QueryContext<'_>) -> i32 {
 }
 
 pub fn cmd_list(args: &ListArgs, ctx: &QueryContext<'_>) -> i32 {
-    let buckets = match scan_packages(ctx.repo_root) {
-        Ok(buckets) => buckets,
+    let inventory = match scan_packages(ctx.repo_root) {
+        Ok(inventory) => inventory,
         Err(err) => {
             ctx.printer.error(&format!("package scan failed: {err}"));
             return 1;
         }
     };
+    let buckets = inventory.buckets();
 
     let source = if let Some(raw) = args.source.as_deref() {
         let Some(valid) = normalize_source_filter(raw) else {
@@ -328,8 +330,9 @@ fn detect_installed_source(
     let rel_path = rel.rsplit_once(':').map_or(rel.as_str(), |(path, _)| path);
 
     if rel_path == "system/darwin.nix"
-        && let Ok(buckets) = scan_packages(repo_root)
+        && let Ok(inventory) = scan_packages(repo_root)
     {
+        let buckets = inventory.buckets();
         let package_norm = normalize_name(package);
         let matches = |value: &String| {
             value.eq_ignore_ascii_case(package) || value.eq_ignore_ascii_case(&package_norm)
@@ -581,13 +584,14 @@ fn install_hint_for_source(name: &str, source: PackageSource) -> String {
 }
 
 pub fn cmd_status(args: &StatusArgs, ctx: &QueryContext<'_>) -> i32 {
-    let buckets = match scan_packages(ctx.repo_root) {
-        Ok(buckets) => buckets,
+    let inventory = match scan_packages(ctx.repo_root) {
+        Ok(inventory) => inventory,
         Err(err) => {
             ctx.printer.error(&format!("package scan failed: {err}"));
             return 1;
         }
     };
+    let buckets = inventory.buckets();
 
     let total = [
         buckets.nxs.len(),
@@ -609,6 +613,7 @@ pub fn cmd_status(args: &StatusArgs, ctx: &QueryContext<'_>) -> i32 {
                 "mas": buckets.mas,
                 "services": buckets.services,
             },
+            "inventory_issues": inventory.issues,
             "manifest_health": manifest_health_json(ctx.manifest_health),
         });
         match serde_json::to_string_pretty(&json) {

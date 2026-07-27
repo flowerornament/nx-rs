@@ -24,7 +24,7 @@ fn parse_dry_run_plan_extracts_builds_and_fetches() {
 
     assert_eq!(
         plan,
-        DryRunPlan {
+        Some(DryRunPlan {
             to_build: vec![
                 "starship-1.23.0".to_string(),
                 "terminal-notifier-2.0.0".to_string(),
@@ -34,7 +34,7 @@ fn parse_dry_run_plan_extracts_builds_and_fetches() {
                 "nix-2.24.9".to_string(),
             ],
             to_fetch: 4,
-        }
+        })
     );
 }
 
@@ -46,7 +46,7 @@ these 12 paths will be fetched (94.53 MiB download, 486.36 MiB unpacked):
   /nix/store/awxn5jrhbjyvzr3s0r0dj0dznax9qsw3-ripgrep-14.1.1
 ";
 
-    let plan = parse_dry_run_plan(output);
+    let plan = parse_dry_run_plan(output).unwrap();
     assert!(plan.to_build.is_empty());
     assert_eq!(plan.to_fetch, 2);
 }
@@ -60,24 +60,40 @@ this path will be fetched (1.02 MiB download, 4.51 MiB unpacked):
   /nix/store/x4y3wq3vh0cf6z2q28pfjvvyn4hkk0kk-zsh-5.9
 ";
 
-    let plan = parse_dry_run_plan(output);
+    let plan = parse_dry_run_plan(output).unwrap();
     assert_eq!(plan.to_build, vec!["starship-1.23.0".to_string()]);
     assert_eq!(plan.to_fetch, 1);
 }
 
 #[test]
-fn parse_dry_run_plan_ignores_store_paths_outside_sections() {
+fn parse_dry_run_plan_rejects_store_paths_outside_sections() {
     let output = "\
 evaluating derivation '/nix/store/abc-flake.drv'
 /nix/store/0kfh6g5wl8vvbmjmm6zkbz4nqhyfqhb0-starship-1.23.0
 ";
 
-    assert_eq!(parse_dry_run_plan(output), DryRunPlan::default());
+    assert_eq!(parse_dry_run_plan(output), None);
 }
 
 #[test]
 fn parse_dry_run_plan_of_empty_output_is_empty() {
-    assert_eq!(parse_dry_run_plan(""), DryRunPlan::default());
+    assert_eq!(parse_dry_run_plan(""), Some(DryRunPlan::default()));
+}
+
+#[test]
+fn parse_dry_run_plan_rejects_unrecognized_success_output() {
+    assert_eq!(
+        parse_dry_run_plan("future nix plan format: 6 local builds\n"),
+        None
+    );
+}
+
+#[test]
+fn parse_dry_run_plan_allows_warning_only_no_work_output() {
+    assert_eq!(
+        parse_dry_run_plan("warning: Git tree is dirty\n"),
+        Some(DryRunPlan::default())
+    );
 }
 
 #[test]
@@ -108,4 +124,66 @@ fn cache_miss_threshold_defaults_and_parses() {
     assert_eq!(parse_cache_miss_threshold(Some(" 0 ")), 0);
     assert_eq!(parse_cache_miss_threshold(Some("not-a-number")), 5);
     assert_eq!(parse_cache_miss_threshold(Some("")), 5);
+}
+
+#[test]
+fn unavailable_coverage_is_advisory_only_when_requested() {
+    assert_eq!(
+        unavailable_outcome(CachePreflightMode::ReportOnly),
+        CachePreflightOutcome::Admitted
+    );
+}
+
+#[test]
+fn unavailable_coverage_fails_closed_by_default() {
+    assert_eq!(
+        unavailable_outcome(CachePreflightMode::Enforce),
+        CachePreflightOutcome::Failed
+    );
+}
+
+#[test]
+fn explicit_override_accepts_unavailable_coverage() {
+    assert_eq!(
+        unavailable_outcome(CachePreflightMode::AllowSourceBuilds),
+        CachePreflightOutcome::Admitted
+    );
+}
+
+#[test]
+fn interactive_source_builds_follow_explicit_acceptance() {
+    let mode = CachePreflightMode::Enforce;
+
+    assert_eq!(
+        source_builds_outcome(mode, true, || true),
+        CachePreflightOutcome::Admitted
+    );
+    assert_eq!(
+        source_builds_outcome(mode, true, || false),
+        CachePreflightOutcome::Cancelled
+    );
+}
+
+#[test]
+fn noninteractive_source_builds_fail_without_prompting() {
+    let mut prompted = false;
+    let outcome = source_builds_outcome(CachePreflightMode::Enforce, false, || {
+        prompted = true;
+        true
+    });
+
+    assert_eq!(outcome, CachePreflightOutcome::Failed);
+    assert!(!prompted);
+}
+
+#[test]
+fn source_build_override_never_prompts() {
+    let mut prompted = false;
+    let outcome = source_builds_outcome(CachePreflightMode::AllowSourceBuilds, false, || {
+        prompted = true;
+        false
+    });
+
+    assert_eq!(outcome, CachePreflightOutcome::Admitted);
+    assert!(!prompted);
 }

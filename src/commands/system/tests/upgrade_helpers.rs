@@ -8,6 +8,7 @@ fn sample_upgrade_args() -> UpgradeArgs {
             no_ai: true,
         },
         skip: UpgradeSkipArgs::default(),
+        allow_source_builds: false,
         targets: Vec::new(),
         passthrough: Vec::new(),
     }
@@ -194,4 +195,89 @@ fn upgrade_manifest_guard_required_for_full_upgrade() {
     let args = sample_upgrade_args();
 
     assert!(upgrade_requires_manifest_system_safety(&args));
+}
+
+#[test]
+fn flake_lock_transaction_restores_original_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("flake.lock");
+    std::fs::write(&path, b"original\n").unwrap();
+    let transaction = FlakeLockTransaction::capture(dir.path()).unwrap();
+    std::fs::write(&path, b"candidate\n").unwrap();
+
+    assert!(transaction.restore().unwrap());
+
+    assert_eq!(std::fs::read(path).unwrap(), b"original\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn flake_lock_transaction_reports_rollback_failure_without_clobbering_candidate() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("flake.lock");
+    std::fs::write(&path, b"original\n").unwrap();
+    let transaction = FlakeLockTransaction::capture(dir.path()).unwrap();
+    std::fs::write(&path, b"candidate\n").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+    let error = transaction.restore().unwrap_err();
+
+    assert!(error.to_string().contains("restoring original"));
+    assert_eq!(std::fs::read(path).unwrap(), b"candidate\n");
+}
+
+#[test]
+fn flake_lock_transaction_rolls_back_when_dropped_while_armed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("flake.lock");
+    std::fs::write(&path, b"original\n").unwrap();
+    let mut transaction = FlakeLockTransaction::capture(dir.path()).unwrap();
+    std::fs::write(&path, b"candidate\n").unwrap();
+    transaction.observe_candidate(b"candidate\n".to_vec());
+
+    drop(transaction);
+
+    assert_eq!(std::fs::read(path).unwrap(), b"original\n");
+}
+
+#[test]
+fn flake_lock_transaction_refuses_concurrent_upgrade() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("flake.lock"), b"original\n").unwrap();
+    let transaction = FlakeLockTransaction::capture(dir.path()).unwrap();
+
+    let error = FlakeLockTransaction::capture(dir.path()).unwrap_err();
+
+    assert!(error.to_string().contains("locking repository"));
+    drop(transaction);
+}
+
+#[test]
+fn admitted_transaction_transfers_lock_ownership() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("flake.lock"), b"original\n").unwrap();
+    let transaction = FlakeLockTransaction::capture(dir.path()).unwrap();
+    let lock = transaction.admit();
+
+    assert!(FlakeLockTransaction::capture(dir.path()).is_err());
+    drop(lock);
+    FlakeLockTransaction::capture(dir.path()).unwrap();
+}
+
+#[test]
+fn flake_lock_transaction_does_not_overwrite_changed_candidate() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("flake.lock");
+    std::fs::write(&path, b"original\n").unwrap();
+    let mut transaction = FlakeLockTransaction::capture(dir.path()).unwrap();
+    std::fs::write(&path, b"candidate\n").unwrap();
+    transaction.observe_candidate(b"candidate\n".to_vec());
+    std::fs::write(&path, b"external\n").unwrap();
+
+    let error = transaction.restore().unwrap_err();
+
+    assert!(error.to_string().contains("refusing to overwrite"));
+    assert_eq!(std::fs::read(path).unwrap(), b"external\n");
 }

@@ -71,6 +71,13 @@ const UPGRADE_COMMIT_ARGS: &[&str] = &["upgrade", "--skip-brew", "--skip-rebuild
 const UPGRADE_FAILURE_ARGS: &[&str] = &["upgrade", "--no-ai"];
 const UPGRADE_DRY_RUN_SKIP_BREW_ARGS: &[&str] = &["upgrade", "--dry-run", "--skip-brew", "--no-ai"];
 const UPGRADE_REBUILD_ARGS: &[&str] = &["upgrade", "--skip-brew", "--skip-commit", "--no-ai"];
+const UPGRADE_CACHE_GATE_OVERRIDE_ARGS: &[&str] = &[
+    "upgrade",
+    "--skip-brew",
+    "--skip-commit",
+    "--no-ai",
+    "--allow-source-builds",
+];
 const UPGRADE_REBUILD_FAILURE_ARGS: &[&str] =
     &["upgrade", "--skip-brew", "--skip-commit", "--no-ai"];
 const UPGRADE_HASH_REPAIR_ARGS: &[&str] = &["upgrade", "--skip-brew", "--no-ai"];
@@ -300,6 +307,47 @@ const UPGRADE_REBUILD_CALLS: &[ExpectedCall] = &[
     ),
 ];
 
+const UPGRADE_CACHE_GATE_REJECT_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
+    ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
+];
+
+const UPGRADE_CACHE_GATE_OVERRIDE_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
+    ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
+    ExpectedCall::new(
+        "sudo",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            DARWIN_REBUILD_CMD,
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "internal-json",
+        ],
+    ),
+    ExpectedCall::new(
+        "darwin-rebuild",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "switch",
+            "--flake",
+            REPO_ROOT_TOKEN,
+            "--log-format",
+            "internal-json",
+        ],
+    ),
+];
+
 const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
@@ -494,9 +542,9 @@ const UPGRADE_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
 const UPGRADE_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
-    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
@@ -644,6 +692,50 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
         expected_exit: 0,
         expected_calls: UPGRADE_REBUILD_CALLS,
         stdout_contains: &[],
+    },
+    UpgradeCase {
+        id: "upgrade_cache_gate_rejects_noninteractive_source_builds",
+        cli_args: UPGRADE_REBUILD_ARGS,
+        mode: "upgrade_cache_misses",
+        expected_exit: 1,
+        expected_calls: UPGRADE_CACHE_GATE_REJECT_CALLS,
+        stdout_contains: &[
+            "Non-interactive session; refusing unapproved source builds.",
+            "Rerun with --allow-source-builds to proceed explicitly.",
+            "Restored original flake.lock",
+        ],
+    },
+    UpgradeCase {
+        id: "upgrade_cache_gate_restores_lock_when_preflight_fails",
+        cli_args: UPGRADE_REBUILD_ARGS,
+        mode: "upgrade_cache_preflight_fail",
+        expected_exit: 1,
+        expected_calls: UPGRADE_CACHE_GATE_REJECT_CALLS,
+        stdout_contains: &[
+            "Could not establish binary cache coverage; refusing the upgrade.",
+            "Restored original flake.lock",
+        ],
+    },
+    UpgradeCase {
+        id: "upgrade_cache_gate_explicit_override_reaches_rebuild",
+        cli_args: UPGRADE_CACHE_GATE_OVERRIDE_ARGS,
+        mode: "upgrade_cache_misses",
+        expected_exit: 0,
+        expected_calls: UPGRADE_CACHE_GATE_OVERRIDE_CALLS,
+        stdout_contains: &[
+            "Continuing because --allow-source-builds was passed.",
+            "System rebuilt",
+        ],
+    },
+    UpgradeCase {
+        id: "upgrade_cache_gate_reports_rollback_failure",
+        cli_args: UPGRADE_REBUILD_ARGS,
+        mode: "upgrade_cache_rollback_fail",
+        expected_exit: 1,
+        expected_calls: UPGRADE_CACHE_GATE_REJECT_CALLS,
+        stdout_contains: &[
+            "The candidate flake.lock may still be present; inspect it before retrying.",
+        ],
     },
     UpgradeCase {
         id: "upgrade_rebuild_failure_exits_nonzero",
@@ -1012,7 +1104,12 @@ fn seed_flake_lock_if_needed(repo_root: &Path, mode: &str) -> Result<(), Box<dyn
     }
     if matches!(
         mode,
-        "upgrade_flake_changed" | "upgrade_hash_repair" | "upgrade_lock_unreadable_post"
+        "upgrade_flake_changed"
+            | "upgrade_hash_repair"
+            | "upgrade_lock_unreadable_post"
+            | "upgrade_cache_misses"
+            | "upgrade_cache_preflight_fail"
+            | "upgrade_cache_rollback_fail"
     ) {
         fs::write(repo_root.join("flake.lock"), UPGRADE_FLAKE_LOCK_OLD)?;
     }
@@ -1043,7 +1140,17 @@ fn assert_repo_state(
     stdout: &str,
     stderr: &str,
 ) {
-    let expected_paths = expected_mutated_paths(case.mode);
+    if case.id == "upgrade_cache_gate_reports_rollback_failure" {
+        assert!(
+            stderr.contains("Could not restore flake.lock"),
+            "case {} did not report rollback failure\nstdout:\n{}\nstderr:\n{}",
+            case.id,
+            stdout,
+            stderr
+        );
+    }
+
+    let expected_paths = expected_mutated_paths(case);
     if expected_paths.is_empty() {
         assert_eq!(
             before, after,
@@ -1073,9 +1180,17 @@ fn assert_repo_state(
     }
 }
 
-fn expected_mutated_paths(mode: &str) -> &'static [&'static str] {
-    match mode {
-        "upgrade_flake_changed" | "upgrade_lock_unreadable_post" => &["flake.lock"],
+fn expected_mutated_paths(case: &UpgradeCase) -> &'static [&'static str] {
+    if matches!(
+        case.id,
+        "upgrade_cache_gate_explicit_override_reaches_rebuild"
+            | "upgrade_cache_gate_reports_rollback_failure"
+    ) {
+        return &["flake.lock"];
+    }
+
+    match case.mode {
+        "upgrade_flake_changed" => &["flake.lock"],
         "upgrade_hash_repair" => &["flake.lock", "home/agent-sync.nix"],
         _ => &[],
     }

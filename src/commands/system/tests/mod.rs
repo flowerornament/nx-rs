@@ -9,7 +9,8 @@ use crate::infra::nix_output::NixOutputMode;
 use crate::infra::shell::{CapturedCommand, run_captured_command};
 
 use super::cache_preflight::{
-    DryRunPlan, derivation_display_name, parse_cache_miss_threshold, parse_dry_run_plan,
+    CachePreflightMode, CachePreflightOutcome, DryRunPlan, derivation_display_name,
+    parse_cache_miss_threshold, parse_dry_run_plan, source_builds_outcome, unavailable_outcome,
 };
 use super::fixed_output_hash::{
     FixedOutputHashMismatch, apply_fixed_output_hash_repair, find_fixed_output_hash_targets,
@@ -22,9 +23,9 @@ use super::rebuild::{
 };
 use super::undo::{git_diff_stat, git_modified_files};
 use super::upgrade::{
-    NixConfig, brew_compare_url, flake_compare_endpoint, flake_compare_url, maybe_ai_summary,
-    parse_ai_summary_output, parse_brew_info_json, parse_brew_outdated_json, parse_compare_json,
-    should_use_detailed_ai_summary, upgrade_requires_manifest_system_safety,
+    FlakeLockTransaction, NixConfig, brew_compare_url, flake_compare_endpoint, flake_compare_url,
+    maybe_ai_summary, parse_ai_summary_output, parse_brew_info_json, parse_brew_outdated_json,
+    parse_compare_json, should_use_detailed_ai_summary, upgrade_requires_manifest_system_safety,
 };
 use crate::domain::upgrade::build_flake_update_args;
 

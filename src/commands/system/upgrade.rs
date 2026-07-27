@@ -1,16 +1,22 @@
 use std::collections::HashMap;
+use std::fs::{self, File};
 use std::path::PathBuf;
+
+use anyhow::{Context, Result};
+use rustix::fs::{FlockOperation, flock};
 
 use crate::cli::{RebuildArgs, UpgradeArgs};
 use crate::commands::context::AppContext;
 use crate::domain::upgrade::{
-    InputChange, build_flake_update_args, diff_locks, github_owner_repo, load_flake_lock, short_rev,
+    FlakeLockInput, InputChange, LockDiff, build_flake_update_args, diff_locks, github_owner_repo,
+    load_flake_lock, parse_flake_lock_content, short_rev,
 };
 use crate::infra::ai_engine::DEFAULT_CODEX_MODEL;
 use crate::infra::nix_output::NixOutputMode;
 use crate::infra::nix_runtime::{
     DeterminateFreshness, NixDistribution, detect_installed_nix, determinate_version_status,
 };
+use crate::infra::persistence::write_file_atomically;
 use crate::infra::shell::{
     first_nonempty_output, first_unpresented_output, run_captured_command, run_indented_command,
     run_nix_command_with_stdout, terminal_stdio_available,
@@ -33,13 +39,19 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
 
     check_determinate_version(args, ctx);
 
-    // Phase 1: Flake update
-    let flake_changes = match run_flake_phase(args, ctx) {
-        Ok(changes) => changes,
+    if upgrade_requires_manifest_system_safety(args)
+        && let Err(code) = ctx.require_manifest_system_safe("upgrade")
+    {
+        return code;
+    }
+
+    // Phase 1: Flake update and cache admission
+    let prepared = match prepare_flake_update(args, ctx) {
+        Ok(prepared) => prepared,
         Err(code) => return code,
     };
 
-    // Phase 2: Brew
+    // Phase 2: Brew, after the candidate system is admitted
     if args.should_run_brew_phase() {
         run_brew_phase(args, ctx);
     }
@@ -53,24 +65,11 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
 
     // Phase 3: Rebuild
     if !args.skip_rebuild() {
-        if upgrade_requires_manifest_system_safety(args)
-            && let Err(code) = ctx.require_manifest_system_safe("upgrade")
-        {
-            return code;
-        }
         let rebuild = RebuildArgs {
             verbose: args.flow.verbose,
             ..RebuildArgs::default()
         };
         let system_ctx = ctx.system_context();
-        if check_cache_preflight(&system_ctx, CachePreflightMode::Prompt)
-            == CachePreflightOutcome::Abort
-        {
-            Printer::body("Cancelled before rebuild.");
-            Printer::detail("flake.lock keeps the updated inputs.");
-            Printer::detail("Run `git checkout flake.lock` to revert, or `nx upgrade` to retry.");
-            return 0;
-        }
         let rebuild_result =
             cmd_rebuild_with_command_result(&rebuild, &system_ctx, TimingCommand::Upgrade);
         if rebuild_result.code != 0 {
@@ -81,13 +80,198 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
 
     // Phase 4: Commit
     if !args.skip_commit()
-        && (!flake_changes.is_empty() || !repaired_paths.is_empty())
-        && let Err(code) = commit_flake_lock(ctx, &flake_changes, &repaired_paths)
+        && (!prepared.changes.is_empty() || !repaired_paths.is_empty())
+        && let Err(code) = commit_flake_lock(ctx, &prepared.changes, &repaired_paths)
     {
         return code;
     }
 
     0
+}
+
+pub(super) struct UpgradeLock {
+    directory: File,
+}
+
+impl UpgradeLock {
+    fn acquire(repo_root: &std::path::Path) -> Result<Self> {
+        let directory = File::open(repo_root)
+            .with_context(|| format!("opening repository {}", repo_root.display()))?;
+        flock(&directory, FlockOperation::NonBlockingLockExclusive)
+            .with_context(|| format!("locking repository {}", repo_root.display()))?;
+        Ok(Self { directory })
+    }
+}
+
+impl Drop for UpgradeLock {
+    fn drop(&mut self) {
+        let _ = flock(&self.directory, FlockOperation::Unlock);
+    }
+}
+
+impl std::fmt::Debug for UpgradeLock {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("UpgradeLock")
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct FlakeLockTransaction {
+    lock: Option<UpgradeLock>,
+    path: PathBuf,
+    original: Vec<u8>,
+    candidate: Option<Vec<u8>>,
+    armed: bool,
+}
+
+impl FlakeLockTransaction {
+    pub(super) fn capture(repo_root: &std::path::Path) -> Result<Self> {
+        let lock = UpgradeLock::acquire(repo_root)?;
+        let path = repo_root.join("flake.lock");
+        let original =
+            fs::read(&path).with_context(|| format!("reading original {}", path.display()))?;
+        Ok(Self {
+            lock: Some(lock),
+            path,
+            original,
+            candidate: None,
+            armed: true,
+        })
+    }
+
+    fn original_inputs(&self) -> Result<HashMap<String, FlakeLockInput>> {
+        parse_flake_lock_content(&self.original).context("parsing original flake.lock")
+    }
+
+    pub(super) fn observe_candidate(&mut self, candidate: Vec<u8>) {
+        self.candidate = Some(candidate);
+    }
+
+    pub(super) fn restore(mut self) -> Result<bool> {
+        self.armed = false;
+        self.restore_if_owned()
+    }
+
+    pub(super) fn admit(mut self) -> UpgradeLock {
+        self.armed = false;
+        self.lock
+            .take()
+            .expect("active transaction must own the upgrade lock")
+    }
+
+    fn restore_if_owned(&self) -> Result<bool> {
+        let current =
+            fs::read(&self.path).with_context(|| format!("reading {}", self.path.display()))?;
+        if current == self.original {
+            return Ok(false);
+        }
+        if self
+            .candidate
+            .as_ref()
+            .is_some_and(|candidate| current != *candidate)
+        {
+            anyhow::bail!(
+                "{} changed after cache evaluation; refusing to overwrite it",
+                self.path.display()
+            );
+        }
+        write_file_atomically(&self.path, &self.original)
+            .with_context(|| format!("restoring original {}", self.path.display()))?;
+        Ok(true)
+    }
+}
+
+impl Drop for FlakeLockTransaction {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.restore_if_owned();
+        }
+    }
+}
+
+struct PreparedFlakeUpdate {
+    changes: Vec<InputChange>,
+    _lock: Option<UpgradeLock>,
+}
+
+fn prepare_flake_update(args: &UpgradeArgs, ctx: &AppContext) -> Result<PreparedFlakeUpdate, i32> {
+    if args.dry_run() {
+        return run_flake_phase(args, ctx).map(|changes| PreparedFlakeUpdate {
+            changes,
+            _lock: None,
+        });
+    }
+    if args.skip_rebuild() {
+        let lock = acquire_upgrade_lock(ctx)?;
+        return run_flake_phase(args, ctx).map(|changes| PreparedFlakeUpdate {
+            changes,
+            _lock: Some(lock),
+        });
+    }
+
+    let mut transaction = FlakeLockTransaction::capture(&ctx.repo_root).map_err(|err| {
+        ctx.printer
+            .error(&format!("Could not start flake.lock transaction: {err:#}"));
+        1
+    })?;
+
+    let old_inputs = transaction.original_inputs().map_err(|err| {
+        ctx.printer
+            .error(&format!("Could not load flake.lock before update: {err:#}"));
+        1
+    })?;
+    let candidate = match update_flake_lock(args, ctx, &old_inputs) {
+        Ok(candidate) => candidate,
+        Err(code) => return Err(restore_rejected_lock(transaction, ctx, code)),
+    };
+    transaction.observe_candidate(candidate.bytes);
+
+    let mode = if args.allow_source_builds {
+        CachePreflightMode::AllowSourceBuilds
+    } else {
+        CachePreflightMode::Enforce
+    };
+    match check_cache_preflight(&ctx.system_context(), mode) {
+        CachePreflightOutcome::Admitted => {
+            let lock = transaction.admit();
+            Ok(PreparedFlakeUpdate {
+                changes: report_flake_diff(args, ctx, candidate.diff),
+                _lock: Some(lock),
+            })
+        }
+        CachePreflightOutcome::Cancelled => {
+            Printer::body("Cancelled before rebuild.");
+            Err(restore_rejected_lock(transaction, ctx, 0))
+        }
+        CachePreflightOutcome::Failed => Err(restore_rejected_lock(transaction, ctx, 1)),
+    }
+}
+
+fn acquire_upgrade_lock(ctx: &AppContext) -> Result<UpgradeLock, i32> {
+    UpgradeLock::acquire(&ctx.repo_root).map_err(|err| {
+        ctx.printer
+            .error(&format!("Could not lock repository for upgrade: {err:#}"));
+        1
+    })
+}
+
+fn restore_rejected_lock(transaction: FlakeLockTransaction, ctx: &AppContext, code: i32) -> i32 {
+    match transaction.restore() {
+        Ok(restored) => {
+            if restored {
+                ctx.printer.success("Restored original flake.lock");
+            }
+            code
+        }
+        Err(err) => {
+            ctx.printer
+                .error(&format!("Could not restore flake.lock: {err:#}"));
+            Printer::detail(
+                "The candidate flake.lock may still be present; inspect it before retrying.",
+            );
+            1
+        }
+    }
 }
 
 fn check_determinate_version(args: &UpgradeArgs, ctx: &AppContext) {
@@ -149,31 +333,50 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<Vec<InputChan
             .error(&format!("Could not load flake.lock before update: {err}"));
         1
     })?;
-    let nix_env = if args.dry_run() {
-        NixCommandEnv::default()
+    let diff = if args.dry_run() {
+        diff_locks(&old_inputs, &old_inputs)
     } else {
-        NixCommandEnv::from_gh()
+        update_flake_lock(args, ctx, &old_inputs)?.diff
     };
+    Ok(report_flake_diff(args, ctx, diff))
+}
 
-    let new_inputs = if args.dry_run() {
-        old_inputs.clone()
-    } else {
-        if !stream_nix_update(args, ctx, &nix_env) {
-            ctx.printer.error("Flake update failed");
-            return Err(1);
-        }
-        load_flake_lock(&ctx.repo_root).map_err(|err| {
-            ctx.printer
-                .error(&format!("Could not load flake.lock after update: {err}"));
-            1
-        })?
-    };
+struct CandidateFlakeLock {
+    diff: LockDiff,
+    bytes: Vec<u8>,
+}
 
-    let diff = diff_locks(&old_inputs, &new_inputs);
+fn update_flake_lock(
+    args: &UpgradeArgs,
+    ctx: &AppContext,
+    old_inputs: &HashMap<String, FlakeLockInput>,
+) -> Result<CandidateFlakeLock, i32> {
+    if !stream_nix_update(args, ctx, &NixCommandEnv::from_gh()) {
+        ctx.printer.error("Flake update failed");
+        return Err(1);
+    }
+    let path = ctx.repo_root.join("flake.lock");
+    let bytes = fs::read(&path).map_err(|err| {
+        ctx.printer
+            .error(&format!("Could not load flake.lock after update: {err}"));
+        1
+    })?;
+    let inputs = parse_flake_lock_content(&bytes).map_err(|err| {
+        ctx.printer
+            .error(&format!("Could not load flake.lock after update: {err}"));
+        1
+    })?;
 
+    Ok(CandidateFlakeLock {
+        diff: diff_locks(old_inputs, &inputs),
+        bytes,
+    })
+}
+
+fn report_flake_diff(args: &UpgradeArgs, ctx: &AppContext, diff: LockDiff) -> Vec<InputChange> {
     if diff.changed.is_empty() && diff.added.is_empty() && diff.removed.is_empty() {
         ctx.printer.success("All flake inputs up to date");
-        return Ok(Vec::new());
+        return Vec::new();
     }
 
     if !diff.changed.is_empty() {
@@ -227,7 +430,7 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<Vec<InputChan
         Printer::detail(&format!("Removed: {}", diff.removed.join(", ")));
     }
 
-    Ok(diff.changed)
+    diff.changed
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -191,8 +191,11 @@ case "$program" in
       fi
       if [ "$mode" = "upgrade_lock_unreadable_post" ]; then
         printf '\377' > flake.lock
-      elif [ "$mode" = "upgrade_flake_changed" ] || [ "$mode" = "upgrade_hash_repair" ]; then
+      elif [ "$mode" = "upgrade_flake_changed" ] || [ "$mode" = "upgrade_hash_repair" ] || [ "$mode" = "upgrade_cache_misses" ] || [ "$mode" = "upgrade_cache_preflight_fail" ] || [ "$mode" = "upgrade_cache_rollback_fail" ]; then
         printf '%s' "${NX_SYSTEM_IT_UPGRADE_NEW_LOCK:?NX_SYSTEM_IT_UPGRADE_NEW_LOCK must be set}" > flake.lock
+        if [ "$mode" = "upgrade_cache_rollback_fail" ]; then
+          chmod 444 flake.lock
+        fi
       fi
       if [ "$output_demo" = "1" ]; then
         emit_native_nix_progress "flake inputs"
@@ -232,7 +235,10 @@ case "$program" in
         fi
       done
       if [ "$is_dry_run" = "1" ]; then
-        if [ "$mode" = "cache_preflight_misses" ]; then
+        if [ "$mode" = "upgrade_cache_preflight_fail" ]; then
+          echo "error: candidate closure could not be evaluated" >&2
+          exit 1
+        elif [ "$mode" = "cache_preflight_misses" ] || [ "$mode" = "upgrade_cache_misses" ] || [ "$mode" = "upgrade_cache_rollback_fail" ]; then
           echo "these 6 derivations will be built:" >&2
           for name in starship-1.23.0 terminal-notifier-2.0.0 python3.12-httpx-0.28.1 darwin-system-26.05pre home-manager-generation nix-2.24.9; do
             echo "  /nix/store/00000000000000000000000000000000-${name}.drv" >&2

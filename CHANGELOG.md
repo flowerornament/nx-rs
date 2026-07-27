@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- makes `nx upgrade` binary-cache admission transactional and fail-closed: rejected, failed, or unrecognized coverage atomically restores `flake.lock`, concurrent upgrades are locked out, automation requires `--allow-source-builds` to proceed, and enrichment and Homebrew run only after admission
 - runs singular and batch package-source lookups through one bounded executor with an absolute deadline, deterministic partial results, and no nested worker pools
 - carries each package edit's complete valid shape in `EditSpec`, with install and remove sharing one pure transform and atomic write path
 - protects nx-owned manifest and configuration updates from torn or truncated files by syncing complete same-directory replacements before an atomic rename, while preserving existing modes and symlink targets

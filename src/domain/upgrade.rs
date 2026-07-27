@@ -88,10 +88,13 @@ pub fn load_flake_lock(repo_root: &Path) -> anyhow::Result<HashMap<String, Flake
 /// Skips `file` type inputs (binary artifacts, no changelog).
 /// Skips `follows` references (list-valued inputs).
 pub fn parse_flake_lock(path: &Path) -> anyhow::Result<HashMap<String, FlakeLockInput>> {
-    let content =
-        fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let lock_data: Value =
-        serde_json::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
+    let content = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    parse_flake_lock_content(&content).with_context(|| format!("parsing {}", path.display()))
+}
+
+/// Parse `flake.lock` bytes and extract root input information.
+pub fn parse_flake_lock_content(content: &[u8]) -> anyhow::Result<HashMap<String, FlakeLockInput>> {
+    let lock_data: Value = serde_json::from_slice(content)?;
 
     let nodes = lock_data
         .get("nodes")

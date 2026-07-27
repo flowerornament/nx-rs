@@ -10,16 +10,19 @@ const MAX_LISTED_SOURCE_BUILDS: usize = 10;
 /// How the cache preflight should react when source builds exceed the threshold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CachePreflightMode {
-    /// Ask the user whether to continue (interactive sessions only).
-    Prompt,
     /// Report and warn without prompting.
     ReportOnly,
+    /// Require usable coverage or explicit approval before continuing.
+    Enforce,
+    /// Proceed despite excessive or unavailable cache coverage.
+    AllowSourceBuilds,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CachePreflightOutcome {
-    Continue,
-    Abort,
+    Admitted,
+    Cancelled,
+    Failed,
 }
 
 /// Build plan parsed from `nix build --dry-run` output.
@@ -33,21 +36,20 @@ pub(super) struct DryRunPlan {
 
 /// Dry-run the system build and warn when too many derivations miss the cache.
 ///
-/// Never fails the surrounding command: dry-run errors are warnings because
-/// the real rebuild remains authoritative. Returns `Abort` only when the user
-/// declines the interactive prompt in [`CachePreflightMode::Prompt`].
+/// Report-only checks remain advisory. Enforced checks reject unavailable
+/// coverage and excessive source builds unless the user explicitly approves.
 pub(super) fn check_cache_preflight(
     ctx: &SystemContext<'_>,
     mode: CachePreflightMode,
 ) -> CachePreflightOutcome {
     if !cache_preflight_supported(ctx) {
-        return CachePreflightOutcome::Continue;
+        return CachePreflightOutcome::Admitted;
     }
 
     let Some(host) = super::rebuild::darwin_host(ctx) else {
         ctx.printer
             .warn("Skipping binary cache preflight: could not resolve darwin host");
-        return CachePreflightOutcome::Continue;
+        return unavailable_outcome(mode);
     };
 
     ctx.printer.action("Checking binary cache coverage");
@@ -64,27 +66,30 @@ pub(super) fn check_cache_preflight(
     let output = match output {
         Ok(output) if output.code == 0 => output,
         Ok(output) => {
-            ctx.printer
-                .warn("Cache preflight dry-run failed; rebuild will report details");
+            ctx.printer.warn("Cache preflight dry-run failed");
             let detail = first_nonempty_output(&output);
             if !detail.is_empty() {
                 Printer::detail(detail);
             }
-            return CachePreflightOutcome::Continue;
+            return unavailable_outcome(mode);
         }
         Err(err) => {
             ctx.printer
                 .warn(&format!("Cache preflight dry-run failed: {err:#}"));
-            return CachePreflightOutcome::Continue;
+            return unavailable_outcome(mode);
         }
     };
 
-    let plan = parse_dry_run_plan(&format!("{}\n{}", output.stdout, output.stderr));
+    let Some(plan) = parse_dry_run_plan(&format!("{}\n{}", output.stdout, output.stderr)) else {
+        ctx.printer
+            .warn("Cache preflight output was not recognized");
+        return unavailable_outcome(mode);
+    };
     report_dry_run_plan(ctx, &plan);
 
     let threshold = cache_miss_threshold();
     if plan.to_build.len() <= threshold {
-        return CachePreflightOutcome::Continue;
+        return CachePreflightOutcome::Admitted;
     }
 
     println!();
@@ -92,24 +97,59 @@ pub(super) fn check_cache_preflight(
         "{} derivations will build from source (threshold: {threshold})",
         plan.to_build.len()
     ));
-    Printer::detail("The binary cache has likely not caught up with the new nixpkgs revision.");
+    Printer::detail("The candidate system is not sufficiently covered by binary caches.");
     Printer::detail(&format!(
-        "Raise the threshold with {CACHE_MISS_THRESHOLD_ENV}=<count> to silence this warning."
+        "Adjust the policy threshold with {CACHE_MISS_THRESHOLD_ENV}=<count>."
     ));
 
-    if mode == CachePreflightMode::ReportOnly {
-        return CachePreflightOutcome::Continue;
+    let interactive = terminal_stdio_available();
+    let outcome = source_builds_outcome(mode, interactive, || {
+        println!();
+        Printer::confirm("Continue with rebuild?", false)
+    });
+    match outcome {
+        CachePreflightOutcome::Admitted if mode == CachePreflightMode::AllowSourceBuilds => {
+            Printer::detail("Continuing because --allow-source-builds was passed.");
+        }
+        CachePreflightOutcome::Failed => {
+            Printer::detail("Non-interactive session; refusing unapproved source builds.");
+            Printer::detail("Rerun with --allow-source-builds to proceed explicitly.");
+        }
+        _ => {}
     }
-    if !terminal_stdio_available() {
-        Printer::detail("Non-interactive session; continuing with source builds");
-        return CachePreflightOutcome::Continue;
-    }
+    outcome
+}
 
-    println!();
-    if Printer::confirm("Continue with rebuild?", false) {
-        CachePreflightOutcome::Continue
-    } else {
-        CachePreflightOutcome::Abort
+pub(super) fn source_builds_outcome(
+    mode: CachePreflightMode,
+    interactive: bool,
+    confirm: impl FnOnce() -> bool,
+) -> CachePreflightOutcome {
+    match mode {
+        CachePreflightMode::ReportOnly | CachePreflightMode::AllowSourceBuilds => {
+            CachePreflightOutcome::Admitted
+        }
+        CachePreflightMode::Enforce if !interactive => CachePreflightOutcome::Failed,
+        CachePreflightMode::Enforce if confirm() => CachePreflightOutcome::Admitted,
+        CachePreflightMode::Enforce => CachePreflightOutcome::Cancelled,
+    }
+}
+
+pub(super) fn unavailable_outcome(mode: CachePreflightMode) -> CachePreflightOutcome {
+    match mode {
+        CachePreflightMode::ReportOnly => {
+            Printer::detail("Coverage is advisory for rebuild preflight.");
+            CachePreflightOutcome::Admitted
+        }
+        CachePreflightMode::AllowSourceBuilds => {
+            Printer::detail("Continuing because --allow-source-builds was passed.");
+            CachePreflightOutcome::Admitted
+        }
+        CachePreflightMode::Enforce => {
+            Printer::detail("Could not establish binary cache coverage; refusing the upgrade.");
+            Printer::detail("Rerun with --allow-source-builds to proceed explicitly.");
+            CachePreflightOutcome::Failed
+        }
     }
 }
 
@@ -146,7 +186,7 @@ fn report_dry_run_plan(ctx: &SystemContext<'_>, plan: &DryRunPlan) {
 }
 
 /// Parse the `will be built` / `will be fetched` sections of dry-run output.
-pub(super) fn parse_dry_run_plan(output: &str) -> DryRunPlan {
+pub(super) fn parse_dry_run_plan(output: &str) -> Option<DryRunPlan> {
     #[derive(PartialEq, Eq)]
     enum Section {
         None,
@@ -156,6 +196,7 @@ pub(super) fn parse_dry_run_plan(output: &str) -> DryRunPlan {
 
     let mut section = Section::None;
     let mut plan = DryRunPlan::default();
+    let mut recognized = true;
 
     for line in output.lines() {
         let trimmed = line.trim();
@@ -167,14 +208,17 @@ pub(super) fn parse_dry_run_plan(output: &str) -> DryRunPlan {
             match section {
                 Section::Build => plan.to_build.push(derivation_display_name(trimmed)),
                 Section::Fetch => plan.to_fetch += 1,
-                Section::None => {}
+                Section::None => recognized = false,
             }
+        } else if trimmed.starts_with("warning:") || trimmed.starts_with("trace:") {
+            section = Section::None;
         } else if !trimmed.is_empty() {
+            recognized = false;
             section = Section::None;
         }
     }
 
-    plan
+    recognized.then_some(plan)
 }
 
 fn is_build_section_header(line: &str) -> bool {

@@ -563,10 +563,19 @@ Runs the upgrade flow for either the whole repo or named flake inputs.
   `sudo determinate-nixd upgrade`; nx never upgrades or restarts the daemon
   inside the pipeline.
 - `nx upgrade` with no positional inputs runs the full repo-wide flow: flake
-  update, Homebrew update/upgrade, rebuild, and git commit.
+  update, binary cache admission, Homebrew update/upgrade, rebuild, and git
+  commit.
 - `nx upgrade <input...>` updates only the named flake inputs via
   `nix flake update <input...>`.
 - Flake check and build realize changed sources on demand.
+- Before Homebrew or rebuild, nx dry-runs the candidate system closure. Excessive
+  source builds require interactive approval; automation fails closed. Rejection
+  or an unavailable coverage check atomically restores the original
+  `flake.lock`.
+- Successful but unrecognized Nix planning output is treated as unavailable,
+  and concurrent nx upgrades are refused while admission is in progress.
+- Use `--allow-source-builds` to proceed explicitly when source builds or
+  unavailable cache coverage are acceptable.
 - If a structured rebuild reports a fixed-output hash mismatch, `nx` updates
   the unique clean matching hash in a tracked `.nix` file, retries, and includes
   that file in the upgrade commit. It prints the file, line, old hash, and new

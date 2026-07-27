@@ -125,7 +125,7 @@ Defined at root callback:
   - passthrough args accepted
 - `upgrade`
   - args: `[inputs...]`
-  - options: `--dry-run/-n`, `--verbose/-v`, `--skip-rebuild`, `--skip-commit`, `--skip-brew`, `--no-ai`
+  - options: `--dry-run/-n`, `--verbose/-v`, `--skip-rebuild`, `--skip-commit`, `--skip-brew`, `--no-ai`, `--allow-source-builds`
   - passthrough args accepted
 - `generations`
   - subcommands: `status`, `plan`, `prune`
@@ -581,23 +581,36 @@ High-level phases:
   - load new lock and diff
   - fetch change info and summaries
   - normal flake check and build phases realize changed sources on demand
-3. Brew phase:
+3. Binary cache admission, when rebuild is enabled:
+  - preserve the original `flake.lock` bytes before updating
+  - hold an exclusive repository lock from the original snapshot through rollback or the complete admitted upgrade (including rebuild and commit); a concurrent nx upgrade fails before mutation
+  - dry-run the planned whole-system closure for the candidate lock
+  - empty or recognized build/fetch output establishes coverage; successful but unrecognized output is unavailable and therefore fails closed
+  - coverage within `NX_CACHE_MISS_THRESHOLD` admits the candidate
+  - excessive source builds require explicit interactive approval (default no)
+  - non-interactive runs, unresolved hosts, and failed coverage checks reject the candidate by default
+  - `--allow-source-builds` explicitly admits excessive or unavailable coverage
+  - every rejection and every failure before admission atomically restores the original `flake.lock`; an armed transaction also restores on unwinding, and refuses to overwrite a candidate changed after evaluation
+  - rollback failure exits nonzero and reports that the candidate may remain
+  - change-summary and AI enrichment run only after admission
+  - admission happens before Homebrew so rejection leaves no partial host upgrade
+  - `--skip-rebuild` and dry-run do not run the admission transaction
+4. Brew phase:
   - repo-wide upgrades run brew unless `--skip-brew`
   - targeted input upgrades skip brew by default
   - `brew outdated --json`
   - enrich and changelog fetch
   - non-dry-run `brew upgrade <pkgs...>`
-4. Rebuild unless `--skip-rebuild`
-  - Before rebuilding, run a binary cache preflight: `nix build <repo_root>#darwinConfigurations.<host>.system --dry-run`, parse the will-be-built and will-be-fetched sections, and list up to 10 source-build derivation names (store hash prefix and `.drv` suffix stripped).
-  - When source builds exceed `NX_CACHE_MISS_THRESHOLD` (default 5), warn that the binary cache has likely not caught up with the new nixpkgs revision and, in interactive terminals, prompt to continue (default no). Declining exits `0` before rebuild/commit, keeps the updated `flake.lock`, and prints the `git checkout flake.lock` revert hint.
-  - Non-interactive sessions and preflight dry-run failures are warning-only; the rebuild remains authoritative. The preflight applies to Darwin repos (manifest platform `darwin` or no manifest) with a resolvable host.
+5. Rebuild unless `--skip-rebuild`
+  - The binary cache admission step parses the `will be built` and `will be fetched` sections and lists up to 10 source-build derivation names (store hash prefix and `.drv` suffix stripped).
+  - The admission step applies to Darwin repos (manifest platform `darwin` or no manifest). Non-Darwin manifests do not have a Darwin system closure to gate.
   - If a captured non-interactive or `--timing` rebuild fails with a Nix fixed-output hash mismatch, parse the `specified` and `got` hashes.
   - If exactly one tracked `.nix` file contains the exact specified hash string and that file has no pre-existing staged or unstaged changes, update that occurrence to the got hash and retry rebuild.
   - Print the repaired file, line number, old hash, and new hash when automatic repair runs.
   - Disable automatic repair when `NX_NO_AUTO_HASH_FIX=1` (also accepting `true`, `yes`, or `on`).
   - Stop automatic repairs after three fixed-output hash mismatches in one command and require manual review.
   - If the hash cannot be repaired safely, print the specified/got hashes and the matching file hints before failing.
-5. Commit `flake.lock` and any auto-repaired hash files unless `--skip-commit` (and if flake changes or repairs exist)
+6. Commit `flake.lock` and any auto-repaired hash files unless `--skip-commit` (and if flake changes or repairs exist)
 
 Dry-run behavior:
 

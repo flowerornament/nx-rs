@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.5.33 - 2026-07-26
+
 - checks Determinate Nix before `nx upgrade` and, when stale, reports installed/latest versions and advises `sudo determinate-nixd upgrade` without upgrading or restarting the daemon in-process
 - reports public Nix substrate health from `nx doctor`, including runtime and daemon checks, Determinate freshness, effective lazy trees, garbage collection strategy, and observed `/nix` filesystem availability; substrate warnings are reserved for actionable conditions
 - retires automatic private Nix cache deletion, source-cache retries, the file-descriptor-limit workaround, and changed-input prefetch; recognized lazy-tree failures preserve the original failure and print exact user/root repair commands, while file-descriptor guidance is distribution- and version-qualified

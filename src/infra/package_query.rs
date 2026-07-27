@@ -6,7 +6,7 @@ use crate::domain::source::SourcePreferences;
 use crate::infra::cache::MultiSourceCache;
 use crate::infra::sources::{
     CachedSearchOutcome, SourceSearchOutcome, cached_search_many_with_status,
-    cached_search_with_status, search_all_sources, search_all_sources_quiet,
+    cached_search_many_with_status_quiet,
 };
 
 #[derive(Debug, Clone)]
@@ -22,7 +22,7 @@ pub fn query_package(
     repo_root: &Path,
     cache: &mut Option<MultiSourceCache>,
 ) -> PackageQueryReport {
-    query_package_with(name, prefs, repo_root, cache, search_all_sources)
+    query_package_cached(name, prefs, repo_root, cache, false)
 }
 
 pub fn query_package_quiet(
@@ -31,21 +31,29 @@ pub fn query_package_quiet(
     repo_root: &Path,
     cache: &mut Option<MultiSourceCache>,
 ) -> PackageQueryReport {
-    query_package_with(name, prefs, repo_root, cache, search_all_sources_quiet)
+    query_package_cached(name, prefs, repo_root, cache, true)
 }
 
-fn query_package_with<F>(
+fn query_package_cached(
     name: &str,
     prefs: &SourcePreferences,
     repo_root: &Path,
     cache: &mut Option<MultiSourceCache>,
-    search: F,
-) -> PackageQueryReport
-where
-    F: Fn(&str, &SourcePreferences, Option<&Path>) -> SourceSearchOutcome + Sync,
-{
+    quiet: bool,
+) -> PackageQueryReport {
     let started = Instant::now();
-    let cached = cached_search_with_status(name, prefs, repo_root, cache, search);
+    let names = [name.to_string()];
+    let mut outcomes = if quiet {
+        cached_search_many_with_status_quiet(&names, prefs, repo_root, cache)
+    } else {
+        cached_search_many_with_status(&names, prefs, repo_root, cache)
+    };
+    let cached = outcomes
+        .remove(name)
+        .unwrap_or_else(|| CachedSearchOutcome {
+            outcome: SourceSearchOutcome::default(),
+            cache_hit: false,
+        });
     PackageQueryReport {
         outcome: cached.outcome,
         cache_hit: cached.cache_hit,

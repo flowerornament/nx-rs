@@ -293,23 +293,26 @@ Returns `(matched_name, location)` or `(None, None)`.
 
 ## 6.2 Search Shortcuts
 
-`search_all_sources(name, prefs, flake_lock_path)` order:
+Package-source search order:
 
 1. forced source (`--source`: `nxs|unstable|nur|homebrew`)
 2. explicit source shortcut:
   - `--cask` returns synthetic cask result
   - `--mas` returns synthetic mas result
 3. language override for `python3Packages.*`, etc. (must validate attr/platform)
-4. parallel primary search (`nxs`, optional `flake-input`, optional `nur`)
-5. always append homebrew formula + cask alternatives
-6. sort by source priority and confidence
-7. deduplicate by `(source, attr)`
+4. submit `nxs`, optional `flake-input`, optional `nur`, and Homebrew
+   formula/cask jobs to the shared search executor
+5. sort by source priority and confidence
+6. deduplicate by `(source, attr)`
 
-## 6.3 Parallel Search Failure/Timeout
+## 6.3 Search Execution Failure/Timeout
 
-- Uses `as_completed(..., timeout=45)`.
-- On timeout: warn, keep partial completed results, cancel pending, do not block.
+- Singular and batch queries use one bounded package/source job executor.
+- The 45-second timeout is one absolute deadline for the submitted source-job batch.
+- On timeout: warn, keep completed results, prevent queued work from starting,
+  and return without joining in-flight work.
 - Individual source failure logs warning but does not fail whole search.
+- Cache writes occur only after completed outcomes have been collected.
 
 ## 6.4 Platform Availability Check
 

@@ -1,10 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -404,17 +404,6 @@ fn search_homebrew(name: &str, is_cask: bool, allow_fallback: bool) -> SourceBac
     }
 }
 
-fn search_homebrew_variants(name: &str) -> [SourceBackendOutcome; 2] {
-    thread::scope(|scope| {
-        let formula = scope.spawn(|| search_homebrew(name, false, false));
-        let cask = scope.spawn(|| search_homebrew(name, true, false));
-        [
-            formula.join().expect("homebrew formula search panicked"),
-            cask.join().expect("homebrew cask search panicked"),
-        ]
-    })
-}
-
 // --- Platform / Language Validation
 
 /// Check if a nix package is available on the current platform.
@@ -569,9 +558,39 @@ fn search_language_override(name: &str, warn: bool) -> Option<Vec<SourceResult>>
 
 #[derive(Debug)]
 struct SearchBatch {
-    source: &'static str,
-    results: Vec<SourceResult>,
-    unavailable_reason: Option<String>,
+    id: usize,
+    package: String,
+    kind: SearchTaskKind,
+    outcome: SourceBackendOutcome,
+}
+
+struct SearchTask {
+    id: usize,
+    package: String,
+    kind: SearchTaskKind,
+    search: Box<dyn FnOnce() -> SearchCallResult + Send>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchTaskKind {
+    Source(PackageSource),
+    LanguageOverride,
+}
+
+impl SearchTaskKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Source(source) => source.as_str(),
+            Self::LanguageOverride => "language override",
+        }
+    }
+
+    const fn source(self) -> PackageSource {
+        match self {
+            Self::Source(source) => source,
+            Self::LanguageOverride => PackageSource::Nxs,
+        }
+    }
 }
 
 type SearchCallResult = SourceBackendOutcome;
@@ -584,12 +603,25 @@ struct SearchFns {
     nxs: SearchByNameFn,
     flake_inputs: SearchByNameAndPathFn,
     nur: SearchByNameFn,
+    homebrew_formula: SearchByNameFn,
+    homebrew_cask: SearchByNameFn,
 }
 
 #[derive(Clone, Copy)]
-struct ParallelSearchOptions {
-    warn_on_timeout: bool,
+struct SearchOptions {
+    report_failures: bool,
     timeout: Duration,
+    worker_limit: usize,
+}
+
+impl SearchOptions {
+    fn standard(report_failures: bool) -> Self {
+        Self {
+            report_failures,
+            timeout: Duration::from_secs(45),
+            worker_limit: search_worker_limit(),
+        }
+    }
 }
 
 fn search_nxs_primary(name: &str) -> SearchCallResult {
@@ -604,159 +636,318 @@ fn search_nur_primary(name: &str) -> SearchCallResult {
     search_nur(name)
 }
 
-fn spawn_search_worker(
-    tx: mpsc::Sender<SearchBatch>,
-    source: &'static str,
-    search: impl FnOnce() -> SearchCallResult + Send + 'static,
-) {
-    let _join_handle = thread::spawn(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(search));
-        let batch = match result {
-            Ok(outcome) => SearchBatch {
-                source,
-                results: outcome.results,
-                unavailable_reason: outcome.unavailable_reason,
-            },
-            Err(_) => SearchBatch {
-                source,
-                results: Vec::new(),
-                unavailable_reason: Some("search worker panicked".to_string()),
-            },
-        };
-        let _ = tx.send(batch);
-    });
+fn search_homebrew_formula(name: &str) -> SearchCallResult {
+    search_homebrew(name, false, false)
 }
 
-/// Execute parallel searches across enabled sources.
-///
-/// Uses detached workers + `mpsc::channel` + `recv_timeout`.
-/// Individual source failures are logged but don't fail the whole search.
-fn parallel_search(
-    name: &str,
-    prefs: &SourcePreferences,
-    flake_lock_path: Option<&Path>,
-    warn_on_timeout: bool,
-) -> SourceSearchOutcome {
-    let options = ParallelSearchOptions {
-        warn_on_timeout,
-        timeout: Duration::from_secs(45),
-    };
-    let search_fns = SearchFns {
+fn search_homebrew_cask(name: &str) -> SearchCallResult {
+    search_homebrew(name, true, false)
+}
+
+struct SearchExecution {
+    completed: Vec<SearchBatch>,
+    timed_out: Vec<(String, SearchTaskKind)>,
+}
+
+struct SearchExecutor {
+    worker_limit: usize,
+    timeout: Duration,
+}
+
+struct SearchQueue {
+    tasks: VecDeque<SearchTask>,
+    cancelled: bool,
+}
+
+impl SearchExecutor {
+    fn execute(&self, tasks: Vec<SearchTask>) -> SearchExecution {
+        let mut pending = tasks
+            .iter()
+            .map(|task| (task.id, (task.package.clone(), task.kind)))
+            .collect::<HashMap<_, _>>();
+        let expected = pending.len();
+        let queue = Arc::new(Mutex::new(SearchQueue {
+            tasks: VecDeque::from(tasks),
+            cancelled: false,
+        }));
+        let (tx, rx) = mpsc::channel();
+
+        for _ in 0..expected.min(self.worker_limit.max(1)) {
+            let queue = Arc::clone(&queue);
+            let tx = tx.clone();
+            thread::spawn(move || {
+                loop {
+                    let task = queue.lock().ok().and_then(|mut queue| {
+                        (!queue.cancelled)
+                            .then(|| queue.tasks.pop_front())
+                            .flatten()
+                    });
+                    let Some(task) = task else {
+                        break;
+                    };
+                    let result =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(task.search));
+                    let outcome = result.unwrap_or_else(|_| {
+                        SourceBackendOutcome::unavailable("search worker panicked")
+                    });
+                    let _ = tx.send(SearchBatch {
+                        id: task.id,
+                        package: task.package,
+                        kind: task.kind,
+                        outcome,
+                    });
+                }
+            });
+        }
+        drop(tx);
+
+        let deadline = Instant::now() + self.timeout;
+        let mut completed = Vec::with_capacity(expected);
+        while !pending.is_empty() {
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                break;
+            };
+            match rx.recv_timeout(remaining) {
+                Ok(batch) => {
+                    pending.remove(&batch.id);
+                    completed.push(batch);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected) => {
+                    break;
+                }
+            }
+        }
+        if let Ok(mut queue) = queue.lock() {
+            queue.cancelled = true;
+            queue.tasks.clear();
+        }
+
+        completed.sort_unstable_by_key(|batch| batch.id);
+        let mut timed_out = pending.into_values().collect::<Vec<_>>();
+        timed_out.sort_unstable_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.1.label().cmp(right.1.label()))
+        });
+        SearchExecution {
+            completed,
+            timed_out,
+        }
+    }
+}
+
+fn default_search_fns() -> SearchFns {
+    SearchFns {
         nxs: search_nxs_primary,
         flake_inputs: search_flake_inputs_primary,
         nur: search_nur_primary,
-    };
-
-    parallel_search_with(
-        name,
-        prefs,
-        flake_lock_path,
-        options,
-        |message| eprintln!("{message}"),
-        search_fns,
-    )
+        homebrew_formula: search_homebrew_formula,
+        homebrew_cask: search_homebrew_cask,
+    }
 }
 
-fn parallel_search_with(
-    name: &str,
+fn search_many_with(
+    names: &[String],
     prefs: &SourcePreferences,
     flake_lock_path: Option<&Path>,
-    options: ParallelSearchOptions,
+    options: SearchOptions,
     mut warn: impl FnMut(&str),
     search_fns: SearchFns,
-) -> SourceSearchOutcome {
-    let (tx, rx) = mpsc::channel::<SearchBatch>();
-    let mut expected = 0_usize;
-    let source_name = name.to_string();
-    let mut pending_sources = Vec::new();
-
-    // Always search nxs
-    {
-        let tx_nxs = tx.clone();
-        let name = source_name.clone();
-        spawn_search_worker(tx_nxs, "nxs", move || (search_fns.nxs)(&name));
-        expected += 1;
-        pending_sources.push("nxs");
+) -> HashMap<String, SourceSearchOutcome> {
+    let (mut outcomes, tasks) =
+        build_search_tasks(names, prefs, flake_lock_path, options, search_fns);
+    let execution = SearchExecutor {
+        worker_limit: options.worker_limit,
+        timeout: options.timeout,
     }
+    .execute(tasks);
 
-    // Optional flake-input search
-    if let Some(lock_path) = flake_lock_path {
-        let tx_flake = tx.clone();
-        let name = source_name.clone();
-        let lock_path = lock_path.to_path_buf();
-        spawn_search_worker(tx_flake, "flake-input", move || {
-            (search_fns.flake_inputs)(&name, &lock_path)
-        });
-        expected += 1;
-        pending_sources.push("flake-input");
-    }
+    collect_search_results(&mut outcomes, execution, prefs, options, &mut warn);
+    outcomes
+}
 
-    // Optional NUR search
-    if prefs.nur || prefs.bleeding_edge {
-        let tx_nur = tx.clone();
-        let name = source_name;
-        spawn_search_worker(tx_nur, "nur", move || (search_fns.nur)(&name));
-        expected += 1;
-        pending_sources.push("nur");
-    }
+fn build_search_tasks(
+    names: &[String],
+    prefs: &SourcePreferences,
+    flake_lock_path: Option<&Path>,
+    options: SearchOptions,
+    search_fns: SearchFns,
+) -> (HashMap<String, SourceSearchOutcome>, Vec<SearchTask>) {
+    let mut outcomes = HashMap::with_capacity(names.len());
+    let mut tasks = Vec::new();
 
-    drop(tx);
+    for name in names {
+        if let Some(results) = search_explicit_source(name, prefs) {
+            outcomes.insert(
+                name.clone(),
+                SourceSearchOutcome {
+                    results,
+                    unavailable_sources: Vec::new(),
+                },
+            );
+            continue;
+        }
 
-    let mut outcome = SourceSearchOutcome::default();
-    for _ in 0..expected {
-        match rx.recv_timeout(options.timeout) {
-            Ok(batch) => {
-                pending_sources.retain(|source| *source != batch.source);
-                if let Some(reason) = batch.unavailable_reason {
-                    if options.warn_on_timeout {
-                        warn(&format!(
-                            "warning: {src} search unavailable for '{name}': {reason}; using partial results",
-                            src = batch.source
-                        ));
-                    }
-                    outcome.push_unavailable(batch.source, reason);
-                    continue;
-                }
-                outcome.extend_results(batch.results);
+        outcomes.entry(name.clone()).or_default();
+        let mut push_task = |kind, search: Box<dyn FnOnce() -> SearchCallResult + Send>| {
+            tasks.push(SearchTask {
+                id: tasks.len(),
+                package: name.clone(),
+                kind,
+                search,
+            });
+        };
+
+        if let Some(source) = prefs.force_source.as_deref() {
+            let source = if source.eq_ignore_ascii_case("unstable") {
+                Some(PackageSource::Nxs)
+            } else {
+                PackageSource::parse(source)
+            };
+            if let Some(source) = source {
+                let package = name.clone();
+                let prefs = prefs.clone();
+                push_task(
+                    SearchTaskKind::Source(source),
+                    Box::new(move || {
+                        SourceBackendOutcome::from_results(
+                            search_forced_source(&package, &prefs).unwrap_or_default(),
+                        )
+                    }),
+                );
+                continue;
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                for source in pending_sources.drain(..) {
-                    if options.warn_on_timeout {
-                        warn(&format!(
-                            "warning: timed out waiting for {source} search for '{name}'; using partial results"
-                        ));
-                    }
-                    outcome.push_unavailable(source, "timed out waiting for search response");
-                }
-                break;
+        }
+
+        if detect_language_package(name).is_some() {
+            let package = name.clone();
+            let report_failures = options.report_failures;
+            push_task(
+                SearchTaskKind::LanguageOverride,
+                Box::new(move || {
+                    SourceBackendOutcome::from_results(
+                        search_language_override(&package, report_failures).unwrap_or_default(),
+                    )
+                }),
+            );
+        }
+
+        let package = name.clone();
+        push_task(
+            SearchTaskKind::Source(PackageSource::Nxs),
+            Box::new(move || (search_fns.nxs)(&package)),
+        );
+        if let Some(lock_path) = flake_lock_path {
+            let package = name.clone();
+            let lock_path = lock_path.to_path_buf();
+            push_task(
+                SearchTaskKind::Source(PackageSource::FlakeInput),
+                Box::new(move || (search_fns.flake_inputs)(&package, &lock_path)),
+            );
+        }
+        if prefs.nur || prefs.bleeding_edge {
+            let package = name.clone();
+            push_task(
+                SearchTaskKind::Source(PackageSource::Nur),
+                Box::new(move || (search_fns.nur)(&package)),
+            );
+        }
+        let package = name.clone();
+        push_task(
+            SearchTaskKind::Source(PackageSource::Homebrew),
+            Box::new(move || (search_fns.homebrew_formula)(&package)),
+        );
+        let package = name.clone();
+        push_task(
+            SearchTaskKind::Source(PackageSource::Cask),
+            Box::new(move || (search_fns.homebrew_cask)(&package)),
+        );
+    }
+
+    (outcomes, tasks)
+}
+
+fn collect_search_results(
+    outcomes: &mut HashMap<String, SourceSearchOutcome>,
+    execution: SearchExecution,
+    prefs: &SourcePreferences,
+    options: SearchOptions,
+    warn: &mut impl FnMut(&str),
+) {
+    let language_overrides = execution
+        .completed
+        .iter()
+        .filter(|batch| {
+            batch.kind == SearchTaskKind::LanguageOverride && !batch.outcome.results.is_empty()
+        })
+        .map(|batch| batch.package.clone())
+        .collect::<HashSet<_>>();
+
+    for batch in execution.completed {
+        if language_overrides.contains(&batch.package)
+            && batch.kind != SearchTaskKind::LanguageOverride
+        {
+            continue;
+        }
+        let outcome = outcomes.entry(batch.package.clone()).or_default();
+        if let Some(reason) = batch.outcome.unavailable_reason {
+            if options.report_failures {
+                warn(&format!(
+                    "warning: {source} search unavailable for '{package}': {reason}; using partial results",
+                    source = batch.kind.label(),
+                    package = batch.package,
+                ));
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            outcome.push_unavailable(batch.kind.source().as_str(), reason);
+        } else {
+            outcome.extend_results(batch.outcome.results);
         }
     }
 
-    outcome
+    let mut reported_timeouts = HashSet::new();
+    for (package, kind) in execution.timed_out {
+        if language_overrides.contains(&package)
+            || !reported_timeouts.insert((package.clone(), kind.source()))
+        {
+            continue;
+        }
+        if options.report_failures {
+            warn(&format!(
+                "warning: timed out waiting for {source} search for '{package}'; using partial results",
+                source = kind.label(),
+            ));
+        }
+        outcomes.entry(package).or_default().push_unavailable(
+            kind.source().as_str(),
+            "timed out waiting for search response",
+        );
+    }
+
+    for outcome in outcomes.values_mut() {
+        sort_results(&mut outcome.results, prefs);
+        outcome.results = deduplicate_results(std::mem::take(&mut outcome.results));
+    }
 }
 
-/// Search all enabled sources for a package.
-///
-/// Returns results sorted by preference and confidence.
-pub fn search_all_sources(
+#[cfg(test)]
+fn search_one_with(
     name: &str,
     prefs: &SourcePreferences,
     flake_lock_path: Option<&Path>,
+    options: SearchOptions,
+    warn: impl FnMut(&str),
+    search_fns: SearchFns,
 ) -> SourceSearchOutcome {
-    search_all_sources_with_timeout_reporting(name, prefs, flake_lock_path, true)
-}
-
-/// Search all enabled sources for a package without timeout warnings.
-///
-/// Used by `info --json` to avoid stderr drift in parity-sensitive read paths.
-pub fn search_all_sources_quiet(
-    name: &str,
-    prefs: &SourcePreferences,
-    flake_lock_path: Option<&Path>,
-) -> SourceSearchOutcome {
-    search_all_sources_with_timeout_reporting(name, prefs, flake_lock_path, false)
+    search_many_with(
+        &[name.to_string()],
+        prefs,
+        flake_lock_path,
+        options,
+        warn,
+        search_fns,
+    )
+    .remove(name)
+    .unwrap_or_default()
 }
 
 #[derive(Debug, Clone)]
@@ -771,7 +962,41 @@ pub fn cached_search_many_with_status(
     repo_root: &Path,
     cache: &mut Option<MultiSourceCache>,
 ) -> HashMap<String, CachedSearchOutcome> {
-    cached_search_many_with_status_using(names, prefs, repo_root, cache, search_all_sources)
+    cached_search_many_with_status_reporting(names, prefs, repo_root, cache, true)
+}
+
+pub fn cached_search_many_with_status_quiet(
+    names: &[String],
+    prefs: &SourcePreferences,
+    repo_root: &Path,
+    cache: &mut Option<MultiSourceCache>,
+) -> HashMap<String, CachedSearchOutcome> {
+    cached_search_many_with_status_reporting(names, prefs, repo_root, cache, false)
+}
+
+fn cached_search_many_with_status_reporting(
+    names: &[String],
+    prefs: &SourcePreferences,
+    repo_root: &Path,
+    cache: &mut Option<MultiSourceCache>,
+    report_failures: bool,
+) -> HashMap<String, CachedSearchOutcome> {
+    cached_search_many_with_status_using(
+        names,
+        prefs,
+        repo_root,
+        cache,
+        |names, prefs, lock_path| {
+            search_many_with(
+                names,
+                prefs,
+                lock_path,
+                SearchOptions::standard(report_failures),
+                |message| eprintln!("{message}"),
+                default_search_fns(),
+            )
+        },
+    )
 }
 
 #[cfg(test)]
@@ -795,29 +1020,6 @@ where
     outcome
 }
 
-pub fn cached_search_with_status<F>(
-    name: &str,
-    prefs: &SourcePreferences,
-    repo_root: &Path,
-    cache: &mut Option<MultiSourceCache>,
-    search: F,
-) -> CachedSearchOutcome
-where
-    F: Fn(&str, &SourcePreferences, Option<&Path>) -> SourceSearchOutcome + Sync,
-{
-    if let Some(cached) = cached_search_result(name, prefs, cache.as_ref()) {
-        return cached;
-    }
-
-    let outcome = search(name, prefs, flake_lock_path(repo_root).as_deref());
-    cache_search_results(cache, &outcome.results);
-
-    CachedSearchOutcome {
-        outcome,
-        cache_hit: false,
-    }
-}
-
 fn cached_search_many_with_status_using<F>(
     names: &[String],
     prefs: &SourcePreferences,
@@ -826,7 +1028,7 @@ fn cached_search_many_with_status_using<F>(
     search: F,
 ) -> HashMap<String, CachedSearchOutcome>
 where
-    F: Fn(&str, &SourcePreferences, Option<&Path>) -> SourceSearchOutcome + Sync,
+    F: Fn(&[String], &SourcePreferences, Option<&Path>) -> HashMap<String, SourceSearchOutcome>,
 {
     let unique_names = unique_names(names);
     if unique_names.is_empty() {
@@ -849,14 +1051,10 @@ where
     }
 
     let flake_lock_path = flake_lock_path(repo_root);
+    let mut fresh = search(&uncached_names, prefs, flake_lock_path.as_deref());
     let mut fresh_results = Vec::new();
-    let worker_count = uncached_names.len().min(search_worker_limit());
-
-    if worker_count <= 1 {
-        let name = uncached_names
-            .pop()
-            .expect("single uncached name should exist");
-        let outcome = search(&name, prefs, flake_lock_path.as_deref());
+    for name in uncached_names {
+        let outcome = fresh.remove(&name).unwrap_or_default();
         fresh_results.extend(outcome.results.iter().cloned());
         outcomes.insert(
             name,
@@ -865,39 +1063,6 @@ where
                 cache_hit: false,
             },
         );
-    } else {
-        thread::scope(|scope| {
-            let search = &search;
-            let mut handles = Vec::with_capacity(worker_count);
-
-            for names in split_evenly(uncached_names, worker_count) {
-                let prefs = prefs.clone();
-                let flake_lock_path = flake_lock_path.clone();
-                handles.push(scope.spawn(move || {
-                    names
-                        .into_iter()
-                        .map(|name| {
-                            let outcome = search(&name, &prefs, flake_lock_path.as_deref());
-                            (name, outcome)
-                        })
-                        .collect::<Vec<_>>()
-                }));
-            }
-
-            for handle in handles {
-                let batch = handle.join().expect("search worker should not panic");
-                for (name, outcome) in batch {
-                    fresh_results.extend(outcome.results.iter().cloned());
-                    outcomes.insert(
-                        name,
-                        CachedSearchOutcome {
-                            outcome,
-                            cache_hit: false,
-                        },
-                    );
-                }
-            }
-        });
     }
 
     cache_search_results(cache, &fresh_results);
@@ -950,68 +1115,6 @@ fn search_worker_limit() -> usize {
     thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get)
 }
 
-fn split_evenly(items: Vec<String>, groups: usize) -> Vec<Vec<String>> {
-    let mut buckets = vec![Vec::new(); groups];
-
-    for (index, item) in items.into_iter().enumerate() {
-        buckets[index % groups].push(item);
-    }
-
-    buckets
-        .into_iter()
-        .filter(|bucket| !bucket.is_empty())
-        .collect()
-}
-
-fn search_all_sources_with_timeout_reporting(
-    name: &str,
-    prefs: &SourcePreferences,
-    flake_lock_path: Option<&Path>,
-    warn_on_timeout: bool,
-) -> SourceSearchOutcome {
-    // 1. Forced source shortcut
-    if let Some(results) = search_forced_source(name, prefs) {
-        return SourceSearchOutcome {
-            results,
-            unavailable_sources: Vec::new(),
-        };
-    }
-
-    // 2. Explicit --cask / --mas
-    if let Some(results) = search_explicit_source(name, prefs) {
-        return SourceSearchOutcome {
-            results,
-            unavailable_sources: Vec::new(),
-        };
-    }
-
-    // 3. Language override
-    if let Some(results) = search_language_override(name, warn_on_timeout) {
-        return SourceSearchOutcome {
-            results,
-            unavailable_sources: Vec::new(),
-        };
-    }
-
-    // 4. Parallel primary search
-    let mut outcome = parallel_search(name, prefs, flake_lock_path, warn_on_timeout);
-
-    // 5. Always append homebrew formula + cask alternatives.
-    for variant in search_homebrew_variants(name) {
-        outcome.extend_results(variant.results);
-        if let Some(reason) = variant.unavailable_reason {
-            outcome.push_unavailable("homebrew", reason);
-        }
-    }
-
-    // 6. Sort by source priority + confidence
-    sort_results(&mut outcome.results, prefs);
-
-    // 7. Deduplicate by (source, attr)
-    outcome.results = deduplicate_results(std::mem::take(&mut outcome.results));
-    outcome
-}
-
 // --- Tests
 
 #[cfg(test)]
@@ -1019,6 +1122,7 @@ mod tests {
     use super::*;
     use std::fmt::Write as FmtWrite;
     use std::io::Write;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread::sleep;
     use std::time::{Duration, Instant};
 
@@ -1162,7 +1266,7 @@ mod tests {
         assert!(!command_available("__nx_definitely_not_a_command__"));
     }
 
-    // --- parallel_search_with ---
+    // --- SearchExecutor ---
 
     fn stub_result(source: PackageSource, attr: &str) -> SourceResult {
         SourceResult {
@@ -1194,6 +1298,43 @@ mod tests {
         SourceBackendOutcome::default()
     }
 
+    fn stub_source_empty(_name: &str) -> SearchCallResult {
+        SourceBackendOutcome::default()
+    }
+
+    #[test]
+    fn executor_cancels_queued_work_at_the_deadline() {
+        let starts = Arc::new(AtomicUsize::new(0));
+        let first_starts = Arc::clone(&starts);
+        let second_starts = Arc::clone(&starts);
+        let task = |id, starts: Arc<AtomicUsize>, delay| SearchTask {
+            id,
+            package: "ripgrep".to_string(),
+            kind: SearchTaskKind::Source(PackageSource::Nxs),
+            search: Box::new(move || {
+                starts.fetch_add(1, Ordering::SeqCst);
+                sleep(delay);
+                SourceBackendOutcome::default()
+            }),
+        };
+
+        let started = Instant::now();
+        let execution = SearchExecutor {
+            worker_limit: 1,
+            timeout: Duration::from_millis(30),
+        }
+        .execute(vec![
+            task(0, first_starts, Duration::from_millis(120)),
+            task(1, second_starts, Duration::ZERO),
+        ]);
+
+        assert!(started.elapsed() < Duration::from_millis(90));
+        assert_eq!(execution.completed.len(), 0);
+        assert_eq!(execution.timed_out.len(), 2);
+        sleep(Duration::from_millis(120));
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+    }
+
     fn cache_result(name: &str, source: PackageSource, attr: &str) -> SourceResult {
         SourceResult {
             name: name.to_string(),
@@ -1208,7 +1349,7 @@ mod tests {
     }
 
     #[test]
-    fn parallel_search_timeout_returns_partial_results_and_warns() {
+    fn executor_timeout_returns_partial_results_and_warns() {
         let prefs = SourcePreferences {
             nur: true,
             ..Default::default()
@@ -1216,19 +1357,22 @@ mod tests {
         let mut warnings = Vec::new();
         let started = Instant::now();
 
-        let results = parallel_search_with(
+        let results = search_one_with(
             "ripgrep",
             &prefs,
             None,
-            ParallelSearchOptions {
-                warn_on_timeout: true,
+            SearchOptions {
+                report_failures: true,
                 timeout: Duration::from_millis(40),
+                worker_limit: 5,
             },
             |message| warnings.push(message.to_string()),
             SearchFns {
                 nxs: stub_nxs_slow,
                 flake_inputs: stub_flake_empty,
                 nur: stub_nur_fast,
+                homebrew_formula: stub_source_empty,
+                homebrew_cask: stub_source_empty,
             },
         );
 
@@ -1277,15 +1421,23 @@ mod tests {
             &prefs,
             &repo_root,
             &mut cache,
-            move |name, _prefs, _flake_lock_path| {
-                call_log
-                    .lock()
-                    .expect("call log should not be poisoned")
-                    .push(name.to_string());
-                SourceSearchOutcome {
-                    results: vec![cache_result(name, PackageSource::Nxs, name)],
-                    unavailable_sources: Vec::new(),
-                }
+            move |names, _prefs, _flake_lock_path| {
+                names
+                    .iter()
+                    .map(|name| {
+                        call_log
+                            .lock()
+                            .expect("call log should not be poisoned")
+                            .push(name.clone());
+                        (
+                            name.clone(),
+                            SourceSearchOutcome {
+                                results: vec![cache_result(name, PackageSource::Nxs, name)],
+                                unavailable_sources: Vec::new(),
+                            },
+                        )
+                    })
+                    .collect()
             },
         );
 
@@ -1312,26 +1464,29 @@ mod tests {
     }
 
     #[test]
-    fn parallel_search_timeout_quiet_suppresses_warning() {
+    fn executor_timeout_quiet_suppresses_warning() {
         let prefs = SourcePreferences {
             nur: true,
             ..Default::default()
         };
         let mut warnings = Vec::new();
 
-        let results = parallel_search_with(
+        let results = search_one_with(
             "ripgrep",
             &prefs,
             None,
-            ParallelSearchOptions {
-                warn_on_timeout: false,
+            SearchOptions {
+                report_failures: false,
                 timeout: Duration::from_millis(40),
+                worker_limit: 5,
             },
             |message| warnings.push(message.to_string()),
             SearchFns {
                 nxs: stub_nxs_slow,
                 flake_inputs: stub_flake_empty,
                 nur: stub_nur_fast,
+                homebrew_formula: stub_source_empty,
+                homebrew_cask: stub_source_empty,
             },
         );
 
@@ -1340,26 +1495,29 @@ mod tests {
     }
 
     #[test]
-    fn parallel_search_source_failure_keeps_other_results_and_warns() {
+    fn executor_source_failure_keeps_other_results_and_warns() {
         let prefs = SourcePreferences {
             nur: true,
             ..Default::default()
         };
         let mut warnings = Vec::new();
 
-        let results = parallel_search_with(
+        let results = search_one_with(
             "ripgrep",
             &prefs,
             None,
-            ParallelSearchOptions {
-                warn_on_timeout: true,
+            SearchOptions {
+                report_failures: true,
                 timeout: Duration::from_millis(200),
+                worker_limit: 5,
             },
             |message| warnings.push(message.to_string()),
             SearchFns {
                 nxs: stub_nxs_failed,
                 flake_inputs: stub_flake_empty,
                 nur: stub_nur_fast,
+                homebrew_formula: stub_source_empty,
+                homebrew_cask: stub_source_empty,
             },
         );
 
@@ -1376,26 +1534,29 @@ mod tests {
     }
 
     #[test]
-    fn parallel_search_source_failure_quiet_suppresses_warning() {
+    fn executor_source_failure_quiet_suppresses_warning() {
         let prefs = SourcePreferences {
             nur: true,
             ..Default::default()
         };
         let mut warnings = Vec::new();
 
-        let results = parallel_search_with(
+        let results = search_one_with(
             "ripgrep",
             &prefs,
             None,
-            ParallelSearchOptions {
-                warn_on_timeout: false,
+            SearchOptions {
+                report_failures: false,
                 timeout: Duration::from_millis(200),
+                worker_limit: 5,
             },
             |message| warnings.push(message.to_string()),
             SearchFns {
                 nxs: stub_nxs_failed,
                 flake_inputs: stub_flake_empty,
                 nur: stub_nur_fast,
+                homebrew_formula: stub_source_empty,
+                homebrew_cask: stub_source_empty,
             },
         );
 

@@ -10,6 +10,7 @@ pub mod hash;
 pub mod nix_output;
 pub mod nix_runtime;
 pub mod package_query;
+pub mod persistence;
 pub mod query_info;
 pub mod self_refresh;
 pub mod shell;

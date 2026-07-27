@@ -3,6 +3,7 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, bail};
 
+use crate::infra::persistence::write_file_atomically;
 use crate::infra::shell::run_captured_command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,7 +127,7 @@ pub(super) fn apply_fixed_output_hash_repair(
         );
     }
 
-    fs::write(&full_path, updated).with_context(|| format!("writing {}", full_path.display()))
+    write_file_atomically(&full_path, updated)
 }
 
 fn tracked_nix_files(repo_root: &Path) -> anyhow::Result<Vec<PathBuf>> {

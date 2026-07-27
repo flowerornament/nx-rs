@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use crate::infra::persistence::write_file_atomically;
+
 pub const DEFAULT_DARWIN_REBUILD_COMMAND: &str =
     "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild";
 const LEGACY_DARWIN_REBUILD_COMMAND: &str = "/run/current-system/sw/bin/darwin-rebuild";
@@ -140,7 +142,7 @@ impl Manifest {
         fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
         let path = Self::manifest_path(repo_root);
         let content = serialize_manifest(self);
-        fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
+        write_file_atomically(&path, content)?;
         Ok(())
     }
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- protects nx-owned manifest and configuration updates from torn or truncated files by syncing complete same-directory replacements before an atomic rename, while preserving existing modes and symlink targets
+
 ## v1.5.33 - 2026-07-26
 
 - checks Determinate Nix before `nx upgrade` and, when stale, reports installed/latest versions and advises `sudo determinate-nixd upgrade` without upgrading or restarting the daemon in-process

@@ -261,6 +261,24 @@ Returns `(matched_name, location)` or `(None, None)`.
 - Guardrail: if cached results are homebrew-only (no `nxs`/`nur`), return empty to force fresh search.
 - Schema mismatch invalidates cache.
 
+## 5.1 Managed File Persistence
+
+- On supported Darwin and Linux hosts, nx-owned writes to manifests and user
+  configuration replace the destination atomically from a same-directory
+  temporary file.
+- The complete replacement is synced before one rename commits it. Any failure
+  before that rename leaves the previous destination bytes intact and removes
+  the temporary file.
+- Existing Unix mode and final-component symlink-following behavior are
+  preserved. New files start with restrictive `0600` permissions. Read-only
+  destinations are rejected.
+- This boundary prevents torn files. It does not promise power-loss durability,
+  detect concurrent edits, preserve inode-specific metadata, or make multiple
+  files transactional; concurrent writers remain last-writer-wins.
+- Recoverable caches and append-only timing data remain outside this contract.
+- Files changed by external tools such as Nix, Git, and sops retain those
+  tools' persistence semantics.
+
 ## 6. Source Search Contract
 
 ## 6.1 Search Inputs

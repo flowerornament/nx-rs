@@ -4,6 +4,8 @@ use std::path::Path;
 use anyhow::{Context, bail};
 use regex::Regex;
 
+use crate::infra::persistence::write_file_atomically;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FlakeInputEdit {
     Added { input_name: String },
@@ -54,7 +56,7 @@ pub fn add_flake_input(
         updated.push('\n');
     }
 
-    fs::write(flake_path, updated).with_context(|| format!("writing {}", flake_path.display()))?;
+    write_file_atomically(flake_path, updated)?;
 
     Ok(FlakeInputEdit::Added {
         input_name: resolved_name,

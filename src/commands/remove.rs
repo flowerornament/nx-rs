@@ -16,6 +16,7 @@ use crate::infra::ai_engine::{
 };
 use crate::infra::file_edit::{EditOutcome, apply_removal};
 use crate::infra::finder::find_package;
+use crate::infra::persistence::write_file_atomically;
 use crate::infra::shell::git_diff;
 use crate::output::printer::Printer;
 
@@ -190,7 +191,7 @@ fn remove_line_directly(file_path: &Path, line_num: usize) -> anyhow::Result<()>
         updated.push('\n');
     }
 
-    fs::write(file_path, updated).with_context(|| format!("writing {}", file_path.display()))
+    write_file_atomically(file_path, updated)
 }
 
 fn try_deterministic_remove(

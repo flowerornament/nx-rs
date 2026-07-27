@@ -4,6 +4,7 @@ use std::path::Path;
 use anyhow::{Result, anyhow};
 
 use crate::domain::plan::{InsertionMode, InstallPlan};
+use crate::infra::persistence::write_file_atomically;
 
 // --- Types
 
@@ -74,7 +75,7 @@ fn apply_plan(
     let (new_content, line_number) = transform(&content, plan)?;
 
     if let Some(ln) = line_number {
-        fs::write(path, &new_content)?;
+        write_file_atomically(path, &new_content)?;
         Ok(EditOutcome {
             file_changed: true,
             line_number: Some(ln),

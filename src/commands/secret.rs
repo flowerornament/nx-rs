@@ -7,6 +7,7 @@ use anyhow::{Context, bail, ensure};
 
 use crate::cli::{SecretAddArgs, SecretArgs, SecretCommand};
 use crate::commands::context::AppContext;
+use crate::infra::persistence::write_file_atomically;
 use crate::output::printer::Printer;
 
 pub fn cmd_secret(args: &SecretArgs, ctx: &AppContext) -> i32 {
@@ -88,13 +89,13 @@ where
     let updated = upsert_secret_name(&original_secrets_nix, key)?;
 
     if updated.changed {
-        fs::write(&secrets_nix_path, &updated.content)
-            .with_context(|| format!("writing {}", secrets_nix_path.display()))?;
+        write_file_atomically(&secrets_nix_path, &updated.content)?;
     }
 
     if let Err(sops_err) = set_secret(&secrets_yaml_path, key, value) {
         if updated.changed
-            && let Err(rollback_err) = fs::write(&secrets_nix_path, &original_secrets_nix)
+            && let Err(rollback_err) =
+                write_file_atomically(&secrets_nix_path, &original_secrets_nix)
         {
             return Err(rollback_err).context(format!(
                 "sops update failed and rollback of {} failed: {sops_err:#}",

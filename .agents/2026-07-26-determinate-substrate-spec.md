@@ -100,6 +100,11 @@ the current Determinate release:
 - `failed to insert entry: invalid object specified`
 - `object not found - no match for id`
 
+If either signature recurs on Determinate Nix 3.21.8 or later, treat it as an
+unknown current upstream defect: preserve the failure, report it with
+`determinate-nixd bug`, and keep the manual command as last-resort guidance.
+Never mutate a private cache or retry the unchanged command.
+
 `error: adding a file to a tree builder` is context, not a sufficient
 classifier: Nix also emits it for deterministic invalid archives. For the two
 object-integrity signatures, nx reports the affected effective home and an exact
@@ -148,7 +153,9 @@ rebuild" in this spec forbids a new nx freshness request; it does not add Nix's
 - Current or unknown versions never trigger obsolete repair.
 - `doctor` represents unavailable advisory checks without failing.
 - Doctor predicates cover disabled lazy trees/GC, low disk, and logged-out auth.
-- Source-cache diagnostics select the effective user/root manual command.
+- On Determinate Nix 3.21.8, source-cache diagnostics select the exact effective
+  user/root manual command, report upstream, and invoke each failed phase
+  exactly once. The upgrade test also proves a seeded user cache survives.
 - No private cache path, cache deletion, FD raise, source-prefetch, or
   source-cache retry implementation remains.
 

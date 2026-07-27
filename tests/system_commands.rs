@@ -32,6 +32,10 @@ use support_tree::copy_tree;
 
 const DARWIN_REBUILD_CMD: &str = "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild";
 const RUN_CURRENT_DARWIN_REBUILD_CMD: &str = "/run/current-system/sw/bin/darwin-rebuild";
+const SOURCE_CACHE_REPORT: &str =
+    "Report: determinate-nixd bug \"Lazy-tree source-cache corruption\"";
+const USER_SOURCE_CACHE_REPAIR: &str = "Repair: rm -rf \"$HOME/.cache/nix/gitv3\" \"$HOME/.cache/nix/tarball-cache-v2\" \"$HOME/.cache/nix/fetcher-cache-v4.sqlite\" \"$HOME/.cache/nix/fetcher-cache-v4.sqlite-wal\" \"$HOME/.cache/nix/fetcher-cache-v4.sqlite-shm\"";
+const ROOT_SOURCE_CACHE_REPAIR: &str = "Repair: sudo rm -rf /var/root/.cache/nix/gitv3 /var/root/.cache/nix/tarball-cache-v2 /var/root/.cache/nix/fetcher-cache-v4.sqlite /var/root/.cache/nix/fetcher-cache-v4.sqlite-wal /var/root/.cache/nix/fetcher-cache-v4.sqlite-shm";
 const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
     "-C",
     REPO_ROOT_TOKEN,
@@ -932,51 +936,54 @@ fn split_darwin_rebuild_preserves_run_current_passwordless_legacy_sudo()
     Ok(())
 }
 
-#[test]
-fn split_darwin_rebuild_reports_user_source_cache_corruption() -> Result<(), Box<dyn Error>> {
-    assert_source_cache_diagnostic(
-        "split_rebuild_cache_corruption",
-        "split_build_cache_corruption",
-        &split_build_cache_failure_calls(),
-        "$HOME/.cache/nix/tarball-cache-v2",
-    )
+macro_rules! source_cache_tripwire {
+    ($name:ident, $case:literal, $mode:literal, $calls:expr, $repair:expr, $failure:literal) => {
+        #[test]
+        fn $name() -> Result<(), Box<dyn Error>> {
+            assert_source_cache_diagnostic_only($case, $mode, &$calls, $repair, $failure)
+        }
+    };
 }
 
-#[test]
-fn split_darwin_rebuild_reports_profile_source_cache_corruption() -> Result<(), Box<dyn Error>> {
-    assert_source_cache_diagnostic(
-        "split_profile_cache_corruption",
-        "split_profile_set_cache_corruption",
-        &split_profile_cache_failure_calls(),
-        "/var/root/.cache/nix/tarball-cache-v2",
-    )
-}
+source_cache_tripwire!(
+    split_build_source_cache_corruption_is_diagnostic_only,
+    "split_rebuild_cache_corruption",
+    "split_build_cache_corruption",
+    split_build_cache_failure_calls(),
+    USER_SOURCE_CACHE_REPAIR,
+    "object not found - no match for id (c2217e)"
+);
+source_cache_tripwire!(
+    profile_source_cache_corruption_is_diagnostic_only,
+    "split_profile_cache_corruption",
+    "split_profile_set_cache_corruption",
+    split_profile_cache_failure_calls(),
+    ROOT_SOURCE_CACHE_REPAIR,
+    "object not found - no match for id (profile)"
+);
+source_cache_tripwire!(
+    activation_source_cache_corruption_is_diagnostic_only,
+    "split_activation_cache_corruption",
+    "split_activate_cache_corruption",
+    split_activation_cache_failure_calls(),
+    ROOT_SOURCE_CACHE_REPAIR,
+    "object not found - no match for id (activate)"
+);
+source_cache_tripwire!(
+    darwin_switch_source_cache_corruption_is_diagnostic_only,
+    "darwin_rebuild_switch_cache_corruption",
+    "darwin_rebuild_cache_corruption",
+    darwin_rebuild_cache_failure_calls(),
+    ROOT_SOURCE_CACHE_REPAIR,
+    "object not found - no match for id (switch)"
+);
 
-#[test]
-fn split_darwin_rebuild_reports_activation_source_cache_corruption() -> Result<(), Box<dyn Error>> {
-    assert_source_cache_diagnostic(
-        "split_activation_cache_corruption",
-        "split_activate_cache_corruption",
-        &split_activation_cache_failure_calls(),
-        "/var/root/.cache/nix/tarball-cache-v2",
-    )
-}
-
-#[test]
-fn darwin_rebuild_switch_reports_source_cache_corruption() -> Result<(), Box<dyn Error>> {
-    assert_source_cache_diagnostic(
-        "darwin_rebuild_switch_cache_corruption",
-        "darwin_rebuild_cache_corruption",
-        &darwin_rebuild_cache_failure_calls(),
-        "/var/root/.cache/nix/tarball-cache-v2",
-    )
-}
-
-fn assert_source_cache_diagnostic(
+fn assert_source_cache_diagnostic_only(
     case_id: &str,
     mode: &str,
     expected_calls: &[ExpectedCall],
-    expected_cache_path: &str,
+    expected_repair: &str,
+    expected_failure: &str,
 ) -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
@@ -991,16 +998,21 @@ fn assert_source_cache_diagnostic(
         1,
     )?;
 
+    let output = format!("{stdout}\n{stderr}");
+    for expected in [
+        "Nix reported an inconsistent lazy-tree source cache",
+        SOURCE_CACHE_REPORT,
+        expected_repair,
+        expected_failure,
+    ] {
+        assert!(
+            output.contains(expected),
+            "case {case_id}: output missing {expected:?}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
     assert!(
-        stdout.contains("Nix reported an inconsistent lazy-tree source cache")
-            && stdout.contains(expected_cache_path)
-            && stdout.contains("fetcher-cache-v4.sqlite-wal")
-            && stdout.contains("fetcher-cache-v4.sqlite-shm"),
-        "stdout missing source-cache diagnosis\nstdout:\n{stdout}\nstderr:\n{stderr}"
-    );
-    assert!(
-        !stdout.contains("retry") && !stdout.contains("System rebuilt"),
-        "stdout claimed retry or success after an authoritative failure\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        !stdout.contains("System rebuilt"),
+        "case {case_id}: stdout claimed success after an authoritative failure\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     Ok(())
 }

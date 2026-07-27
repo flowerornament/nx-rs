@@ -79,6 +79,7 @@ pub struct SourceResult {
 }
 
 impl SourceResult {
+    #[cfg(test)]
     pub fn new(name: impl Into<String>, source: PackageSource) -> Self {
         Self {
             name: name.into(),
@@ -165,21 +166,21 @@ static NAME_MAPPINGS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::
 });
 
 /// Language package prefixes that need `withPackages` treatment.
-/// Maps attr prefix -> (runtime, method).
-pub const LANG_PACKAGE_PREFIXES: &[(&str, &str, &str)] = &[
-    ("python3Packages.", "python3", "withPackages"),
-    ("python311Packages.", "python3", "withPackages"),
-    ("python312Packages.", "python3", "withPackages"),
-    ("python313Packages.", "python3", "withPackages"),
-    ("python314Packages.", "python3", "withPackages"),
-    ("luaPackages.", "lua5_4", "withPackages"),
-    ("lua51Packages.", "lua5_1", "withPackages"),
-    ("lua52Packages.", "lua5_2", "withPackages"),
-    ("lua53Packages.", "lua5_3", "withPackages"),
-    ("lua54Packages.", "lua5_4", "withPackages"),
-    ("perlPackages.", "perl", "withPackages"),
-    ("rubyPackages.", "ruby", "withPackages"),
-    ("haskellPackages.", "haskellPackages.ghc", "withPackages"),
+/// Maps attribute prefix to runtime.
+pub const LANG_PACKAGE_PREFIXES: &[(&str, &str)] = &[
+    ("python3Packages.", "python3"),
+    ("python311Packages.", "python3"),
+    ("python312Packages.", "python3"),
+    ("python313Packages.", "python3"),
+    ("python314Packages.", "python3"),
+    ("luaPackages.", "lua5_4"),
+    ("lua51Packages.", "lua5_1"),
+    ("lua52Packages.", "lua5_2"),
+    ("lua53Packages.", "lua5_3"),
+    ("lua54Packages.", "lua5_4"),
+    ("perlPackages.", "perl"),
+    ("rubyPackages.", "ruby"),
+    ("haskellPackages.", "haskellPackages.ghc"),
 ];
 
 /// Known overlays and the packages they replace/provide.
@@ -309,13 +310,13 @@ pub fn overlay_lookup_with_user(
 
 /// Detect if a package is a language-specific package.
 ///
-/// Returns `(bare_name, runtime, method)` or `None`.
-pub fn detect_language_package(name: &str) -> Option<(&str, &str, &str)> {
-    for &(prefix, runtime, method) in LANG_PACKAGE_PREFIXES {
+/// Returns `(bare_name, runtime)` or `None`.
+pub fn detect_language_package(name: &str) -> Option<(&str, &str)> {
+    for &(prefix, runtime) in LANG_PACKAGE_PREFIXES {
         if let Some(bare) = name.strip_prefix(prefix)
             && !bare.is_empty()
         {
-            return Some((bare, runtime, method));
+            return Some((bare, runtime));
         }
     }
     None
@@ -785,13 +786,13 @@ mod tests {
     #[test]
     fn detect_python_package() {
         let result = detect_language_package("python3Packages.rich");
-        assert_eq!(result, Some(("rich", "python3", "withPackages")));
+        assert_eq!(result, Some(("rich", "python3")));
     }
 
     #[test]
     fn detect_lua_package() {
         let result = detect_language_package("luaPackages.lpeg");
-        assert_eq!(result, Some(("lpeg", "lua5_4", "withPackages")));
+        assert_eq!(result, Some(("lpeg", "lua5_4")));
     }
 
     #[test]
@@ -802,7 +803,7 @@ mod tests {
     #[test]
     fn detect_versioned_python() {
         let result = detect_language_package("python312Packages.requests");
-        assert_eq!(result, Some(("requests", "python3", "withPackages")));
+        assert_eq!(result, Some(("requests", "python3")));
     }
 
     // --- search_name_variants ---

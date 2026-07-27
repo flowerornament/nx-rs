@@ -348,16 +348,20 @@ Per package:
 `InstallPlan` fields:
 
 - `source_result`
-- `package_token`
 - `target_file`
-- `insertion_mode`:
-  - `nix_manifest`
-  - `language_with_packages`
-  - `homebrew_manifest`
-  - `mas_apps`
-- `is_brew`, `is_cask`, `is_mas`
-- `language_info`
+- `edit`
 - `routing_warning`
+
+`EditSpec` is the complete deterministic edit shape:
+
+- `NixPackages { token }`
+- `WithPackages { token, member, runtime }`
+- `HomebrewList { token }`
+- `MasApps { token }`
+
+Mode-specific data lives in its variant; invalid mode/data combinations are
+unrepresentable. Insert and remove share one pure transform dispatcher and one
+atomic persistence boundary.
 
 Required safety:
 
@@ -368,7 +372,7 @@ Routing behavior:
 - cask -> `homebrew/casks.nix`
 - homebrew formula -> `homebrew/brews.nix`
 - mas -> `system/darwin.nix`
-- language package -> `packages/nix/languages.nix` with `withPackages` insertion mode
+- language package -> `packages/nix/languages.nix` with a `WithPackages` edit
 - general nix package -> `route_package_codex_decision(...)` over constrained candidate manifest files
 
 ## 7.4 Routing Safety Invariants
@@ -401,7 +405,9 @@ For nix-based sources:
 - Default (`--engine=claude-code`): streaming engine via `claude-codes` crate with activity display. Uses Max subscription auth by default (unsets `ANTHROPIC_API_KEY`); set `NX_AI_BILLING=api` for API key billing.
 - `--engine=codex`: turbo path via `codex exec`.
 - `--engine=claude`: raw Claude CLI path via `claude --print`.
-- All engines must consume same `InstallPlan` contract (`package_token`, `target_file`, `insertion_mode`).
+- All engines consume the same `InstallPlan` and dispatch prompts from its `EditSpec`.
+- Only a typed unsupported edit shape may fall back to AI; operational read,
+  unrecognized parse, and atomic-write failures abort instead.
 
 ## 7.8 Post-Install
 

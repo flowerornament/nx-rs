@@ -1,36 +1,27 @@
+use std::fmt;
 use std::fs;
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
 
-use crate::domain::plan::{InsertionMode, InstallPlan};
+use crate::domain::plan::EditSpec;
 use crate::infra::persistence::write_file_atomically;
 
 // --- Types
 
 /// Outcome of a file edit operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EditOutcome {
-    pub file_changed: bool,
-    pub line_number: Option<usize>,
+pub enum EditOutcome {
+    Unchanged,
+    Changed { line_number: usize },
 }
 
 // --- Public API
 
-/// Apply the install plan's edit to the target file.
-///
-/// Dispatches to the per-mode inserter. Idempotent: returns
-/// `file_changed: false` if the token is already present.
-pub fn apply_edit(plan: &InstallPlan) -> Result<EditOutcome> {
-    apply_plan(plan, dispatch_insert)
-}
-
-/// Apply a removal to the target file using the plan's insertion mode.
-///
-/// Dispatches to the per-mode remover. Idempotent: returns
-/// `file_changed: false` if the token is not found.
-pub fn apply_removal(plan: &InstallPlan) -> Result<EditOutcome> {
-    apply_plan(plan, dispatch_remove)
+#[derive(Debug, Clone, Copy)]
+enum EditAction<'a> {
+    Insert { description: &'a str },
+    Remove,
 }
 
 /// Preview metadata for a nix manifest insertion.
@@ -65,69 +56,128 @@ pub fn analyse_manifest_for_preview(content: &str, token: &str) -> Option<Manife
     })
 }
 
-/// Shared read-dispatch-write skeleton for both insertion and removal.
-fn apply_plan(
-    plan: &InstallPlan,
-    transform: impl FnOnce(&str, &InstallPlan) -> Result<(String, Option<usize>)>,
-) -> Result<EditOutcome> {
-    let path = &plan.target_file;
-    let content = read_file(path)?;
-    let (new_content, line_number) = transform(&content, plan)?;
+/// Insert one typed edit atomically.
+pub fn insert_edit(path: &Path, spec: &EditSpec, description: &str) -> Result<EditOutcome> {
+    apply_edit(path, EditAction::Insert { description }, spec)
+}
 
-    if let Some(ln) = line_number {
-        write_file_atomically(path, &new_content)?;
-        Ok(EditOutcome {
-            file_changed: true,
-            line_number: Some(ln),
-        })
-    } else {
-        Ok(EditOutcome {
-            file_changed: false,
-            line_number: None,
-        })
+#[cfg(test)]
+fn remove_edit(path: &Path, spec: &EditSpec) -> Result<EditOutcome> {
+    apply_edit(path, EditAction::Remove, spec)
+}
+
+fn apply_edit(path: &Path, action: EditAction<'_>, spec: &EditSpec) -> Result<EditOutcome> {
+    let content = read_file(path)?;
+    persist_transform(path, transform(&content, action, spec)?)
+}
+
+/// Apply the first matching edit from an ordered fallback list.
+///
+/// Candidate-specific parse failures are skipped, matching removal fallback
+/// semantics, while the file is read once and written at most once.
+pub fn remove_first_edit(path: &Path, specs: &[EditSpec]) -> Result<EditOutcome> {
+    let content = read_file(path)?;
+    for spec in specs {
+        match transform(&content, EditAction::Remove, spec) {
+            Ok(TransformOutcome::Unchanged) => {}
+            Ok(changed @ TransformOutcome::Changed { .. }) => {
+                return persist_transform(path, changed);
+            }
+            Err(err) if is_unsupported_edit_shape(&err) => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(EditOutcome::Unchanged)
+}
+
+fn persist_transform(path: &Path, outcome: TransformOutcome) -> Result<EditOutcome> {
+    match outcome {
+        TransformOutcome::Unchanged => Ok(EditOutcome::Unchanged),
+        TransformOutcome::Changed {
+            content,
+            line_number,
+        } => {
+            write_file_atomically(path, &content)?;
+            Ok(EditOutcome::Changed { line_number })
+        }
     }
 }
 
-fn dispatch_insert(content: &str, plan: &InstallPlan) -> Result<(String, Option<usize>)> {
-    match plan.insertion_mode {
-        InsertionMode::NixManifest => insert_nix_manifest(
-            content,
-            &plan.package_token,
-            &plan.source_result.description,
-        ),
-        InsertionMode::LanguageWithPackages => {
-            let lang = plan.language_info.as_ref().ok_or_else(|| {
-                anyhow!("invalid install plan: language_info required for LanguageWithPackages")
-            })?;
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TransformOutcome {
+    Unchanged,
+    Changed { content: String, line_number: usize },
+}
+
+#[derive(Debug)]
+struct UnsupportedEditShape(String);
+
+impl fmt::Display for UnsupportedEditShape {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for UnsupportedEditShape {}
+
+fn unsupported_edit_shape(message: impl Into<String>) -> anyhow::Error {
+    UnsupportedEditShape(message.into()).into()
+}
+
+pub fn is_unsupported_edit_shape(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<UnsupportedEditShape>().is_some()
+}
+
+fn transform(content: &str, action: EditAction<'_>, spec: &EditSpec) -> Result<TransformOutcome> {
+    let edit = match (spec, action) {
+        (EditSpec::NixPackages { token }, EditAction::Insert { description }) => {
+            insert_nix_manifest(content, token, description)
+        }
+        (EditSpec::NixPackages { token }, EditAction::Remove) => {
+            remove_nix_manifest(content, token)
+        }
+        (
+            EditSpec::WithPackages {
+                member, runtime, ..
+            },
+            EditAction::Insert { .. },
+        ) => {
             let lines: Vec<&str> = content.lines().collect();
-            if find_with_packages_block(&lines, &lang.runtime).is_some()
-                || find_inline_with_packages_line(&lines, &lang.runtime).is_some()
+            if find_with_packages_block(&lines, runtime).is_some()
+                || find_inline_with_packages_line(&lines, runtime).is_some()
             {
-                insert_language_package(content, &lang.bare_name, &lang.runtime)
+                insert_language_package(content, member, runtime)
             } else {
-                scaffold_language_block(content, &lang.bare_name, &lang.runtime)
+                scaffold_language_block(content, member, runtime)
             }
         }
-        InsertionMode::HomebrewManifest => insert_homebrew_manifest(
-            content,
-            &plan.package_token,
-            &plan.source_result.description,
-        ),
-        InsertionMode::MasApps => Ok(insert_mas_app(content, &plan.package_token)),
-    }
-}
-
-fn dispatch_remove(content: &str, plan: &InstallPlan) -> Result<(String, Option<usize>)> {
-    match plan.insertion_mode {
-        InsertionMode::NixManifest => remove_nix_manifest(content, &plan.package_token),
-        InsertionMode::LanguageWithPackages => {
-            let lang = plan.language_info.as_ref().ok_or_else(|| {
-                anyhow!("invalid install plan: language_info required for LanguageWithPackages")
-            })?;
-            remove_language_package(content, &lang.bare_name, &lang.runtime)
+        (
+            EditSpec::WithPackages {
+                member, runtime, ..
+            },
+            EditAction::Remove,
+        ) => remove_language_package(content, member, runtime),
+        (EditSpec::HomebrewList { token }, EditAction::Insert { description }) => {
+            insert_homebrew_manifest(content, token, description)
         }
-        InsertionMode::HomebrewManifest => remove_homebrew_manifest(content, &plan.package_token),
-        InsertionMode::MasApps => remove_mas_app(content, &plan.package_token),
+        (EditSpec::HomebrewList { token }, EditAction::Remove) => {
+            remove_homebrew_manifest(content, token)
+        }
+        (EditSpec::MasApps { token }, EditAction::Insert { .. }) => {
+            Ok(insert_mas_app(content, token))
+        }
+        (EditSpec::MasApps { token }, EditAction::Remove) => remove_mas_app(content, token),
+    }?;
+
+    match edit {
+        (new_content, Some(line_number)) => Ok(TransformOutcome::Changed {
+            content: new_content,
+            line_number,
+        }),
+        (new_content, None) if new_content == content => Ok(TransformOutcome::Unchanged),
+        (_, None) => Err(anyhow!(
+            "edit changed content without reporting a line number"
+        )),
     }
 }
 
@@ -192,7 +242,7 @@ fn insert_nix_manifest(
     let (bracket_start, bracket_end) = find_bracket_region(content, "home.packages")
         .or_else(|| find_bracket_region(content, "environment.systemPackages"))
         .ok_or_else(|| {
-            anyhow::anyhow!("no home.packages or environment.systemPackages list found")
+            unsupported_edit_shape("no home.packages or environment.systemPackages list found")
         })?;
 
     let lines: Vec<&str> = content.lines().collect();
@@ -232,7 +282,7 @@ fn insert_language_package(
 
     // Find the multi-line withPackages block for this runtime
     let (block_start, block_end) = find_with_packages_block(&lines, runtime)
-        .ok_or_else(|| anyhow::anyhow!("no {runtime}.withPackages block found"))?;
+        .ok_or_else(|| unsupported_edit_shape(format!("no {runtime}.withPackages block found")))?;
 
     let indent = detect_indent_in_region(&lines, block_start, block_end).unwrap_or("      ");
     let insert_at = find_alpha_position(&lines, block_start + 1, block_end, bare_name);
@@ -367,7 +417,7 @@ fn insert_homebrew_manifest(
 
     // Find the top-level bracket list
     let (bracket_start, bracket_end) = find_top_level_brackets(content)
-        .ok_or_else(|| anyhow::anyhow!("no bracket list found in homebrew manifest"))?;
+        .ok_or_else(|| unsupported_edit_shape("no bracket list found in homebrew manifest"))?;
 
     let lines: Vec<&str> = content.lines().collect();
     let indent = detect_indent_in_region(&lines, bracket_start, bracket_end).unwrap_or("  ");
@@ -492,7 +542,7 @@ fn remove_nix_manifest(content: &str, token: &str) -> Result<(String, Option<usi
     let (bracket_start, bracket_end) = find_bracket_region(content, "home.packages")
         .or_else(|| find_bracket_region(content, "environment.systemPackages"))
         .ok_or_else(|| {
-            anyhow::anyhow!("no home.packages or environment.systemPackages list found")
+            unsupported_edit_shape("no home.packages or environment.systemPackages list found")
         })?;
 
     let lines: Vec<&str> = content.lines().collect();
@@ -516,7 +566,7 @@ fn remove_language_package(
 
     let lines: Vec<&str> = content.lines().collect();
     let (block_start, block_end) = find_with_packages_block(&lines, runtime)
-        .ok_or_else(|| anyhow::anyhow!("no {runtime}.withPackages block found"))?;
+        .ok_or_else(|| unsupported_edit_shape(format!("no {runtime}.withPackages block found")))?;
 
     let remove_idx = find_ident_line(&lines, block_start + 1, block_end, bare_name);
 
@@ -533,7 +583,7 @@ fn remove_homebrew_manifest(content: &str, token: &str) -> Result<(String, Optio
     }
 
     let (bracket_start, bracket_end) = find_top_level_brackets(content)
-        .ok_or_else(|| anyhow::anyhow!("no bracket list found in homebrew manifest"))?;
+        .ok_or_else(|| unsupported_edit_shape("no bracket list found in homebrew manifest"))?;
 
     let lines: Vec<&str> = content.lines().collect();
     let remove_idx = find_quoted_line(&lines, bracket_start + 1, bracket_end, token);
@@ -1813,9 +1863,6 @@ mod tests {
 
     #[test]
     fn apply_edit_writes_file() {
-        use crate::domain::plan::{InsertionMode, InstallPlan};
-        use crate::domain::source::{PackageSource, SourceResult};
-
         let tmp = tempfile::TempDir::new().unwrap();
         let cli_path = tmp.path().join("cli.nix");
         fs::write(
@@ -1824,19 +1871,8 @@ mod tests {
         )
         .unwrap();
 
-        let plan = InstallPlan {
-            source_result: SourceResult::new("fd", PackageSource::Nxs),
-            package_token: "fd".to_string(),
-            target_file: cli_path.clone(),
-            insertion_mode: InsertionMode::NixManifest,
-
-            language_info: None,
-            routing_warning: None,
-        };
-
-        let outcome = apply_edit(&plan).unwrap();
-        assert!(outcome.file_changed);
-        assert!(outcome.line_number.is_some());
+        let outcome = insert_edit(&cli_path, &EditSpec::nix_packages("fd"), "").unwrap();
+        assert!(matches!(outcome, EditOutcome::Changed { .. }));
 
         let written = fs::read_to_string(&cli_path).unwrap();
         assert!(written.contains("fd"));
@@ -1844,46 +1880,14 @@ mod tests {
 
     #[test]
     fn apply_edit_missing_file_errors() {
-        use crate::domain::plan::{InsertionMode, InstallPlan};
-        use crate::domain::source::{PackageSource, SourceResult};
-
-        let plan = InstallPlan {
-            source_result: SourceResult::new("fd", PackageSource::Nxs),
-            package_token: "fd".to_string(),
-            target_file: std::path::PathBuf::from("/nonexistent/cli.nix"),
-            insertion_mode: InsertionMode::NixManifest,
-
-            language_info: None,
-            routing_warning: None,
-        };
-
-        assert!(apply_edit(&plan).is_err());
-    }
-
-    #[test]
-    fn apply_edit_errors_for_language_mode_without_language_info() {
-        use crate::domain::plan::{InsertionMode, InstallPlan};
-        use crate::domain::source::{PackageSource, SourceResult};
-
-        let tmp = tempfile::TempDir::new().unwrap();
-        let languages = tmp.path().join("languages.nix");
-        fs::write(
-            &languages,
-            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    (python3.withPackages (ps: with ps; [\n      rich\n    ]))\n  ];\n}\n",
-        )
-        .unwrap();
-
-        let plan = InstallPlan {
-            source_result: SourceResult::new("python3Packages.requests", PackageSource::Nxs),
-            package_token: "python3Packages.requests".to_string(),
-            target_file: languages,
-            insertion_mode: InsertionMode::LanguageWithPackages,
-            language_info: None,
-            routing_warning: None,
-        };
-
-        let err = apply_edit(&plan).expect_err("missing language info should return an error");
-        assert!(err.to_string().contains("language_info required"));
+        assert!(
+            insert_edit(
+                Path::new("/nonexistent/cli.nix"),
+                &EditSpec::nix_packages("fd"),
+                "",
+            )
+            .is_err()
+        );
     }
 
     // --- remove_nix_manifest ---
@@ -2081,9 +2085,6 @@ mod tests {
 
     #[test]
     fn dispatch_insert_falls_back_to_scaffold() {
-        use crate::domain::plan::{InsertionMode, InstallPlan, LanguageInfo};
-        use crate::domain::source::{PackageSource, SourceResult};
-
         let tmp = tempfile::TempDir::new().unwrap();
         let lang_path = tmp.path().join("languages.nix");
         fs::write(
@@ -2092,21 +2093,13 @@ mod tests {
         )
         .unwrap();
 
-        let plan = InstallPlan {
-            source_result: SourceResult::new("perlPackages.JSON", PackageSource::Nxs),
-            package_token: "perlPackages.JSON".to_string(),
-            target_file: lang_path.clone(),
-            insertion_mode: InsertionMode::LanguageWithPackages,
-            language_info: Some(LanguageInfo {
-                bare_name: "JSON".to_string(),
-                runtime: "perl".to_string(),
-                method: "withPackages".to_string(),
-            }),
-            routing_warning: None,
-        };
-
-        let outcome = apply_edit(&plan).unwrap();
-        assert!(outcome.file_changed);
+        let outcome = insert_edit(
+            &lang_path,
+            &EditSpec::with_packages("perlPackages.JSON", "JSON", "perl"),
+            "",
+        )
+        .unwrap();
+        assert!(matches!(outcome, EditOutcome::Changed { .. }));
 
         let written = fs::read_to_string(&lang_path).unwrap();
         assert!(written.contains("perl.withPackages"));
@@ -2115,9 +2108,6 @@ mod tests {
 
     #[test]
     fn dispatch_insert_prefers_inline_with_packages_over_scaffold() {
-        use crate::domain::plan::{InsertionMode, InstallPlan, LanguageInfo};
-        use crate::domain::source::{PackageSource, SourceResult};
-
         let tmp = tempfile::TempDir::new().unwrap();
         let lang_path = tmp.path().join("languages.nix");
         fs::write(
@@ -2126,21 +2116,13 @@ mod tests {
         )
         .unwrap();
 
-        let plan = InstallPlan {
-            source_result: SourceResult::new("python3Packages.rich", PackageSource::Nxs),
-            package_token: "python3Packages.rich".to_string(),
-            target_file: lang_path.clone(),
-            insertion_mode: InsertionMode::LanguageWithPackages,
-            language_info: Some(LanguageInfo {
-                bare_name: "rich".to_string(),
-                runtime: "python3".to_string(),
-                method: "withPackages".to_string(),
-            }),
-            routing_warning: None,
-        };
-
-        let outcome = apply_edit(&plan).unwrap();
-        assert!(outcome.file_changed);
+        let outcome = insert_edit(
+            &lang_path,
+            &EditSpec::with_packages("python3Packages.rich", "rich", "python3"),
+            "",
+        )
+        .unwrap();
+        assert!(matches!(outcome, EditOutcome::Changed { .. }));
 
         let written = fs::read_to_string(&lang_path).unwrap();
         assert_eq!(written.matches("python3.withPackages").count(), 1);
@@ -2293,13 +2275,10 @@ mod tests {
         assert!(line.is_none());
     }
 
-    // --- apply_removal (integration via temp files) ---
+    // --- removal dispatch (integration via temp files) ---
 
     #[test]
-    fn apply_removal_writes_file() {
-        use crate::domain::plan::{InsertionMode, InstallPlan};
-        use crate::domain::source::{PackageSource, SourceResult};
-
+    fn removal_writes_file() {
         let tmp = tempfile::TempDir::new().unwrap();
         let cli_path = tmp.path().join("cli.nix");
         fs::write(
@@ -2308,18 +2287,8 @@ mod tests {
         )
         .unwrap();
 
-        let plan = InstallPlan {
-            source_result: SourceResult::new("fd", PackageSource::Nxs),
-            package_token: "fd".to_string(),
-            target_file: cli_path.clone(),
-            insertion_mode: InsertionMode::NixManifest,
-            language_info: None,
-            routing_warning: None,
-        };
-
-        let outcome = apply_removal(&plan).unwrap();
-        assert!(outcome.file_changed);
-        assert!(outcome.line_number.is_some());
+        let outcome = remove_edit(&cli_path, &EditSpec::nix_packages("fd")).unwrap();
+        assert!(matches!(outcome, EditOutcome::Changed { .. }));
 
         let written = fs::read_to_string(&cli_path).unwrap();
         assert!(!written.contains("fd"));
@@ -2328,10 +2297,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_removal_idempotent_no_write() {
-        use crate::domain::plan::{InsertionMode, InstallPlan};
-        use crate::domain::source::{PackageSource, SourceResult};
-
+    fn removal_idempotent_no_write() {
         let tmp = tempfile::TempDir::new().unwrap();
         let cli_path = tmp.path().join("cli.nix");
         fs::write(
@@ -2340,44 +2306,8 @@ mod tests {
         )
         .unwrap();
 
-        let plan = InstallPlan {
-            source_result: SourceResult::new("nonexistent", PackageSource::Nxs),
-            package_token: "nonexistent".to_string(),
-            target_file: cli_path,
-            insertion_mode: InsertionMode::NixManifest,
-            language_info: None,
-            routing_warning: None,
-        };
-
-        let outcome = apply_removal(&plan).unwrap();
-        assert!(!outcome.file_changed);
-        assert!(outcome.line_number.is_none());
-    }
-
-    #[test]
-    fn apply_removal_errors_for_language_mode_without_language_info() {
-        use crate::domain::plan::{InsertionMode, InstallPlan};
-        use crate::domain::source::{PackageSource, SourceResult};
-
-        let tmp = tempfile::TempDir::new().unwrap();
-        let languages = tmp.path().join("languages.nix");
-        fs::write(
-            &languages,
-            "{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    (python3.withPackages (ps: with ps; [\n      rich\n    ]))\n  ];\n}\n",
-        )
-        .unwrap();
-
-        let plan = InstallPlan {
-            source_result: SourceResult::new("python3Packages.rich", PackageSource::Nxs),
-            package_token: "python3Packages.rich".to_string(),
-            target_file: languages,
-            insertion_mode: InsertionMode::LanguageWithPackages,
-            language_info: None,
-            routing_warning: None,
-        };
-
-        let err = apply_removal(&plan).expect_err("missing language info should return an error");
-        assert!(err.to_string().contains("language_info required"));
+        let outcome = remove_edit(&cli_path, &EditSpec::nix_packages("nonexistent")).unwrap();
+        assert_eq!(outcome, EditOutcome::Unchanged);
     }
 
     // --- roundtrip: insert then remove restores original ---

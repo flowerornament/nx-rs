@@ -6,7 +6,7 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::domain::config::ConfigFiles;
-use crate::domain::plan::InstallPlan;
+use crate::domain::plan::{EditSpec, InstallPlan};
 use crate::domain::source::PackageSource;
 use crate::infra::shell::{CapturedCommand, run_captured_command};
 use crate::output::printer::{ActivityKind, Printer};
@@ -709,37 +709,32 @@ pub fn build_remove_prompt(package: &str, file_path: &str) -> String {
 pub fn build_edit_prompt(plan: &InstallPlan) -> String {
     let target = plan.target_file.to_string_lossy();
 
-    if let Some(ref lang) = plan.language_info {
-        return format!(
-            "Add '{}' to the {}.withPackages list in {}.\n\
-             Find the existing {}.withPackages block and add '{}' alphabetically inside the list.\n\
+    match &plan.edit {
+        EditSpec::WithPackages {
+            member, runtime, ..
+        } => format!(
+            "Add '{member}' to the {runtime}.withPackages list in {target}.\n\
+             Find the existing {runtime}.withPackages block and add '{member}' alphabetically inside the list.\n\
              Just make the edit, no explanation.",
-            lang.bare_name, lang.runtime, target, lang.runtime, lang.bare_name,
-        );
-    }
-
-    match plan.source_result.source {
-        PackageSource::Mas => format!(
-            "Add \"{}\" to the homebrew.masApps set in {}.\n\
-             Look up the App Store ID if needed and add it as \"{}\" = <id>;.\n\
-             Keep keys alphabetized. Just make the edit, no explanation.",
-            plan.package_token, target, plan.package_token,
         ),
-        PackageSource::Homebrew | PackageSource::Cask => {
+        EditSpec::MasApps { token } => format!(
+            "Add \"{token}\" to the homebrew.masApps set in {target}.\n\
+             Look up the App Store ID if needed and add it as \"{token}\" = <id>;.\n\
+             Keep keys alphabetized. Just make the edit, no explanation.",
+        ),
+        EditSpec::HomebrewList { token } => {
             let list_name = match plan.source_result.source {
                 PackageSource::Homebrew => "brews",
                 _ => "casks",
             };
             format!(
-                "Add \"{}\" to the homebrew.{} list in {}.\n\
-                 Add it alphabetically within the {} list. Just make the edit, no explanation.",
-                plan.package_token, list_name, target, list_name,
+                "Add \"{token}\" to the homebrew.{list_name} list in {target}.\n\
+                 Add it alphabetically within the {list_name} list. Just make the edit, no explanation.",
             )
         }
-        _ => format!(
-            "Add '{}' to {} in the appropriate section.\n\
+        EditSpec::NixPackages { token } => format!(
+            "Add '{token}' to {target} in the appropriate section.\n\
              Add it alphabetically within its section. Just make the edit, no explanation.",
-            plan.package_token, target,
         ),
     }
 }
@@ -750,7 +745,7 @@ pub fn build_edit_prompt(plan: &InstallPlan) -> String {
 mod tests {
     use super::*;
     use crate::domain::config::ConfigFiles;
-    use crate::domain::plan::{InsertionMode, InstallPlan, LanguageInfo};
+    use crate::domain::plan::{EditSpec, InstallPlan};
     use crate::domain::source::{PackageSource, SourceResult};
     use std::fs;
     use tempfile::TempDir;
@@ -1265,15 +1260,8 @@ mod tests {
     fn edit_prompt_language_package() {
         let plan = InstallPlan {
             source_result: SourceResult::new("pyyaml", PackageSource::Nxs),
-            package_token: "python3Packages.pyyaml".to_string(),
             target_file: "/repo/packages/nix/languages.nix".into(),
-            insertion_mode: InsertionMode::LanguageWithPackages,
-
-            language_info: Some(LanguageInfo {
-                bare_name: "pyyaml".to_string(),
-                runtime: "python3".to_string(),
-                method: "withPackages".to_string(),
-            }),
+            edit: EditSpec::with_packages("python3Packages.pyyaml", "pyyaml", "python3"),
             routing_warning: None,
         };
         let prompt = build_edit_prompt(&plan);
@@ -1285,11 +1273,8 @@ mod tests {
     fn edit_prompt_brew_package() {
         let plan = InstallPlan {
             source_result: SourceResult::new("htop", PackageSource::Homebrew),
-            package_token: "htop".to_string(),
             target_file: "/repo/packages/homebrew/brews.nix".into(),
-            insertion_mode: InsertionMode::HomebrewManifest,
-
-            language_info: None,
+            edit: EditSpec::homebrew_list("htop"),
             routing_warning: None,
         };
         let prompt = build_edit_prompt(&plan);
@@ -1301,11 +1286,8 @@ mod tests {
     fn edit_prompt_cask_package() {
         let plan = InstallPlan {
             source_result: SourceResult::new("firefox", PackageSource::Cask),
-            package_token: "firefox".to_string(),
             target_file: "/repo/packages/homebrew/casks.nix".into(),
-            insertion_mode: InsertionMode::HomebrewManifest,
-
-            language_info: None,
+            edit: EditSpec::homebrew_list("firefox"),
             routing_warning: None,
         };
         let prompt = build_edit_prompt(&plan);
@@ -1317,11 +1299,8 @@ mod tests {
     fn edit_prompt_mas_package() {
         let plan = InstallPlan {
             source_result: SourceResult::new("Xcode", PackageSource::Mas),
-            package_token: "Xcode".to_string(),
             target_file: "/repo/system/darwin.nix".into(),
-            insertion_mode: InsertionMode::MasApps,
-
-            language_info: None,
+            edit: EditSpec::mas_apps("Xcode"),
             routing_warning: None,
         };
         let prompt = build_edit_prompt(&plan);
@@ -1333,11 +1312,8 @@ mod tests {
     fn edit_prompt_general_nix() {
         let plan = InstallPlan {
             source_result: SourceResult::new("ripgrep", PackageSource::Nxs),
-            package_token: "ripgrep".to_string(),
             target_file: "/repo/packages/nix/cli.nix".into(),
-            insertion_mode: InsertionMode::NixManifest,
-
-            language_info: None,
+            edit: EditSpec::nix_packages("ripgrep"),
             routing_warning: None,
         };
         let prompt = build_edit_prompt(&plan);

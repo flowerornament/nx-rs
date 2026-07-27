@@ -78,10 +78,8 @@ fn test_context(root: &Path) -> AppContext {
 fn test_plan(root: &Path, token: &str) -> InstallPlan {
     InstallPlan {
         source_result: SourceResult::new(token, PackageSource::Nxs),
-        package_token: token.to_string(),
         target_file: root.join("packages/nix/cli.nix"),
-        insertion_mode: InsertionMode::NixManifest,
-        language_info: None,
+        edit: EditSpec::nix_packages(token),
         routing_warning: None,
     }
 }

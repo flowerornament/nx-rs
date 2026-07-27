@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- carries each package edit's complete valid shape in `EditSpec`, with install and remove sharing one pure transform and atomic write path
 - protects nx-owned manifest and configuration updates from torn or truncated files by syncing complete same-directory replacements before an atomic rename, while preserving existing modes and symlink targets
 
 ## v1.5.33 - 2026-07-26

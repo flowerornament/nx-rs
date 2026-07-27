@@ -9,12 +9,12 @@ use crate::commands::shared::{
     SnippetMode, missing_argument_error, relative_location, show_snippet,
 };
 use crate::domain::manifest::{Manifest, SlotKind};
-use crate::domain::plan::{InsertionMode, InstallPlan, LanguageInfo};
-use crate::domain::source::{PackageSource, SourceResult, detect_language_package};
+use crate::domain::plan::EditSpec;
+use crate::domain::source::detect_language_package;
 use crate::infra::ai_engine::{
     ClaudeCodeEngine, CommandOutcome, build_remove_prompt, run_edit_with_callback,
 };
-use crate::infra::file_edit::{EditOutcome, apply_removal};
+use crate::infra::file_edit::{EditOutcome, remove_first_edit};
 use crate::infra::finder::find_package;
 use crate::infra::persistence::write_file_atomically;
 use crate::infra::shell::git_diff;
@@ -132,14 +132,27 @@ fn remove_via_ai(
 
     let engine = ClaudeCodeEngine::new(args.model.as_deref(), ctx.printer.style());
     let manifest = ctx.config_files.manifest();
-    let mut deterministic_edit: Option<EditOutcome> = None;
-    let execution = run_edit_with_callback(&engine, &prompt, &ctx.repo_root, || {
-        deterministic_edit = try_deterministic_remove(package, file_path, manifest);
-        deterministic_edit.as_ref().map(|_| CommandOutcome {
-            success: true,
-            output: "deterministic removal applied".to_string(),
-        })
-    });
+    let mut deterministic_edit = false;
+    let execution =
+        run_edit_with_callback(
+            &engine,
+            &prompt,
+            &ctx.repo_root,
+            || match try_deterministic_remove(package, file_path, manifest) {
+                Ok(Some(_)) => {
+                    deterministic_edit = true;
+                    Some(CommandOutcome {
+                        success: true,
+                        output: "deterministic removal applied".to_string(),
+                    })
+                }
+                Ok(None) => None,
+                Err(err) => Some(CommandOutcome {
+                    success: false,
+                    output: err.to_string(),
+                }),
+            },
+        );
     let outcome = execution.outcome;
 
     if !outcome.success {
@@ -148,7 +161,7 @@ fn remove_via_ai(
         return Err(1);
     }
 
-    if deterministic_edit.is_some() {
+    if deterministic_edit {
         report_success(package, file_path, ctx);
         return Ok(());
     }
@@ -198,198 +211,75 @@ fn try_deterministic_remove(
     package: &str,
     file_path: &Path,
     manifest: Option<&Manifest>,
-) -> Option<EditOutcome> {
-    deterministic_remove_plans(package, file_path, manifest)
-        .into_iter()
-        .find_map(|plan| match apply_removal(&plan) {
-            Ok(outcome) if outcome.file_changed => Some(outcome),
-            Ok(_) | Err(_) => None,
-        })
+) -> anyhow::Result<Option<EditOutcome>> {
+    let specs = deterministic_remove_specs(package, file_path, manifest);
+    match remove_first_edit(file_path, &specs)? {
+        changed @ EditOutcome::Changed { .. } => Ok(Some(changed)),
+        EditOutcome::Unchanged => Ok(None),
+    }
 }
 
-fn deterministic_remove_plans(
+fn deterministic_remove_specs(
     package: &str,
     file_path: &Path,
     manifest: Option<&Manifest>,
-) -> Vec<InstallPlan> {
-    // When a manifest is available, use slot kind to determine insertion mode.
+) -> Vec<EditSpec> {
+    // When a manifest is available, use its slot kind to choose the edit shape.
     if let Some(m) = manifest
-        && let Some(plans) = plans_from_manifest(package, file_path, m)
+        && let Some(specs) = specs_from_manifest(package, file_path, m)
     {
-        return plans;
+        return specs;
     }
 
     // Fallback: filename-based heuristic (no manifest or file not in manifest).
-    plans_from_filename(package, file_path)
+    specs_from_filename(package, file_path)
 }
 
-/// Build removal plans by looking up the file in manifest slots.
-fn plans_from_manifest(
+/// Build removal edits by looking up the file in manifest slots.
+fn specs_from_manifest(
     package: &str,
     file_path: &Path,
     manifest: &Manifest,
-) -> Option<Vec<InstallPlan>> {
-    let slot = manifest
+) -> Option<Vec<EditSpec>> {
+    let kind = manifest
         .slots
         .iter()
-        .find(|s| file_path.ends_with(&s.file))?;
-
-    let mut plans = Vec::new();
-    match slot.kind {
-        SlotKind::HomebrewList => {
-            let source =
-                if slot.tags.iter().any(|t| t == "casks") || slot.attr_path.contains("casks") {
-                    PackageSource::Cask
-                } else {
-                    PackageSource::Homebrew
-                };
-            plans.push(make_remove_plan(
-                package,
-                file_path,
-                InsertionMode::HomebrewManifest,
-                None,
-                source,
-            ));
-        }
-        SlotKind::MasApps => {
-            plans.push(make_remove_plan(
-                package,
-                file_path,
-                InsertionMode::MasApps,
-                None,
-                PackageSource::Mas,
-            ));
-        }
-        SlotKind::WithPackages => {
-            if let Some((bare_name, runtime, method)) = detect_language_package(package) {
-                plans.push(make_remove_plan(
-                    package,
-                    file_path,
-                    InsertionMode::LanguageWithPackages,
-                    Some(LanguageInfo {
-                        bare_name: bare_name.to_string(),
-                        runtime: runtime.to_string(),
-                        method: method.to_string(),
-                    }),
-                    PackageSource::Nxs,
-                ));
-            } else {
-                plans.push(make_remove_plan(
-                    package,
-                    file_path,
-                    InsertionMode::NixManifest,
-                    None,
-                    PackageSource::Nxs,
-                ));
-            }
-        }
-        SlotKind::NixPackages | SlotKind::Services => {
-            // NOTE: Services use attrset structure, not lists. NixManifest mode
-            // works for line-based removal but may need a dedicated mode for
-            // structured edits.
-            plans.push(make_remove_plan(
-                package,
-                file_path,
-                InsertionMode::NixManifest,
-                None,
-                PackageSource::Nxs,
-            ));
-        }
-    }
-
-    // Always add NixManifest as a generic fallback.
-    if !plans
-        .iter()
-        .any(|p| matches!(p.insertion_mode, InsertionMode::NixManifest))
-    {
-        plans.push(make_remove_plan(
-            package,
-            file_path,
-            InsertionMode::NixManifest,
-            None,
-            PackageSource::Nxs,
-        ));
-    }
-
-    Some(plans)
+        .find(|slot| file_path.ends_with(&slot.file))
+        .map(|slot| slot.kind)?;
+    Some(specs_for_kind(package, kind))
 }
 
 /// Filename-based heuristic for when no manifest is available.
-fn plans_from_filename(package: &str, file_path: &Path) -> Vec<InstallPlan> {
+fn specs_from_filename(package: &str, file_path: &Path) -> Vec<EditSpec> {
     let file_name = file_path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
 
-    let mut plans = Vec::new();
-
-    if matches!(file_name, "brews.nix" | "casks.nix" | "taps.nix") {
-        let source = if file_name == "casks.nix" {
-            PackageSource::Cask
-        } else {
-            PackageSource::Homebrew
-        };
-        plans.push(make_remove_plan(
-            package,
-            file_path,
-            InsertionMode::HomebrewManifest,
-            None,
-            source,
-        ));
-    }
-
-    if file_name == "darwin.nix" {
-        plans.push(make_remove_plan(
-            package,
-            file_path,
-            InsertionMode::MasApps,
-            None,
-            PackageSource::Mas,
-        ));
-    }
-
-    if file_name == "languages.nix"
-        && let Some((bare_name, runtime, method)) = detect_language_package(package)
-    {
-        plans.push(make_remove_plan(
-            package,
-            file_path,
-            InsertionMode::LanguageWithPackages,
-            Some(LanguageInfo {
-                bare_name: bare_name.to_string(),
-                runtime: runtime.to_string(),
-                method: method.to_string(),
-            }),
-            PackageSource::Nxs,
-        ));
-    }
-
-    // Generic nix manifests are tried last.
-    plans.push(make_remove_plan(
-        package,
-        file_path,
-        InsertionMode::NixManifest,
-        None,
-        PackageSource::Nxs,
-    ));
-
-    plans
+    let kind = match file_name {
+        "brews.nix" | "casks.nix" | "taps.nix" => SlotKind::HomebrewList,
+        "darwin.nix" => SlotKind::MasApps,
+        "languages.nix" => SlotKind::WithPackages,
+        _ => SlotKind::NixPackages,
+    };
+    specs_for_kind(package, kind)
 }
 
-fn make_remove_plan(
-    package: &str,
-    file_path: &Path,
-    insertion_mode: InsertionMode,
-    language_info: Option<LanguageInfo>,
-    source: PackageSource,
-) -> InstallPlan {
-    InstallPlan {
-        source_result: SourceResult::new(package, source),
-        package_token: package.to_string(),
-        target_file: file_path.to_path_buf(),
-        insertion_mode,
-        language_info,
-        routing_warning: None,
+fn specs_for_kind(package: &str, kind: SlotKind) -> Vec<EditSpec> {
+    let primary = match kind {
+        SlotKind::HomebrewList => EditSpec::homebrew_list(package),
+        SlotKind::MasApps => EditSpec::mas_apps(package),
+        SlotKind::WithPackages => detect_language_package(package).map_or_else(
+            || EditSpec::nix_packages(package),
+            |(member, runtime)| EditSpec::with_packages(package, member, runtime),
+        ),
+        SlotKind::NixPackages | SlotKind::Services => EditSpec::nix_packages(package),
+    };
+
+    if matches!(primary, EditSpec::NixPackages { .. }) {
+        vec![primary]
+    } else {
+        vec![primary, EditSpec::nix_packages(package)]
     }
 }
 
@@ -489,7 +379,7 @@ mod tests {
         )
         .unwrap();
 
-        let outcome = try_deterministic_remove("htop", &file, None);
+        let outcome = try_deterministic_remove("htop", &file, None).unwrap();
 
         assert!(outcome.is_some());
         assert!(!fs::read_to_string(&file).unwrap().contains("\"htop\""));
@@ -512,7 +402,7 @@ mod tests {
         )
         .unwrap();
 
-        let outcome = try_deterministic_remove("Xcode", &file, None);
+        let outcome = try_deterministic_remove("Xcode", &file, None).unwrap();
 
         assert!(outcome.is_some());
         assert!(!fs::read_to_string(&file).unwrap().contains("\"Xcode\""));
@@ -524,9 +414,19 @@ mod tests {
         let file = tmp.path().join("custom.nix");
         fs::write(&file, "{ }\n").unwrap();
 
-        let outcome = try_deterministic_remove("ripgrep", &file, None);
+        let outcome = try_deterministic_remove("ripgrep", &file, None).unwrap();
 
         assert!(outcome.is_none());
+    }
+
+    #[test]
+    fn deterministic_remove_propagates_file_errors() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("missing.nix");
+
+        let error = try_deterministic_remove("ripgrep", &missing, None).unwrap_err();
+
+        assert!(error.to_string().contains("cannot read"));
     }
 
     #[test]
@@ -544,8 +444,8 @@ mod tests {
         )
         .unwrap();
 
-        // Without manifest: filename doesn't match, so only NixManifest tried → no change.
-        let outcome_no_manifest = try_deterministic_remove("htop", &file, None);
+        // Without manifest: filename doesn't match, so only NixPackages is tried.
+        let outcome_no_manifest = try_deterministic_remove("htop", &file, None).unwrap();
         assert!(outcome_no_manifest.is_none());
 
         // Restore file content after failed attempt.
@@ -559,7 +459,7 @@ mod tests {
         )
         .unwrap();
 
-        // With manifest: slot says HomebrewList → HomebrewManifest insertion mode used.
+        // With manifest: the HomebrewList edit shape is tried first.
         let manifest = Manifest {
             schema_version: 1,
             platform: crate::domain::manifest::PlatformConfig {
@@ -581,7 +481,8 @@ mod tests {
             overlays: HashMap::default(),
         };
 
-        let outcome_with_manifest = try_deterministic_remove("htop", &file, Some(&manifest));
+        let outcome_with_manifest =
+            try_deterministic_remove("htop", &file, Some(&manifest)).unwrap();
         assert!(outcome_with_manifest.is_some());
         assert!(!fs::read_to_string(&file).unwrap().contains("\"htop\""));
     }

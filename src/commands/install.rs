@@ -10,9 +10,7 @@ use crate::commands::shared::{
 };
 use crate::commands::system::cmd_rebuild_with_command;
 use crate::domain::location::PackageLocation;
-use crate::domain::plan::{
-    InsertionMode, InstallPlan, build_install_plan, nix_manifest_candidates,
-};
+use crate::domain::plan::{EditSpec, InstallPlan, build_install_plan, nix_manifest_candidates};
 use crate::domain::source::{
     ExplicitSourceTarget, PackageSource, SourcePreferences, SourceResult, detect_language_package,
 };
@@ -21,7 +19,9 @@ use crate::infra::ai_engine::{
     run_edit_with_callback, select_engine,
 };
 use crate::infra::cache::MultiSourceCache;
-use crate::infra::file_edit::{EditOutcome, analyse_manifest_for_preview, apply_edit};
+use crate::infra::file_edit::{
+    EditOutcome, analyse_manifest_for_preview, insert_edit, is_unsupported_edit_shape,
+};
 use crate::infra::finder::{find_first_package, find_package};
 use crate::infra::flake_input::{FlakeInputEdit, add_flake_input};
 use crate::infra::package_query::{PackageQueryReport, query_package, query_packages};
@@ -225,7 +225,7 @@ fn prepare_install_phase(
     engine: &dyn AiEngine,
     routing_context: &InstallRoutingContext,
 ) -> Option<PreparedInstall> {
-    let mut plan = match build_install_plan(&source_result, &ctx.config_files) {
+    let mut plan = match build_install_plan(source_result, &ctx.config_files) {
         Ok(plan) => plan,
         Err(err) => {
             ctx.printer.error(&format!("{package}: {err}"));
@@ -240,7 +240,7 @@ fn prepare_install_phase(
     }
 
     ctx.printer
-        .action(&format!("Routing {}", source_result.name));
+        .action(&format!("Routing {}", plan.source_result.name));
 
     if let Some(ref warning) = plan.routing_warning {
         ctx.printer.warn(warning);
@@ -253,12 +253,7 @@ fn prepare_install_phase(
         .display()
         .to_string();
 
-    Some(PreparedInstall {
-        source_name: source_result.name,
-        source_description: source_result.description,
-        plan,
-        rel_target,
-    })
+    Some(PreparedInstall { plan, rel_target })
 }
 
 fn apply_install_phase(
@@ -269,25 +264,25 @@ fn apply_install_phase(
 ) -> bool {
     if args.dry_run() {
         render_dry_run_install(prepared, ctx);
-        maybe_setup_service(&prepared.source_name, args, ctx);
+        maybe_setup_service(&prepared.plan.source_result.name, args, ctx);
         return true;
     }
 
     let installed = execute_edit(&prepared.plan, &prepared.rel_target, ctx, engine);
     if installed {
-        maybe_setup_service(&prepared.source_name, args, ctx);
+        maybe_setup_service(&prepared.plan.source_result.name, args, ctx);
     }
     installed
 }
 
 fn render_dry_run_install(prepared: &PreparedInstall, ctx: &AppContext) {
-    if prepared.plan.insertion_mode == InsertionMode::NixManifest
+    if matches!(&prepared.plan.edit, EditSpec::NixPackages { .. })
         && let Ok(content) = fs::read_to_string(&prepared.plan.target_file)
-        && let Some(info) = analyse_manifest_for_preview(&content, &prepared.plan.package_token)
+        && let Some(info) = analyse_manifest_for_preview(&content, prepared.plan.edit.token())
     {
         let simulated_line = build_simulated_preview_line(
-            &prepared.plan.package_token,
-            &prepared.source_description,
+            prepared.plan.edit.token(),
+            &prepared.plan.source_result.description,
             info.comment_column,
         );
         show_dry_run_preview(
@@ -299,16 +294,22 @@ fn render_dry_run_install(prepared: &PreparedInstall, ctx: &AppContext) {
     }
 
     println!();
-    if let Some(language_info) = &prepared.plan.language_info {
-        ctx.printer.success(&format!(
-            "Would add '{}' to {}.withPackages in {}",
-            language_info.bare_name, language_info.runtime, prepared.rel_target
-        ));
-    } else {
-        ctx.printer.success(&format!(
-            "Would add {} to {}",
-            prepared.plan.package_token, prepared.rel_target
-        ));
+    match &prepared.plan.edit {
+        EditSpec::WithPackages {
+            member, runtime, ..
+        } => {
+            ctx.printer.success(&format!(
+                "Would add '{member}' to {runtime}.withPackages in {}",
+                prepared.rel_target
+            ));
+        }
+        _ => {
+            ctx.printer.success(&format!(
+                "Would add {} to {}",
+                prepared.plan.edit.token(),
+                prepared.rel_target
+            ));
+        }
     }
 }
 
@@ -319,7 +320,7 @@ fn refine_routing(
     routing_context: &InstallRoutingContext,
     ctx: &AppContext,
 ) {
-    if plan.routing_warning.is_none() || plan.insertion_mode != InsertionMode::NixManifest {
+    if plan.routing_warning.is_none() || !matches!(&plan.edit, EditSpec::NixPackages { .. }) {
         return;
     }
 
@@ -331,7 +332,7 @@ fn refine_routing(
         .to_string();
 
     let decision = engine.route_package(
-        &plan.package_token,
+        plan.edit.token(),
         &plan.source_result.description,
         routing_context.route_context(),
         &routing_context.candidates,
@@ -409,8 +410,12 @@ fn execute_edit(
     let before_diff = git_diff(&ctx.repo_root);
     let mut deterministic: Option<anyhow::Result<EditOutcome>> = None;
 
-    let execution =
-        run_edit_with_callback(engine, &prompt, &ctx.repo_root, || match apply_edit(plan) {
+    let execution = run_edit_with_callback(engine, &prompt, &ctx.repo_root, || {
+        match insert_edit(
+            &plan.target_file,
+            &plan.edit,
+            &plan.source_result.description,
+        ) {
             Ok(outcome) => {
                 deterministic = Some(Ok(outcome));
                 Some(CommandOutcome {
@@ -427,7 +432,8 @@ fn execute_edit(
                     output: message,
                 })
             }
-        });
+        }
+    });
 
     if let Some(result) = deterministic {
         return report_deterministic_edit(result, plan, rel_target, ctx);
@@ -446,15 +452,15 @@ fn execute_edit(
         println!();
         ctx.printer.success(&format!(
             "'{}' already present in {rel_target}",
-            plan.package_token,
+            plan.edit.token(),
         ));
         return true;
     }
 
     println!();
     ctx.printer
-        .success(&format!("Added '{}' to {rel_target}", plan.package_token));
-    if let Ok(Some(location)) = find_package(&plan.package_token, &ctx.repo_root)
+        .success(&format!("Added '{}' to {rel_target}", plan.edit.token()));
+    if let Ok(Some(location)) = find_package(plan.edit.token(), &ctx.repo_root)
         && let Some(line) = location.line()
     {
         show_snippet(location.path(), line, 2, SnippetMode::Add, false);
@@ -466,12 +472,6 @@ fn should_fallback_to_ai(engine: &dyn AiEngine, err: &anyhow::Error) -> bool {
     engine.name() == "claude" && is_unsupported_edit_shape(err)
 }
 
-fn is_unsupported_edit_shape(err: &anyhow::Error) -> bool {
-    let message = err.to_string();
-    message.starts_with("no ")
-        && (message.contains("list found") || message.contains("block found"))
-}
-
 fn report_deterministic_edit(
     result: anyhow::Result<EditOutcome>,
     plan: &InstallPlan,
@@ -479,20 +479,19 @@ fn report_deterministic_edit(
     ctx: &AppContext,
 ) -> bool {
     match result {
-        Ok(outcome) => {
+        Ok(EditOutcome::Changed { line_number }) => {
             println!();
-            if outcome.file_changed {
-                ctx.printer
-                    .success(&format!("Added '{}' to {rel_target}", plan.package_token));
-                if let Some(line) = outcome.line_number {
-                    show_snippet(&plan.target_file, line, 2, SnippetMode::Add, false);
-                }
-            } else {
-                ctx.printer.success(&format!(
-                    "'{}' already present in {rel_target}",
-                    plan.package_token,
-                ));
-            }
+            ctx.printer
+                .success(&format!("Added '{}' to {rel_target}", plan.edit.token()));
+            show_snippet(&plan.target_file, line_number, 2, SnippetMode::Add, false);
+            true
+        }
+        Ok(EditOutcome::Unchanged) => {
+            println!();
+            ctx.printer.success(&format!(
+                "'{}' already present in {rel_target}",
+                plan.edit.token(),
+            ));
             true
         }
         Err(err) => {
@@ -613,8 +612,6 @@ struct ResolvedInstall {
 }
 
 struct PreparedInstall {
-    source_name: String,
-    source_description: String,
     plan: InstallPlan,
     rel_target: String,
 }
@@ -1155,7 +1152,7 @@ fn lookup_names(candidate: &SourceResult) -> Vec<String> {
 
     if let Some(attr) = candidate.attr.as_deref() {
         push_unique(&mut names, attr.to_string());
-        if let Some((bare, _runtime, _method)) = detect_language_package(attr) {
+        if let Some((bare, _runtime)) = detect_language_package(attr) {
             push_unique(&mut names, bare.to_string());
         }
     }

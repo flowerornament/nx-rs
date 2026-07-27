@@ -540,7 +540,7 @@ fn search_explicit_source(name: &str, prefs: &SourcePreferences) -> Option<Vec<S
 }
 
 fn search_language_override(name: &str, warn: bool) -> Option<Vec<SourceResult>> {
-    let (_bare, runtime, _method) = detect_language_package(name)?;
+    let (_bare, runtime) = detect_language_package(name)?;
 
     let (valid, reason) = validate_language_override(name);
     if !valid {

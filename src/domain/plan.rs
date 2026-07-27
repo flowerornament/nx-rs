@@ -7,35 +7,70 @@ use super::source::{PackageSource, SourceResult, detect_language_package};
 
 // --- Types
 
-/// How a package should be inserted into a config file.
+/// Complete shape of a deterministic config-file edit.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InsertionMode {
+pub enum EditSpec {
     /// Bare identifier into `home.packages = with pkgs; [ ... ]`
-    NixManifest,
-    /// Bare name into a `runtime.withPackages (ps: ...)` block
-    LanguageWithPackages,
+    NixPackages { token: String },
+    /// Bare package name inside a `runtime.withPackages (ps: ...)` block.
+    WithPackages {
+        token: String,
+        member: String,
+        runtime: String,
+    },
     /// Double-quoted string into a homebrew `[ "pkg" ... ]` list
-    HomebrewManifest,
+    HomebrewList { token: String },
     /// `"Name" = <id>;` into `masApps = { ... }`
-    MasApps,
+    MasApps { token: String },
 }
 
-/// Language-specific routing metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LanguageInfo {
-    pub bare_name: String,
-    pub runtime: String,
-    pub method: String,
+impl EditSpec {
+    pub fn nix_packages(token: impl Into<String>) -> Self {
+        Self::NixPackages {
+            token: token.into(),
+        }
+    }
+
+    pub fn with_packages(
+        token: impl Into<String>,
+        member: impl Into<String>,
+        runtime: impl Into<String>,
+    ) -> Self {
+        Self::WithPackages {
+            token: token.into(),
+            member: member.into(),
+            runtime: runtime.into(),
+        }
+    }
+
+    pub fn homebrew_list(token: impl Into<String>) -> Self {
+        Self::HomebrewList {
+            token: token.into(),
+        }
+    }
+
+    pub fn mas_apps(token: impl Into<String>) -> Self {
+        Self::MasApps {
+            token: token.into(),
+        }
+    }
+
+    pub fn token(&self) -> &str {
+        match self {
+            Self::NixPackages { token }
+            | Self::WithPackages { token, .. }
+            | Self::HomebrewList { token }
+            | Self::MasApps { token } => token,
+        }
+    }
 }
 
 /// A fully-resolved install decision consumed by the editing engine.
 #[derive(Debug, Clone)]
 pub struct InstallPlan {
     pub source_result: SourceResult,
-    pub package_token: String,
     pub target_file: PathBuf,
-    pub insertion_mode: InsertionMode,
-    pub language_info: Option<LanguageInfo>,
+    pub edit: EditSpec,
     pub routing_warning: Option<String>,
 }
 
@@ -43,10 +78,10 @@ pub struct InstallPlan {
 
 /// Build a deterministic install plan from a source result.
 ///
-/// Routes to the correct target file and insertion mode based on source type,
+/// Routes to the correct target file and edit shape based on source type,
 /// language detection, and MCP tool patterns. General nix packages fall back
 /// to `cli.nix` with a routing warning; the command layer refines via AI engine.
-pub fn build_install_plan(sr: &SourceResult, config: &ConfigFiles) -> Result<InstallPlan> {
+pub fn build_install_plan(sr: SourceResult, config: &ConfigFiles) -> Result<InstallPlan> {
     // Safety: nix sources with missing attr → hard error
     if sr.source.requires_attr() && sr.attr.is_none() {
         bail!(
@@ -56,56 +91,51 @@ pub fn build_install_plan(sr: &SourceResult, config: &ConfigFiles) -> Result<Ins
         );
     }
 
-    let package_token = install_name(sr);
-    let language_info =
-        detect_language_package(&package_token).map(|(bare, runtime, method)| LanguageInfo {
-            bare_name: bare.to_string(),
-            runtime: runtime.to_string(),
-            method: method.to_string(),
-        });
-
-    let (target_file, insertion_mode, routing_warning) = match sr.source {
+    let package_token = install_name(&sr);
+    let (target_file, edit, routing_warning) = match sr.source {
         PackageSource::Cask => (
             config.homebrew_casks(),
-            InsertionMode::HomebrewManifest,
+            EditSpec::homebrew_list(&package_token),
             None,
         ),
         PackageSource::Homebrew => (
             config.homebrew_brews(),
-            InsertionMode::HomebrewManifest,
+            EditSpec::homebrew_list(&package_token),
             None,
         ),
-        PackageSource::Mas => (config.darwin(), InsertionMode::MasApps, None),
-        _ if language_info.is_some() => {
-            let lang = language_info.as_ref().unwrap();
-            let target = config
-                .with_packages_for(&lang.runtime)
-                .filter(|p| p.exists())
-                .unwrap_or_else(|| config.languages());
-            (target, InsertionMode::LanguageWithPackages, None)
-        }
+        PackageSource::Mas => (config.darwin(), EditSpec::mas_apps(&package_token), None),
         _ => {
-            // Deterministic fallback: MCP tools and general nix → cli.nix
-            let target = config.packages();
-            let warning = if is_mcp_tool(&package_token) {
-                None
+            if let Some((member, runtime)) = detect_language_package(&package_token) {
+                let target = config
+                    .with_packages_for(runtime)
+                    .filter(|p| p.exists())
+                    .unwrap_or_else(|| config.languages());
+                (
+                    target,
+                    EditSpec::with_packages(&package_token, member, runtime),
+                    None,
+                )
             } else {
-                Some(format!(
-                    "routed '{}' to fallback {}; needs AI refinement",
-                    package_token,
-                    target.display(),
-                ))
-            };
-            (target, InsertionMode::NixManifest, warning)
+                // Deterministic fallback: MCP tools and general nix → cli.nix
+                let target = config.packages();
+                let warning = if is_mcp_tool(&package_token) {
+                    None
+                } else {
+                    Some(format!(
+                        "routed '{}' to fallback {}; needs AI refinement",
+                        package_token,
+                        target.display(),
+                    ))
+                };
+                (target, EditSpec::nix_packages(&package_token), warning)
+            }
         }
     };
 
     Ok(InstallPlan {
-        source_result: sr.clone(),
-        package_token,
+        source_result: sr,
         target_file,
-        insertion_mode,
-        language_info,
+        edit,
         routing_warning,
     })
 }
@@ -212,12 +242,9 @@ mod tests {
     #[test]
     fn route_cask_to_casks_file() {
         let (_tmp, config) = test_config();
-        let plan = build_install_plan(
-            &sr("firefox", PackageSource::Cask, Some("firefox")),
-            &config,
-        )
-        .unwrap();
-        assert_eq!(plan.insertion_mode, InsertionMode::HomebrewManifest);
+        let plan = build_install_plan(sr("firefox", PackageSource::Cask, Some("firefox")), &config)
+            .unwrap();
+        assert_eq!(plan.edit, EditSpec::homebrew_list("firefox"));
         assert!(plan.target_file.ends_with("packages/homebrew/casks.nix"));
         assert_eq!(plan.source_result.source, PackageSource::Cask);
     }
@@ -227,9 +254,9 @@ mod tests {
     #[test]
     fn route_brew_to_brews_file() {
         let (_tmp, config) = test_config();
-        let plan = build_install_plan(&sr("htop", PackageSource::Homebrew, Some("htop")), &config)
-            .unwrap();
-        assert_eq!(plan.insertion_mode, InsertionMode::HomebrewManifest);
+        let plan =
+            build_install_plan(sr("htop", PackageSource::Homebrew, Some("htop")), &config).unwrap();
+        assert_eq!(plan.edit, EditSpec::homebrew_list("htop"));
         assert!(plan.target_file.ends_with("packages/homebrew/brews.nix"));
         assert_eq!(plan.source_result.source, PackageSource::Homebrew);
     }
@@ -240,8 +267,8 @@ mod tests {
     fn route_mas_to_darwin() {
         let (_tmp, config) = test_config();
         let plan =
-            build_install_plan(&sr("Xcode", PackageSource::Mas, Some("Xcode")), &config).unwrap();
-        assert_eq!(plan.insertion_mode, InsertionMode::MasApps);
+            build_install_plan(sr("Xcode", PackageSource::Mas, Some("Xcode")), &config).unwrap();
+        assert_eq!(plan.edit, EditSpec::mas_apps("Xcode"));
         assert!(plan.target_file.ends_with("system/darwin.nix"));
         assert_eq!(plan.source_result.source, PackageSource::Mas);
     }
@@ -252,23 +279,23 @@ mod tests {
     fn route_python_package_to_languages() {
         let (_tmp, config) = test_config();
         let result = sr("pyyaml", PackageSource::Nxs, Some("python3Packages.pyyaml"));
-        let plan = build_install_plan(&result, &config).unwrap();
-        assert_eq!(plan.insertion_mode, InsertionMode::LanguageWithPackages);
+        let plan = build_install_plan(result, &config).unwrap();
+        assert_eq!(
+            plan.edit,
+            EditSpec::with_packages("python3Packages.pyyaml", "pyyaml", "python3")
+        );
         assert!(plan.target_file.ends_with("packages/nix/languages.nix"));
-        let lang = plan.language_info.as_ref().unwrap();
-        assert_eq!(lang.bare_name, "pyyaml");
-        assert_eq!(lang.runtime, "python3");
     }
 
     #[test]
     fn route_lua_package_to_languages() {
         let (_tmp, config) = test_config();
         let result = sr("lpeg", PackageSource::Nxs, Some("luaPackages.lpeg"));
-        let plan = build_install_plan(&result, &config).unwrap();
-        assert_eq!(plan.insertion_mode, InsertionMode::LanguageWithPackages);
-        let lang = plan.language_info.as_ref().unwrap();
-        assert_eq!(lang.bare_name, "lpeg");
-        assert_eq!(lang.runtime, "lua5_4");
+        let plan = build_install_plan(result, &config).unwrap();
+        assert_eq!(
+            plan.edit,
+            EditSpec::with_packages("luaPackages.lpeg", "lpeg", "lua5_4")
+        );
     }
 
     // --- Routing: MCP tool → cli.nix (no warning)
@@ -277,8 +304,8 @@ mod tests {
     fn route_mcp_tool_to_cli_no_warning() {
         let (_tmp, config) = test_config();
         let result = sr("server-mcp", PackageSource::Nxs, Some("server-mcp"));
-        let plan = build_install_plan(&result, &config).unwrap();
-        assert_eq!(plan.insertion_mode, InsertionMode::NixManifest);
+        let plan = build_install_plan(result, &config).unwrap();
+        assert_eq!(plan.edit, EditSpec::nix_packages("server-mcp"));
         assert!(plan.target_file.ends_with("packages/nix/cli.nix"));
         assert!(plan.routing_warning.is_none());
     }
@@ -287,7 +314,7 @@ mod tests {
     fn route_mcp_prefix_to_cli_no_warning() {
         let (_tmp, config) = test_config();
         let result = sr("mcp-server-git", PackageSource::Nxs, Some("mcp-server-git"));
-        let plan = build_install_plan(&result, &config).unwrap();
+        let plan = build_install_plan(result, &config).unwrap();
         assert!(plan.routing_warning.is_none());
     }
 
@@ -297,8 +324,8 @@ mod tests {
     fn route_general_nix_to_cli_with_warning() {
         let (_tmp, config) = test_config();
         let result = sr("ripgrep", PackageSource::Nxs, Some("ripgrep"));
-        let plan = build_install_plan(&result, &config).unwrap();
-        assert_eq!(plan.insertion_mode, InsertionMode::NixManifest);
+        let plan = build_install_plan(result, &config).unwrap();
+        assert_eq!(plan.edit, EditSpec::nix_packages("ripgrep"));
         assert!(plan.target_file.ends_with("packages/nix/cli.nix"));
         assert!(plan.routing_warning.is_some());
         assert!(plan.routing_warning.as_ref().unwrap().contains("fallback"));
@@ -310,39 +337,39 @@ mod tests {
     fn safety_nxs_missing_attr_errors() {
         let (_tmp, config) = test_config();
         let result = sr("ripgrep", PackageSource::Nxs, None);
-        assert!(build_install_plan(&result, &config).is_err());
+        assert!(build_install_plan(result, &config).is_err());
     }
 
     #[test]
     fn safety_nur_missing_attr_errors() {
         let (_tmp, config) = test_config();
         let result = sr("pkg", PackageSource::Nur, None);
-        assert!(build_install_plan(&result, &config).is_err());
+        assert!(build_install_plan(result, &config).is_err());
     }
 
     #[test]
     fn safety_flake_input_missing_attr_errors() {
         let (_tmp, config) = test_config();
         let result = sr("rust", PackageSource::FlakeInput, None);
-        assert!(build_install_plan(&result, &config).is_err());
+        assert!(build_install_plan(result, &config).is_err());
     }
 
-    // --- package_token resolution
+    // --- edit token resolution
 
     #[test]
-    fn package_token_prefers_attr() {
+    fn edit_token_prefers_attr() {
         let (_tmp, config) = test_config();
         let result = sr("rg", PackageSource::Nxs, Some("ripgrep"));
-        let plan = build_install_plan(&result, &config).unwrap();
-        assert_eq!(plan.package_token, "ripgrep");
+        let plan = build_install_plan(result, &config).unwrap();
+        assert_eq!(plan.edit.token(), "ripgrep");
     }
 
     #[test]
-    fn package_token_falls_back_to_name() {
+    fn edit_token_falls_back_to_name() {
         let (_tmp, config) = test_config();
         let result = sr("firefox", PackageSource::Cask, None);
-        let plan = build_install_plan(&result, &config).unwrap();
-        assert_eq!(plan.package_token, "firefox");
+        let plan = build_install_plan(result, &config).unwrap();
+        assert_eq!(plan.edit.token(), "firefox");
     }
 
     // --- is_mcp_tool

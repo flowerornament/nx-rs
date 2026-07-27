@@ -611,6 +611,7 @@ mod tests {
                 available: "60Gi".to_string(),
                 capacity: "40%".to_string(),
                 mounted_on: "/nix".to_string(),
+                available_bytes: 60 * 1024 * 1024 * 1024,
             },
         };
         let policy = RetentionPolicy::all(10, true);

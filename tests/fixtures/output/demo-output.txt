@@ -62,6 +62,9 @@ error: flake evaluation failed
 x Flake check failed
 
   $ nx upgrade
+> Checking Determinate Nix
++ Determinate Nix 3.21.8 is current
+
 > Updating flake inputs
 [nix-native:bar] flake inputs complete
 + All flake inputs up to date

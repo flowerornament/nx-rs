@@ -55,6 +55,8 @@ pub struct DiskUsageSnapshot {
     pub available: String,
     pub capacity: String,
     pub mounted_on: String,
+    #[serde(skip)]
+    pub available_bytes: u64,
 }
 
 impl GenerationRecord {

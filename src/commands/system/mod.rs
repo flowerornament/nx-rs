@@ -1,6 +1,7 @@
 mod cache_preflight;
 mod fixed_output_hash;
 mod lint;
+mod nix_diagnostics;
 mod rebuild;
 mod test;
 mod undo;

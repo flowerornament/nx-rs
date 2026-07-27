@@ -22,6 +22,7 @@ pub fn install_stubs(stub_dir: &Path) -> Result<(), Box<dyn Error>> {
     for program in [
         "git",
         "nix",
+        "determinate-nixd",
         "gh",
         "brew",
         "just",
@@ -158,6 +159,11 @@ case "$program" in
     exit 0
     ;;
   nix)
+    if [ "${1:-}" = "--version" ]; then
+      echo "nix (Determinate Nix 3.21.8) 2.34.8"
+      exit 0
+    fi
+
     previous=""
     for arg in "$@"; do
       if [ "$previous" = "--log-format" ]; then
@@ -185,7 +191,7 @@ case "$program" in
       fi
       if [ "$mode" = "upgrade_lock_unreadable_post" ]; then
         printf '\377' > flake.lock
-      elif [ "$mode" = "upgrade_flake_changed" ] || [ "$mode" = "upgrade_prefetch_cache_corruption" ] || [ "$mode" = "upgrade_hash_repair" ]; then
+      elif [ "$mode" = "upgrade_flake_changed" ] || [ "$mode" = "upgrade_hash_repair" ]; then
         printf '%s' "${NX_SYSTEM_IT_UPGRADE_NEW_LOCK:?NX_SYSTEM_IT_UPGRADE_NEW_LOCK must be set}" > flake.lock
       fi
       if [ "$output_demo" = "1" ]; then
@@ -197,13 +203,6 @@ case "$program" in
     fi
 
     if [ "${1:-}" = "flake" ] && [ "${2:-}" = "prefetch" ]; then
-      if [ "$mode" = "upgrade_prefetch_cache_corruption" ]; then
-        marker="${HOME}/.nx-system-it-prefetch-cache-corruption-once"
-        if first_attempt "$marker"; then
-          echo "error: looking up file '«github:NixOS/nixpkgs/bbbbbbb»/README.md': object not found - no match for id (abc123)" >&2
-          exit 1
-        fi
-      fi
       echo '{"storePath":"/nix/store/source","hash":"sha256-test"}'
       exit 0
     fi
@@ -280,6 +279,24 @@ case "$program" in
     fi
 
     echo "stub nix unsupported: $*" >&2
+    exit 1
+    ;;
+  determinate-nixd)
+    if [ "${1:-}" = "version" ]; then
+      echo "Determinate Nixd daemon version: 3.21.8"
+      echo "Determinate Nixd client version: 3.21.8"
+      if [ "$mode" = "determinate_stale" ]; then
+        echo "Latest version: 3.22.0"
+      else
+        echo "You are running the latest version of Determinate Nix."
+      fi
+      exit 0
+    fi
+    if [ "${1:-}" = "status" ]; then
+      echo "Authentication: logged-out"
+      exit 0
+    fi
+    echo "stub determinate-nixd unsupported: $*" >&2
     exit 1
     ;;
   gh)
@@ -398,14 +415,6 @@ case "$program" in
       fi
       echo "sudo: a password is required" >&2
       exit 1
-    fi
-
-    # Handle bash -lc wrapper (ulimit + exec darwin-rebuild)
-    if [ "${1:-}" = "bash" ] && [ "${2:-}" = "-lc" ]; then
-      cmd="${3:-}"
-      cmd="$(printf '%s' "$cmd" | sed "s|/nix/var/nix/profiles/system/sw/bin/darwin-rebuild|${NX_SYSTEM_IT_DARWIN_REBUILD:?}|g")"
-      bash -c "$cmd"
-      exit $?
     fi
 
     if [ "${1:-}" = "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild" ]; then
@@ -552,9 +561,9 @@ case "$program" in
     exit 1
     ;;
   df)
-    if [ "${1:-}" = "-h" ] && [ "${2:-}" = "/nix" ]; then
-      printf '%s\n' "${NX_SYSTEM_IT_DF_OUTPUT:-Filesystem      Size    Used   Avail Capacity Mounted on
-/dev/disk-test  100Gi   40Gi   60Gi   40% /nix}"
+    if [ "${1:-}" = "-k" ] && [ "${2:-}" = "/nix" ]; then
+      printf '%s\n' "${NX_SYSTEM_IT_DF_OUTPUT:-Filesystem 1024-blocks Used Available Capacity Mounted on
+/dev/disk-test 104857600 41943040 62914560 40% /nix}"
       exit 0
     fi
 

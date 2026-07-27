@@ -40,7 +40,7 @@ fn generations_plan_surfaces_stubbed_home_manager_prunes() -> Result<(), Box<dyn
         .env("PATH", prepend_path(&stub_dir))
         .env("NX_SYSTEM_IT_LOG", &log_path)
         .env("NX_SYSTEM_IT_HOME_MANAGER_GENERATIONS", "2026-04-02 13:00 : id 6 -> /nix/store/old-home-manager-generation\n2026-04-02 14:00 : id 7 -> /nix/store/current-home-manager-generation (current)")
-        .env("NX_SYSTEM_IT_DF_OUTPUT", "Filesystem      Size    Used   Avail Capacity Mounted on\n/dev/disk-test  100Gi   40Gi   60Gi   40% /nix")
+        .env("NX_SYSTEM_IT_DF_OUTPUT", "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/disk-test 104857600 41943040 62914560 40% /nix")
         .env("HOME", home_dir.path())
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
@@ -67,7 +67,7 @@ fn generations_plan_surfaces_stubbed_home_manager_prunes() -> Result<(), Box<dyn
         invocations
             .iter()
             .any(|call| call.program == "df"
-                && call.args == vec!["-h".to_string(), "/nix".to_string()]),
+                && call.args == vec!["-k".to_string(), "/nix".to_string()]),
         "expected df call, got {invocations:?}"
     );
 
@@ -93,7 +93,7 @@ fn generations_prune_runs_stubbed_home_manager_removal() -> Result<(), Box<dyn E
         .env("PATH", prepend_path(&stub_dir))
         .env("NX_SYSTEM_IT_LOG", &log_path)
         .env("NX_SYSTEM_IT_HOME_MANAGER_GENERATIONS", "2026-04-02 13:00 : id 6 -> /nix/store/old-home-manager-generation\n2026-04-02 14:00 : id 7 -> /nix/store/current-home-manager-generation (current)")
-        .env("NX_SYSTEM_IT_DF_OUTPUT", "Filesystem      Size    Used   Avail Capacity Mounted on\n/dev/disk-test  100Gi   40Gi   60Gi   40% /nix")
+        .env("NX_SYSTEM_IT_DF_OUTPUT", "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/disk-test 104857600 41943040 62914560 40% /nix")
         .env("HOME", home_dir.path())
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")

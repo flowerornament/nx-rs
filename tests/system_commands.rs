@@ -346,22 +346,8 @@ const SPLIT_REBUILD_ACTIVATE_CALL: ExpectedCall = ExpectedCall::new(
     ],
 );
 
-const ROOT_GIT_CACHE_CLEAR_CALL: ExpectedCall = ExpectedCall::new(
-    "sudo",
-    EXPECTED_CWD_REPO_ROOT,
-    &["-n", "rm", "-rf", "/var/root/.cache/nix/gitv3"],
-);
-
-const ROOT_FETCHER_CACHE_CLEAR_CALL: ExpectedCall = ExpectedCall::new(
-    "sudo",
-    EXPECTED_CWD_REPO_ROOT,
-    &[
-        "-n",
-        "rm",
-        "-f",
-        "/var/root/.cache/nix/fetcher-cache-v4.sqlite",
-    ],
-);
+const NIX_VERSION_CALL: ExpectedCall =
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["--version"]);
 
 const DARWIN_REBUILD_SUDO_SWITCH_CALL: ExpectedCall = ExpectedCall::new(
     "sudo",
@@ -452,41 +438,28 @@ fn split_rebuild_run_current_legacy_fallback_calls() -> Vec<ExpectedCall> {
     calls
 }
 
-fn split_rebuild_cache_retry_calls() -> Vec<ExpectedCall> {
-    let mut calls = Vec::with_capacity(SPLIT_REBUILD_BUILD_CALLS.len() + 4);
+fn split_build_cache_failure_calls() -> Vec<ExpectedCall> {
+    let mut calls = Vec::with_capacity(SPLIT_REBUILD_BUILD_CALLS.len() + 1);
     calls.extend_from_slice(SPLIT_REBUILD_BUILD_CALLS);
-    calls.push(SPLIT_REBUILD_NIX_BUILD_CALL);
-    calls.push(SPLIT_REBUILD_SUDO_CHECK_CALL);
-    calls.push(SPLIT_REBUILD_PROFILE_SET_CALL);
-    calls.push(SPLIT_REBUILD_ACTIVATE_CALL);
+    calls.push(NIX_VERSION_CALL);
     calls
 }
 
-fn split_profile_set_cache_retry_calls() -> Vec<ExpectedCall> {
-    let mut calls = Vec::with_capacity(SPLIT_REBUILD_BUILD_CALLS.len() + 7);
-    calls.extend_from_slice(SPLIT_REBUILD_BUILD_CALLS);
-    calls.push(SPLIT_REBUILD_SUDO_CHECK_CALL);
-    calls.push(SPLIT_REBUILD_PROFILE_SET_CALL);
-    calls.push(ROOT_GIT_CACHE_CLEAR_CALL);
-    calls.push(ROOT_FETCHER_CACHE_CLEAR_CALL);
-    calls.push(SPLIT_REBUILD_PROFILE_SET_CALL);
-    calls.push(SPLIT_REBUILD_ACTIVATE_CALL);
+fn split_profile_cache_failure_calls() -> Vec<ExpectedCall> {
+    let mut calls = split_profile_set_failure_calls();
+    calls.push(NIX_VERSION_CALL);
     calls
 }
 
-fn split_activation_cache_retry_calls() -> Vec<ExpectedCall> {
+fn split_activation_cache_failure_calls() -> Vec<ExpectedCall> {
     let mut calls = split_rebuild_calls(false);
-    calls.push(ROOT_GIT_CACHE_CLEAR_CALL);
-    calls.push(ROOT_FETCHER_CACHE_CLEAR_CALL);
-    calls.push(SPLIT_REBUILD_ACTIVATE_CALL);
+    calls.push(NIX_VERSION_CALL);
     calls
 }
 
-fn darwin_rebuild_cache_retry_calls() -> Vec<ExpectedCall> {
+fn darwin_rebuild_cache_failure_calls() -> Vec<ExpectedCall> {
     let mut calls = split_rebuild_legacy_fallback_calls();
-    calls.push(ROOT_GIT_CACHE_CLEAR_CALL);
-    calls.push(ROOT_FETCHER_CACHE_CLEAR_CALL);
-    calls.extend([DARWIN_REBUILD_SUDO_SWITCH_CALL, DARWIN_REBUILD_SWITCH_CALL]);
+    calls.push(NIX_VERSION_CALL);
     calls
 }
 
@@ -960,65 +933,74 @@ fn split_darwin_rebuild_preserves_run_current_passwordless_legacy_sudo()
 }
 
 #[test]
-fn split_darwin_rebuild_retries_source_cache_corruption() -> Result<(), Box<dyn Error>> {
-    assert_source_cache_recovery(
+fn split_darwin_rebuild_reports_user_source_cache_corruption() -> Result<(), Box<dyn Error>> {
+    assert_source_cache_diagnostic(
         "split_rebuild_cache_corruption",
         "split_build_cache_corruption",
-        &split_rebuild_cache_retry_calls(),
+        &split_build_cache_failure_calls(),
+        "$HOME/.cache/nix/tarball-cache-v2",
     )
 }
 
 #[test]
-fn split_darwin_rebuild_retries_profile_source_cache_corruption() -> Result<(), Box<dyn Error>> {
-    assert_source_cache_recovery(
+fn split_darwin_rebuild_reports_profile_source_cache_corruption() -> Result<(), Box<dyn Error>> {
+    assert_source_cache_diagnostic(
         "split_profile_cache_corruption",
         "split_profile_set_cache_corruption",
-        &split_profile_set_cache_retry_calls(),
+        &split_profile_cache_failure_calls(),
+        "/var/root/.cache/nix/tarball-cache-v2",
     )
 }
 
 #[test]
-fn split_darwin_rebuild_retries_activation_source_cache_corruption() -> Result<(), Box<dyn Error>> {
-    assert_source_cache_recovery(
+fn split_darwin_rebuild_reports_activation_source_cache_corruption() -> Result<(), Box<dyn Error>> {
+    assert_source_cache_diagnostic(
         "split_activation_cache_corruption",
         "split_activate_cache_corruption",
-        &split_activation_cache_retry_calls(),
+        &split_activation_cache_failure_calls(),
+        "/var/root/.cache/nix/tarball-cache-v2",
     )
 }
 
 #[test]
-fn darwin_rebuild_switch_retries_source_cache_corruption() -> Result<(), Box<dyn Error>> {
-    assert_source_cache_recovery(
+fn darwin_rebuild_switch_reports_source_cache_corruption() -> Result<(), Box<dyn Error>> {
+    assert_source_cache_diagnostic(
         "darwin_rebuild_switch_cache_corruption",
         "darwin_rebuild_cache_corruption",
-        &darwin_rebuild_cache_retry_calls(),
+        &darwin_rebuild_cache_failure_calls(),
+        "/var/root/.cache/nix/tarball-cache-v2",
     )
 }
 
-fn assert_source_cache_recovery(
+fn assert_source_cache_diagnostic(
     case_id: &str,
     mode: &str,
     expected_calls: &[ExpectedCall],
+    expected_cache_path: &str,
 ) -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
     let nx_bin = resolve_nx_bin(&workspace_root)?;
-    let RunResult { stdout, stderr, .. } = run_split_rebuild(
+    let RunResult { stdout, stderr, .. } = run_split_rebuild_with_expected_exit(
         &nx_bin,
         &repo_base,
         case_id,
         mode,
         &[("NX_SPLIT_DARWIN", "1")],
         expected_calls,
+        1,
     )?;
 
     assert!(
-        stdout.contains("Nix source cache corruption detected, clearing cache and retrying"),
-        "stdout missing cache-corruption retry warning\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        stdout.contains("Nix reported an inconsistent lazy-tree source cache")
+            && stdout.contains(expected_cache_path)
+            && stdout.contains("fetcher-cache-v4.sqlite-wal")
+            && stdout.contains("fetcher-cache-v4.sqlite-shm"),
+        "stdout missing source-cache diagnosis\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
-        stdout.contains("System rebuilt"),
-        "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        !stdout.contains("retry") && !stdout.contains("System rebuilt"),
+        "stdout claimed retry or success after an authoritative failure\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     Ok(())
 }

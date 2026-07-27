@@ -6,7 +6,12 @@ use crate::commands::context::AppContext;
 use crate::domain::drift::ManifestHealth;
 use crate::domain::routing::RoutingAudit;
 use crate::infra::cache::MultiSourceCache;
-use crate::infra::shell::command_path;
+use crate::infra::generations::snapshot_nix_disk_usage;
+use crate::infra::nix_runtime::{
+    DeterminateFreshness, InstalledNix, NixDistribution, detect_installed_nix,
+    determinate_version_status,
+};
+use crate::infra::shell::{command_path, first_nonempty_output, run_captured_command};
 use crate::output::printer::Printer;
 
 #[derive(Debug, Clone, Serialize)]
@@ -24,6 +29,21 @@ struct ToolCheck {
     path: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum AdvisoryStatus {
+    Healthy,
+    Warning,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdvisoryCheck {
+    name: String,
+    status: AdvisoryStatus,
+    detail: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct DoctorReport {
     repo_root: String,
@@ -33,6 +53,7 @@ struct DoctorReport {
     routing_ok: bool,
     routing_issue_count: usize,
     checks: Vec<DoctorCheck>,
+    substrate: Vec<AdvisoryCheck>,
     tools: Vec<ToolCheck>,
     cache_path: String,
     cache_available: bool,
@@ -57,7 +78,7 @@ fn build_report(ctx: &AppContext) -> DoctorReport {
         .join("packages_v4.json");
     let cache_available = MultiSourceCache::load(&ctx.repo_root).is_ok();
 
-    let checks = vec![
+    let mut checks = vec![
         DoctorCheck {
             name: "flake.lock".to_string(),
             ok: ctx.repo_root.join("flake.lock").is_file(),
@@ -87,6 +108,9 @@ fn build_report(ctx: &AppContext) -> DoctorReport {
             detail: cache_path.display().to_string(),
         },
     ];
+    let installed_nix = detect_installed_nix().ok().flatten();
+    checks.extend(local_nix_checks(installed_nix.as_ref()));
+    let substrate = substrate_checks(installed_nix.as_ref());
 
     let tools = [
         ("git", true),
@@ -118,9 +142,265 @@ fn build_report(ctx: &AppContext) -> DoctorReport {
         routing_ok: routing.is_clean(),
         routing_issue_count: routing.issues().len(),
         checks,
+        substrate,
         tools,
         cache_path: cache_path.display().to_string(),
         cache_available,
+    }
+}
+
+fn local_nix_checks(installed: Option<&InstalledNix>) -> Vec<DoctorCheck> {
+    let store = run_captured_command(
+        "nix",
+        &[
+            "store",
+            "info",
+            "--store",
+            "daemon",
+            "--json",
+            "--no-pretty",
+        ],
+        None,
+    );
+    let config = run_captured_command("nix", &["config", "check"], None);
+
+    vec![
+        DoctorCheck {
+            name: "Nix runtime".to_string(),
+            ok: installed.is_some(),
+            detail: installed.map_or_else(
+                || "unavailable".to_string(),
+                |nix| format!("{} {}", nix.distribution, nix.version),
+            ),
+        },
+        daemon_check(store),
+        command_check("Nix configuration", config),
+    ]
+}
+
+fn daemon_check(output: anyhow::Result<crate::infra::shell::CapturedCommand>) -> DoctorCheck {
+    let (ok, detail) = match output {
+        Ok(output) if output.code == 0 => match parse_daemon_info(&output.stdout) {
+            Some(version) => (true, format!("version {version}")),
+            None => (false, "invalid daemon response".to_string()),
+        },
+        Ok(output) => (false, format!("failed: {}", first_nonempty_output(&output))),
+        Err(err) => (false, format!("unavailable: {err:#}")),
+    };
+    DoctorCheck {
+        name: "Nix daemon".to_string(),
+        ok,
+        detail,
+    }
+}
+
+fn parse_daemon_info(output: &str) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(output).ok()?;
+    (value.get("url")?.as_str()? == "daemon")
+        .then(|| value.get("version")?.as_str().map(str::to_string))
+        .flatten()
+}
+
+fn command_check(
+    name: &str,
+    output: anyhow::Result<crate::infra::shell::CapturedCommand>,
+) -> DoctorCheck {
+    match output {
+        Ok(output) => DoctorCheck {
+            name: name.to_string(),
+            ok: output.code == 0,
+            detail: if output.code == 0 {
+                "passed".to_string()
+            } else {
+                format!("failed: {}", first_nonempty_output(&output))
+            },
+        },
+        Err(err) => DoctorCheck {
+            name: name.to_string(),
+            ok: false,
+            detail: format!("unavailable: {err:#}"),
+        },
+    }
+}
+
+fn substrate_checks(installed: Option<&InstalledNix>) -> Vec<AdvisoryCheck> {
+    let is_determinate =
+        installed.is_some_and(|nix| nix.distribution == NixDistribution::Determinate);
+    let determinate = is_determinate.then(determinate_check);
+
+    vec![
+        determinate
+            .unwrap_or_else(|| AdvisoryCheck::unavailable("Determinate Nix", "not installed")),
+        lazy_trees_check(),
+        if is_determinate {
+            determinate_gc_check()
+        } else {
+            AdvisoryCheck::unavailable("Determinate GC", "not installed")
+        },
+        nix_disk_check(),
+        if is_determinate {
+            flakehub_auth_check()
+        } else {
+            AdvisoryCheck::unavailable("FlakeHub authentication", "not installed")
+        },
+    ]
+}
+
+fn determinate_check() -> AdvisoryCheck {
+    match determinate_version_status() {
+        Ok(Some(status)) => match status.freshness {
+            DeterminateFreshness::Current => AdvisoryCheck::healthy(
+                "Determinate Nix",
+                format!(
+                    "daemon {} / client {} / current",
+                    status.daemon, status.client
+                ),
+            ),
+            DeterminateFreshness::UpdateAvailable(latest) => AdvisoryCheck::warning(
+                "Determinate Nix",
+                format!(
+                    "daemon {} / client {} / latest {}; run `sudo determinate-nixd upgrade`",
+                    status.daemon, status.client, latest
+                ),
+            ),
+            DeterminateFreshness::DaemonClientMismatch => AdvisoryCheck::warning(
+                "Determinate Nix",
+                format!(
+                    "daemon {} / client {} mismatch",
+                    status.daemon, status.client
+                ),
+            ),
+            DeterminateFreshness::Unknown => AdvisoryCheck::unavailable(
+                "Determinate Nix",
+                format!(
+                    "daemon {} / client {}; freshness unknown",
+                    status.daemon, status.client
+                ),
+            ),
+        },
+        Ok(None) => AdvisoryCheck::unavailable("Determinate Nix", "version output unavailable"),
+        Err(err) => AdvisoryCheck::unavailable("Determinate Nix", format!("{err:#}")),
+    }
+}
+
+fn lazy_trees_check() -> AdvisoryCheck {
+    match run_captured_command("nix", &["config", "show", "lazy-trees"], None) {
+        Ok(output) if output.code == 0 && output.stdout.trim() == "true" => {
+            AdvisoryCheck::healthy("lazy-trees", "enabled")
+        }
+        Ok(output) if output.code == 0 && output.stdout.trim() == "false" => {
+            AdvisoryCheck::warning("lazy-trees", "disabled")
+        }
+        Ok(output) => {
+            AdvisoryCheck::unavailable("lazy-trees", first_nonempty_output(&output).to_string())
+        }
+        Err(err) => AdvisoryCheck::unavailable("lazy-trees", format!("{err:#}")),
+    }
+}
+
+fn determinate_gc_check() -> AdvisoryCheck {
+    let path = std::path::Path::new("/etc/determinate/config.json");
+    let strategy = match std::fs::read_to_string(path) {
+        Ok(text) => match determinate_gc_strategy(&text) {
+            Ok(strategy) => strategy,
+            Err(err) => {
+                return AdvisoryCheck::unavailable("Determinate GC", err);
+            }
+        },
+        Err(err) => {
+            return AdvisoryCheck::unavailable(
+                "Determinate GC",
+                format!("{}: {err}", path.display()),
+            );
+        }
+    };
+
+    if strategy == "automatic" {
+        AdvisoryCheck::healthy("Determinate GC", "automatic")
+    } else {
+        AdvisoryCheck::warning("Determinate GC", strategy)
+    }
+}
+
+fn determinate_gc_strategy(text: &str) -> Result<String, String> {
+    let config = serde_json::from_str::<serde_json::Value>(text)
+        .map_err(|err| format!("invalid config: {err}"))?;
+    Ok(config
+        .pointer("/garbageCollector/strategy")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("automatic")
+        .to_string())
+}
+
+fn nix_disk_check() -> AdvisoryCheck {
+    match snapshot_nix_disk_usage() {
+        Ok(disk) => classify_nix_disk(&disk),
+        Err(err) => AdvisoryCheck::unavailable("/nix disk", format!("{err:#}")),
+    }
+}
+
+fn classify_nix_disk(disk: &crate::domain::generations::DiskUsageSnapshot) -> AdvisoryCheck {
+    const TARGET_FREE_BYTES: u64 = 30 * 1024 * 1024 * 1024;
+
+    let detail = format!(
+        "{} available on {} ({} used)",
+        disk.available, disk.mounted_on, disk.capacity
+    );
+    let urgent = disk
+        .capacity
+        .trim_end_matches('%')
+        .parse::<u8>()
+        .is_ok_and(|used| used >= 95);
+    if disk.available_bytes >= TARGET_FREE_BYTES {
+        AdvisoryCheck::healthy("/nix disk", detail)
+    } else if urgent {
+        AdvisoryCheck::warning("/nix disk", format!("{detail}; urgent GC range"))
+    } else {
+        AdvisoryCheck::warning(
+            "/nix disk",
+            format!("{detail}; below Determinate's 30 GiB target"),
+        )
+    }
+}
+
+fn flakehub_auth_check() -> AdvisoryCheck {
+    match run_captured_command("determinate-nixd", &["status"], None) {
+        Ok(output) if output.code == 0 && output.stdout.contains("logged-in") => {
+            AdvisoryCheck::healthy("FlakeHub authentication", "logged in")
+        }
+        Ok(output) if output.code == 0 && output.stdout.contains("logged-out") => {
+            AdvisoryCheck::warning(
+                "FlakeHub authentication",
+                "logged out; authenticated flakes and cache are unavailable",
+            )
+        }
+        Ok(output) => AdvisoryCheck::unavailable(
+            "FlakeHub authentication",
+            first_nonempty_output(&output).to_string(),
+        ),
+        Err(err) => AdvisoryCheck::unavailable("FlakeHub authentication", format!("{err:#}")),
+    }
+}
+
+impl AdvisoryCheck {
+    fn healthy(name: &str, detail: impl Into<String>) -> Self {
+        Self::new(name, AdvisoryStatus::Healthy, detail)
+    }
+
+    fn warning(name: &str, detail: impl Into<String>) -> Self {
+        Self::new(name, AdvisoryStatus::Warning, detail)
+    }
+
+    fn unavailable(name: &str, detail: impl Into<String>) -> Self {
+        Self::new(name, AdvisoryStatus::Unavailable, detail)
+    }
+
+    fn new(name: &str, status: AdvisoryStatus, detail: impl Into<String>) -> Self {
+        Self {
+            name: name.to_string(),
+            status,
+            detail: detail.into(),
+        }
     }
 }
 
@@ -203,6 +483,17 @@ fn render_plain(report: &DoctorReport, verbose: bool, ctx: &AppContext) {
     }
 
     println!();
+    Printer::heading("Nix Substrate");
+    for check in &report.substrate {
+        let line = format!("{}: {}", check.name, check.detail);
+        match check.status {
+            AdvisoryStatus::Healthy => ctx.printer.success(&line),
+            AdvisoryStatus::Warning => ctx.printer.warn(&line),
+            AdvisoryStatus::Unavailable => Printer::detail(&line),
+        }
+    }
+
+    println!();
     Printer::heading("Tools");
     for tool in &report.tools {
         let line = if verbose {
@@ -247,5 +538,76 @@ fn render_plain(report: &DoctorReport, verbose: bool, ctx: &AppContext) {
         ManifestHealth::Missing | ManifestHealth::Invalid { .. }
     ) {
         Printer::detail("Run `nx init --refresh` to recover manifest-based routing.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::generations::DiskUsageSnapshot;
+
+    #[test]
+    fn determinate_gc_defaults_only_for_valid_config() {
+        assert_eq!(determinate_gc_strategy("{}").as_deref(), Ok("automatic"));
+        assert_eq!(
+            determinate_gc_strategy(r#"{"garbageCollector":{"strategy":"disabled"}}"#).as_deref(),
+            Ok("disabled")
+        );
+        assert!(determinate_gc_strategy("{").is_err());
+    }
+
+    #[test]
+    fn daemon_info_requires_structured_daemon_response() {
+        assert_eq!(
+            parse_daemon_info(r#"{"url":"daemon","version":"2.34.8","trusted":true}"#),
+            Some("2.34.8".to_string())
+        );
+        assert_eq!(
+            parse_daemon_info(r#"{"url":"local","version":"2.34.8"}"#),
+            None
+        );
+        assert_eq!(parse_daemon_info(""), None);
+    }
+
+    #[test]
+    fn disk_predicates_use_exact_available_bytes() {
+        let disk = |available_bytes: u64, capacity: &str| DiskUsageSnapshot {
+            filesystem: "/dev/test".to_string(),
+            size: "100Gi".to_string(),
+            used: "75Gi".to_string(),
+            available: "25Gi".to_string(),
+            capacity: capacity.to_string(),
+            mounted_on: "/nix".to_string(),
+            available_bytes,
+        };
+        assert_eq!(
+            classify_nix_disk(&disk(30 * 1024 * 1024 * 1024, "70%")).status,
+            AdvisoryStatus::Healthy
+        );
+        let urgent = classify_nix_disk(&disk(512 * 1024, "99%"));
+        assert_eq!(urgent.status, AdvisoryStatus::Warning);
+        assert!(urgent.detail.contains("urgent"));
+    }
+
+    #[test]
+    fn advisory_warnings_do_not_fail_doctor() {
+        let report = DoctorReport {
+            repo_root: String::new(),
+            repo_root_source: String::new(),
+            manifest_status: String::new(),
+            manifest_detail: None,
+            routing_ok: true,
+            routing_issue_count: 0,
+            checks: vec![DoctorCheck {
+                name: String::new(),
+                ok: true,
+                detail: String::new(),
+            }],
+            substrate: vec![AdvisoryCheck::warning("test", "advisory")],
+            tools: Vec::new(),
+            cache_path: String::new(),
+            cache_available: true,
+        };
+        assert!(doctor_ok(&report));
     }
 }

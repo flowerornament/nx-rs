@@ -132,7 +132,7 @@ fn split_darwin_json_parser_rejects_missing_output() {
 }
 
 #[test]
-fn split_nix_build_raises_file_descriptor_limit() {
+fn split_nix_build_uses_nix_directly() {
     let (program, args) = split_nix_build_command_with_log_format(
         "git+file:///repo#darwinConfigurations.host.system",
         NixOutputMode::Structured.log_format().as_arg(),
@@ -141,12 +141,8 @@ fn split_nix_build_raises_file_descriptor_limit() {
     assert_eq!(
         (program, args),
         (
-            "bash".to_string(),
+            "nix".to_string(),
             vec![
-                "-lc".to_string(),
-                "ulimit -n 65536 2>/dev/null; exec \"$@\"".to_string(),
-                "nx-nix-with-ulimit".to_string(),
-                "nix".to_string(),
                 "build".to_string(),
                 "--no-link".to_string(),
                 "--print-out-paths".to_string(),

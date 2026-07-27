@@ -88,13 +88,13 @@ pub fn discover_home_manager_generations() -> anyhow::Result<Vec<GenerationRecor
 }
 
 pub fn snapshot_nix_disk_usage() -> anyhow::Result<DiskUsageSnapshot> {
-    let output = run_captured_command("df", &["-h", NIX_MOUNT_PATH], None)
+    let output = run_captured_command("df", &["-k", NIX_MOUNT_PATH], None)
         .context("capturing /nix disk usage")?;
 
     if output.code != 0 {
         let detail = first_nonempty_output(&output);
         bail!(
-            "df -h /nix failed{}",
+            "df -k /nix failed{}",
             if detail.is_empty() {
                 String::new()
             } else {
@@ -254,14 +254,34 @@ fn parse_disk_usage(output: &str) -> anyhow::Result<DiskUsageSnapshot> {
 
     let mounted_on = parts.last().expect("length already checked").to_string();
 
+    let size_kib = parts[1].parse::<u64>().context("parsing df size")?;
+    let used_kib = parts[2].parse::<u64>().context("parsing df used space")?;
+    let available_kib = parts[3]
+        .parse::<u64>()
+        .context("parsing df available space")?;
+
     Ok(DiskUsageSnapshot {
         filesystem: parts[0].to_string(),
-        size: parts[1].to_string(),
-        used: parts[2].to_string(),
-        available: parts[3].to_string(),
+        size: format_kib(size_kib),
+        used: format_kib(used_kib),
+        available: format_kib(available_kib),
         capacity: parts[4].to_string(),
         mounted_on,
+        available_bytes: available_kib.saturating_mul(1024),
     })
+}
+
+fn format_kib(kib: u64) -> String {
+    const KIB_PER_GIB: u64 = 1024 * 1024;
+    if kib >= KIB_PER_GIB {
+        format!("{}Gi", rounded_div(kib, KIB_PER_GIB))
+    } else {
+        format!("{}Mi", rounded_div(kib, 1024))
+    }
+}
+
+const fn rounded_div(value: u64, divisor: u64) -> u64 {
+    value.saturating_add(divisor / 2) / divisor
 }
 
 fn generation_id_args(subcommand: &str, ids: &[GenerationId]) -> Vec<String> {
@@ -318,8 +338,8 @@ mod tests {
     #[test]
     fn parse_disk_usage_extracts_core_fields() {
         let snapshot = parse_disk_usage(
-            "Filesystem      Size    Used   Avail Capacity Mounted on\n\
-             /dev/disk3s7   926Gi    81Gi    25Gi    77%   /nix\n",
+            "Filesystem   1024-blocks      Used Available Capacity iused ifree %iused Mounted on\n\
+             /dev/disk3s7   971350180  84934656  26214400    77% 1 2 1% /nix\n",
         )
         .expect("parse disk usage");
 
@@ -329,6 +349,7 @@ mod tests {
         assert_eq!(snapshot.available, "25Gi");
         assert_eq!(snapshot.capacity, "77%");
         assert_eq!(snapshot.mounted_on, "/nix");
+        assert_eq!(snapshot.available_bytes, 25 * 1024 * 1024 * 1024);
     }
 
     #[test]

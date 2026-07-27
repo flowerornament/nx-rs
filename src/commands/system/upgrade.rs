@@ -8,10 +8,12 @@ use crate::domain::upgrade::{
 };
 use crate::infra::ai_engine::DEFAULT_CODEX_MODEL;
 use crate::infra::nix_output::NixOutputMode;
+use crate::infra::nix_runtime::{
+    DeterminateFreshness, NixDistribution, detect_installed_nix, determinate_version_status,
+};
 use crate::infra::shell::{
-    first_nonempty_output, first_unpresented_output, run_captured_command,
-    run_captured_command_with_env, run_indented_command, run_nix_command_with_stdout,
-    terminal_stdio_available,
+    first_nonempty_output, first_unpresented_output, run_captured_command, run_indented_command,
+    run_nix_command_with_stdout, terminal_stdio_available,
 };
 use crate::output::printer::Printer;
 
@@ -19,6 +21,7 @@ use crate::infra::text::truncate_with_ellipsis;
 use crate::infra::timing::TimingCommand;
 
 use super::cache_preflight::{CachePreflightMode, CachePreflightOutcome, check_cache_preflight};
+use super::nix_diagnostics::{NixCacheHome, diagnose_nix_failure};
 use super::rebuild::cmd_rebuild_with_command_result;
 
 // ─── upgrade ─────────────────────────────────────────────────────────────────
@@ -27,6 +30,8 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
     if args.dry_run() {
         ctx.printer.dry_run_banner();
     }
+
+    check_determinate_version(args, ctx);
 
     // Phase 1: Flake update
     let flake_changes = match run_flake_phase(args, ctx) {
@@ -85,6 +90,51 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
     0
 }
 
+fn check_determinate_version(args: &UpgradeArgs, ctx: &AppContext) {
+    if !detect_installed_nix().is_ok_and(|installed| {
+        installed.is_some_and(|nix| nix.distribution == NixDistribution::Determinate)
+    }) {
+        return;
+    }
+
+    ctx.printer.action("Checking Determinate Nix");
+    match determinate_version_status() {
+        Ok(Some(status)) => match status.freshness {
+            DeterminateFreshness::Current => ctx
+                .printer
+                .success(&format!("Determinate Nix {} is current", status.daemon)),
+            DeterminateFreshness::UpdateAvailable(latest) => {
+                ctx.printer.warn(&format!(
+                    "Determinate Nix {} is behind {}",
+                    status.daemon, latest
+                ));
+                Printer::detail("Run: sudo determinate-nixd upgrade");
+            }
+            DeterminateFreshness::DaemonClientMismatch => {
+                ctx.printer.warn(&format!(
+                    "Determinate Nix daemon {} does not match client {}",
+                    status.daemon, status.client
+                ));
+            }
+            DeterminateFreshness::Unknown => {
+                ctx.printer
+                    .warn("Could not determine whether Determinate Nix is current");
+            }
+        },
+        Ok(None) => {
+            ctx.printer
+                .warn("Could not check the Determinate Nix version");
+        }
+        Err(err) => {
+            ctx.printer
+                .warn("Could not check the Determinate Nix version");
+            if args.flow.verbose {
+                Printer::detail(&format!("{err:#}"));
+            }
+        }
+    }
+}
+
 pub(super) const fn upgrade_requires_manifest_system_safety(args: &UpgradeArgs) -> bool {
     !args.dry_run() && !args.skip_rebuild()
 }
@@ -124,10 +174,6 @@ fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<Vec<InputChan
     if diff.changed.is_empty() && diff.added.is_empty() && diff.removed.is_empty() {
         ctx.printer.success("All flake inputs up to date");
         return Ok(Vec::new());
-    }
-
-    if !args.dry_run() && !diff.changed.is_empty() {
-        realize_changed_flake_sources(ctx, &diff.changed, &nix_env);
     }
 
     if !diff.changed.is_empty() {
@@ -751,121 +797,29 @@ fn normalize_version(version: &str) -> &str {
     trimmed.strip_prefix('v').unwrap_or(trimmed)
 }
 
-/// Build a nix command, optionally wrapped with a ulimit raise.
-pub(super) fn build_nix_command(
-    base_args: &[String],
-    raise_nofile: Option<u32>,
-) -> (String, Vec<String>) {
-    raise_nofile.map_or_else(
-        || ("nix".to_string(), base_args.to_vec()),
-        |limit| {
-            let mut args = vec![
-                "-lc".to_string(),
-                format!("ulimit -n {limit} 2>/dev/null; exec \"$@\""),
-                "nx-nix-with-ulimit".to_string(),
-                "nix".to_string(),
-            ];
-            args.extend(base_args.iter().cloned());
-            ("bash".to_string(), args)
-        },
-    )
-}
-
-/// Detect file descriptor exhaustion in command output.
-pub(super) fn is_fd_exhaustion(output: &str) -> bool {
-    output.contains("Too many open files") || output.contains("too many open files")
-}
-
-/// Detect known Nix source-cache corruption signatures.
-pub(super) fn is_cache_corruption(output: &str) -> bool {
-    const INDICATORS: [&str; 3] = [
-        "failed to insert entry: invalid object specified",
-        "error: adding a file to a tree builder",
-        "object not found - no match for id",
-    ];
-    let output = output.to_ascii_lowercase();
-
-    INDICATORS
-        .iter()
-        .any(|indicator| output.contains(indicator))
-}
-
-/// Execute `nix flake update` with GitHub token, ulimit raising, and retry.
+/// Execute `nix flake update` with the GitHub token bridge.
 fn stream_nix_update(args: &UpgradeArgs, ctx: &AppContext, nix_env: &NixCommandEnv) -> bool {
     let base_args = build_flake_update_args(&args.targets, &args.passthrough);
-
-    // Proactively raise FD limit to avoid "Too many open files" from libgit2.
-    let mut raise_nofile: Option<u32> = Some(8192);
-    let mut retried_cache_corruption = false;
-
-    for attempt in 0..3 {
-        if attempt == 0 {
-            ctx.printer.action("Updating flake inputs");
-        } else {
-            ctx.printer.action("Retrying flake update");
-        }
-
-        let output_mode =
-            NixOutputMode::for_terminal(args.flow.verbose, terminal_stdio_available());
-        let nix_args = output_mode.command_args(&base_args);
-        let (program, cmd_args) = build_nix_command(&nix_args, raise_nofile);
-        let arg_refs: Vec<&str> = cmd_args.iter().map(String::as_str).collect();
-        let output = match nix_env.with_command_env(|env| {
-            run_nix_command_with_stdout(&program, &arg_refs, Some(&ctx.repo_root), env, output_mode)
-        }) {
-            Ok(result) => result,
-            Err(err) => {
-                ctx.printer.error(&format!("{err:#}"));
-                return false;
-            }
-        };
-        let combined_output = combined_command_output(&output);
-
-        if output.code == 0 {
-            return true;
-        }
-
-        if attempt >= 2 {
-            print_command_failure_detail(&output);
+    ctx.printer.action("Updating flake inputs");
+    let output_mode = NixOutputMode::for_terminal(args.flow.verbose, terminal_stdio_available());
+    let nix_args = output_mode.command_args(&base_args);
+    let arg_refs = nix_args.iter().map(String::as_str).collect::<Vec<_>>();
+    let output = match nix_env.with_command_env(|env| {
+        run_nix_command_with_stdout("nix", &arg_refs, Some(&ctx.repo_root), env, output_mode)
+    }) {
+        Ok(result) => result,
+        Err(err) => {
+            ctx.printer.error(&format!("{err:#}"));
             return false;
         }
-
-        // FD exhaustion: clear tarball pack cache, bump limit, retry
-        if is_fd_exhaustion(&combined_output) {
-            ctx.printer
-                .warn("Nix hit file descriptor limits, clearing cache and retrying");
-            clear_user_tarball_pack_cache();
-            clear_user_fetcher_cache();
-            raise_nofile = Some(65536);
-            continue;
-        }
-
-        // Source-cache corruption: clear user source caches and retry once.
-        if !retried_cache_corruption && is_cache_corruption(&combined_output) {
-            retried_cache_corruption = true;
-            clear_user_source_caches();
-            ctx.printer
-                .warn("Nix cache corruption detected, clearing cache and retrying");
-            continue;
-        }
-
-        print_command_failure_detail(&output);
-        return false;
+    };
+    if output.code == 0 {
+        return true;
     }
 
+    diagnose_nix_failure(&output, NixCacheHome::User, &ctx.printer);
+    print_command_failure_detail(&output);
     false
-}
-
-fn combined_command_output(output: &crate::infra::shell::CapturedCommand) -> String {
-    match (
-        output.stdout.trim().is_empty(),
-        output.stderr.trim().is_empty(),
-    ) {
-        (true, true) => String::new(),
-        (false, true) => output.stdout.clone(),
-        (true, false) => output.stderr.clone(),
-        (false, false) => format!("{}\n{}", output.stdout, output.stderr),
-    }
 }
 
 fn print_command_failure_detail(output: &crate::infra::shell::CapturedCommand) {
@@ -873,78 +827,6 @@ fn print_command_failure_detail(output: &crate::infra::shell::CapturedCommand) {
     if !detail.is_empty() {
         Printer::detail(detail);
     }
-}
-
-fn realize_changed_flake_sources(
-    ctx: &AppContext,
-    changes: &[InputChange],
-    nix_env: &NixCommandEnv,
-) {
-    let prefetches: Vec<_> = changes.iter().filter_map(flake_prefetch_ref).collect();
-    if prefetches.is_empty() {
-        return;
-    }
-
-    ctx.printer.action("Realizing updated flake sources");
-    let mut failed = false;
-
-    for prefetch in prefetches {
-        Printer::detail(&format!("{} {}", prefetch.name, prefetch.short_rev));
-        if !prefetch_flake_source_with_retry(&ctx.repo_root, &prefetch.flake_ref, nix_env) {
-            failed = true;
-            ctx.printer.warn(&format!(
-                "Could not prefetch {}; rebuild will retry if nix reports cache corruption",
-                prefetch.name
-            ));
-        }
-    }
-
-    if !failed {
-        ctx.printer.success("Flake sources ready");
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct FlakePrefetch {
-    pub(super) name: String,
-    pub(super) short_rev: String,
-    pub(super) flake_ref: String,
-}
-
-pub(super) fn flake_prefetch_ref(change: &InputChange) -> Option<FlakePrefetch> {
-    let flake_ref = change.prefetch_ref.clone()?;
-
-    Some(FlakePrefetch {
-        name: change.name.clone(),
-        short_rev: short_rev(&change.new_rev).to_string(),
-        flake_ref,
-    })
-}
-
-fn prefetch_flake_source_with_retry(
-    repo_root: &std::path::Path,
-    flake_ref: &str,
-    nix_env: &NixCommandEnv,
-) -> bool {
-    let args = ["flake", "prefetch", "--json", flake_ref];
-    let first = nix_env
-        .with_command_env(|env| run_captured_command_with_env("nix", &args, Some(repo_root), env));
-    let Ok(output) = first else {
-        return false;
-    };
-
-    if output.code == 0 {
-        return true;
-    }
-
-    if !is_cache_corruption(first_nonempty_output(&output)) {
-        return false;
-    }
-
-    clear_user_source_caches();
-    nix_env
-        .with_command_env(|env| run_captured_command_with_env("nix", &args, Some(repo_root), env))
-        .is_ok_and(|retry| retry.code == 0)
 }
 
 /// Get GitHub token from `gh auth token`.
@@ -997,29 +879,6 @@ impl NixCommandEnv {
     fn with_command_env<R>(&self, run: impl FnOnce(Option<&[(&str, &str)]>) -> R) -> R {
         let env_pairs = self.nix_config.as_ref().map(NixConfig::command_env);
         run(env_pairs.as_ref().map(<[(&str, &str); 1]>::as_slice))
-    }
-}
-
-/// Clear user-owned nix source caches to fix lazy git/tarball source corruption.
-pub(super) fn clear_user_source_caches() {
-    let cache_dir = crate::app::dirs_home().join(".cache/nix");
-    let _ = std::fs::remove_dir_all(cache_dir.join("gitv3"));
-    let _ = std::fs::remove_dir_all(cache_dir.join("tarball-cache-v2"));
-    let _ = std::fs::remove_file(cache_dir.join("fetcher-cache-v4.sqlite"));
-}
-
-pub(super) fn clear_user_fetcher_cache() {
-    let cache_dir = crate::app::dirs_home().join(".cache/nix");
-    let _ = std::fs::remove_file(cache_dir.join("fetcher-cache-v4.sqlite"));
-}
-
-/// Clear the nix tarball pack cache to fix FD exhaustion from stale packfiles.
-/// Recreates the empty directory so nix can write new packfiles.
-pub(super) fn clear_user_tarball_pack_cache() {
-    let pack_dir = crate::app::dirs_home().join(".cache/nix/tarball-cache-v2/objects/pack");
-    if pack_dir.is_dir() {
-        let _ = std::fs::remove_dir_all(&pack_dir);
-        let _ = std::fs::create_dir_all(&pack_dir);
     }
 }
 

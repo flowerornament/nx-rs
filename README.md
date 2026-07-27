@@ -17,8 +17,8 @@ Use it when your machine is managed as code and you want one CLI for daily work:
   manifests
 - run repo preflight checks and rebuild the host configuration
 - upgrade flake inputs, Homebrew packages, and the system in one flow
-- recover from common Nix failures, such as lazy source cache misses and
-  fixed-output hash drift
+- diagnose common Nix failures, such as lazy source cache misses and
+  file-descriptor exhaustion, and safely repair fixed-output hash drift
 - inspect rebuild timings, prune old generations, and clean local development
   caches
 
@@ -47,7 +47,7 @@ intentionally host-scoped and can run from any directory.
 After installing `nx`, start with:
 
 ```bash
-nx doctor         # check repo discovery, manifest health, tools, and cache state
+nx doctor         # check repo health and the local Nix substrate
 nx init           # create .nx/manifest.toml for the current config repo
 nx status         # summarize declared packages by source
 nx where ripgrep  # jump to the file that declares a package
@@ -334,6 +334,11 @@ Diagnoses repo and host prerequisites that affect normal `nx` usage.
 
 - Reports repo root resolution, manifest health, routing status, flake lock
   state, cache availability, and tool presence.
+- Reports public Nix substrate health: installed distribution/version, daemon
+  and configuration checks, Determinate freshness, effective `lazy-trees`,
+  garbage-collector strategy, `/nix` disk headroom, and FlakeHub authentication.
+- Remains read-only: it never upgrades Nix, clears private caches, or runs
+  garbage collection.
 - Supports `--verbose` for extra detail.
 - Supports `--json` for automation.
 
@@ -499,26 +504,34 @@ Runs `darwin-rebuild switch` for the managed repo.
 - Use `--preflight` to stop after lint, git, and flake checks without switching.
 - Use `--timing` to print phase timings after recording them locally.
 - Use `--verbose` to ask Nix for full build logs during rebuild phases.
-- Structured Darwin split rebuilds raise Nix's file descriptor limit and retry
-  bounded source-cache failures before surfacing an error.
 - Interactive checks, builds, profile updates, and `darwin-rebuild` use Nix's
   native colored `bar` renderer unchanged. `--verbose` selects
   `bar-with-logs`. Nx gives stderr a pseudoterminal and relays its bytes
   unchanged while retaining a bounded diagnostic tail; split-build stdout is
   captured only to read the resulting store path.
 - Direct Nix commands in non-interactive runs and `--timing` use Nix's
-  `internal-json` protocol for diagnostics, timing, cache recovery, and safe
-  hash repair. Native and captured failures both retain enough diagnostics for
-  bounded source-cache recovery without a diagnostic-only rerun.
+  `internal-json` protocol for diagnostics, timing, and safe hash repair.
 - If split activation would need an interactive sudo prompt and passwordless
   `sudo darwin-rebuild` is available, `nx` falls back to that path.
 - Interactive activation inherits stdin and stdout and receives a
   pseudoterminal-backed stderr, so Nix, Homebrew, and Home Manager keep their
   terminal-aware progress behavior.
-- Lazy source-cache failures retry at the phase that observed them: split
-  build, profile update, activation, or the complete legacy
-  `darwin-rebuild switch` re-evaluation. Root-owned phases clear root's source
-  cache as well as the invoking user's cache.
+- Recognized lazy-tree source-cache failures preserve the original command
+  failure and print the exact manual repair for the cache owner. Nx never
+  clears Determinate's private caches or retries these failures automatically:
+
+  ```bash
+  # User-owned Nix invocation
+  rm -rf "$HOME/.cache/nix/gitv3" "$HOME/.cache/nix/tarball-cache-v2" "$HOME/.cache/nix/fetcher-cache-v4.sqlite" "$HOME/.cache/nix/fetcher-cache-v4.sqlite-wal" "$HOME/.cache/nix/fetcher-cache-v4.sqlite-shm"
+
+  # Root-owned Nix invocation
+  sudo rm -rf /var/root/.cache/nix/gitv3 /var/root/.cache/nix/tarball-cache-v2 /var/root/.cache/nix/fetcher-cache-v4.sqlite /var/root/.cache/nix/fetcher-cache-v4.sqlite-wal /var/root/.cache/nix/fetcher-cache-v4.sqlite-shm
+  ```
+
+- Recognized file-descriptor exhaustion is qualified by Nix distribution and
+  version. Determinate Nix older than `3.16.0` receives
+  `sudo determinate-nixd upgrade`; other runtimes are not compared against the
+  Determinate version space.
 - If a structured rebuild reports a fixed-output hash mismatch, `nx rebuild`
   updates the unique clean matching hash in a tracked `.nix` file and retries.
   It prints the file, line, old hash, and new hash. Set
@@ -543,13 +556,15 @@ Shows recent local rebuild and upgrade timing records.
 Runs the upgrade flow for either the whole repo or named flake inputs.
 
 - Use `--dry-run` to preview without mutating files.
+- When Determinate Nix is installed, `nx upgrade` checks it before flake
+  evaluation. An available update prints installed/latest versions and advises
+  `sudo determinate-nixd upgrade`; nx never upgrades or restarts the daemon
+  inside the pipeline.
 - `nx upgrade` with no positional inputs runs the full repo-wide flow: flake
   update, Homebrew update/upgrade, rebuild, and git commit.
 - `nx upgrade <input...>` updates only the named flake inputs via
   `nix flake update <input...>`.
-- After changed GitHub-backed inputs are written to `flake.lock`, `nx upgrade`
-  prefetches those exact revisions so lazy source caches are warm before flake
-  check and rebuild.
+- Flake check and build realize changed sources on demand.
 - If a structured rebuild reports a fixed-output hash mismatch, `nx` updates
   the unique clean matching hash in a tracked `.nix` file, retries, and includes
   that file in the upgrade commit. It prints the file, line, old hash, and new
@@ -602,6 +617,8 @@ cleans them after confirmation.
 - Code-root scans default to `~/code` and depth `3`; scan depth is capped at `8`.
 - Nix store GC is excluded by default because it can force future downloads or
   local source builds; select `nix-gc` explicitly when that is intended.
+- Nx never runs Nix store GC implicitly. Explicit `nx generations prune` and
+  `nx clean-caches nix-gc` operations remain available.
 - Agent session history is excluded by default so routine cleanup does not
   remove resume/history data. Select `codex-sessions`, `codex-logs`, or
   `claude-file-history` explicitly when you want to clean those directories.

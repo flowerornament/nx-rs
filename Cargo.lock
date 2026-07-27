@@ -437,6 +437,7 @@ dependencies = [
  "rowan",
  "rustix",
  "rustix-openpty",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",

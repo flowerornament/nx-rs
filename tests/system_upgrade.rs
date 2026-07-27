@@ -123,13 +123,11 @@ const UPGRADE_DRY_RUN_BREW_ARGS: &[&str] = &[
 ];
 const GH_AUTH_TOKEN_ARGS: &[&str] = &["auth", "token"];
 const GH_NIXPKGS_COMPARE_ARGS: &[&str] = &["api", "repos/NixOS/nixpkgs/compare/aaaaaaa...bbbbbbb"];
-const NIXPKGS_PREFETCH_ARGS: &[&str] = &[
-    "flake",
-    "prefetch",
-    "--json",
-    "github:NixOS/nixpkgs/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-];
 const UPGRADE_NIX_CONFIG: &str = "extra-access-tokens = github.com=ghp_system_matrix_token";
+const NIX_VERSION_CALL: ExpectedCall =
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["--version"]);
+const DETERMINATE_VERSION_CALL: ExpectedCall =
+    ExpectedCall::new("determinate-nixd", EXPECTED_CWD_REPO_ROOT, &["version"]);
 
 const UPGRADE_FLAKE_LOCK_OLD: &str = r#"{
   "nodes": {
@@ -184,7 +182,6 @@ struct UpgradeCase {
 const UPGRADE_COMMIT_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
     ExpectedCall::new(
         "git",
@@ -207,7 +204,6 @@ const UPGRADE_COMMIT_CALLS: &[ExpectedCall] = &[
 const UPGRADE_SKIP_COMMIT_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
 ];
 
@@ -254,18 +250,10 @@ const UPGRADE_TARGETED_CALLS: &[ExpectedCall] = &[
     ),
 ];
 
-const UPGRADE_CACHE_RETRY_CALLS: &[ExpectedCall] = &[
+const UPGRADE_CACHE_FAILURE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
-];
-
-const UPGRADE_PREFETCH_CACHE_RETRY_CALLS: &[ExpectedCall] = &[
-    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
-    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
+    NIX_VERSION_CALL,
 ];
 
 const UPGRADE_NO_CHANGE_NO_COMMIT_CALLS: &[ExpectedCall] = &[
@@ -506,7 +494,6 @@ const UPGRADE_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
 const UPGRADE_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
-    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, NIXPKGS_PREFETCH_ARGS),
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
@@ -703,6 +690,18 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
         stdout_contains: &["All flake inputs up to date"],
     },
     UpgradeCase {
+        id: "upgrade_stale_determinate_is_advisory",
+        cli_args: UPGRADE_SKIP_COMMIT_ARGS,
+        mode: "determinate_stale",
+        expected_exit: 0,
+        expected_calls: UPGRADE_NO_CHANGE_NO_COMMIT_CALLS,
+        stdout_contains: &[
+            "Determinate Nix 3.21.8 is behind 3.22.0",
+            "Run: sudo determinate-nixd upgrade",
+            "All flake inputs up to date",
+        ],
+    },
+    UpgradeCase {
         id: "upgrade_passthrough_flake_update_args",
         cli_args: UPGRADE_PASSTHROUGH_ARGS,
         mode: "success",
@@ -727,23 +726,15 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
         stdout_contains: &[],
     },
     UpgradeCase {
-        id: "upgrade_flake_update_cache_corruption_retries_once",
+        id: "upgrade_flake_update_cache_corruption_is_diagnostic_only",
         cli_args: UPGRADE_CACHE_RETRY_ARGS,
         mode: "upgrade_cache_corruption",
-        expected_exit: 0,
-        expected_calls: UPGRADE_CACHE_RETRY_CALLS,
+        expected_exit: 1,
+        expected_calls: UPGRADE_CACHE_FAILURE_CALLS,
         stdout_contains: &[
-            "Nix cache corruption detected, clearing cache and retrying",
-            "Retrying flake update",
+            "Nix reported an inconsistent lazy-tree source cache",
+            "$HOME/.cache/nix/tarball-cache-v2",
         ],
-    },
-    UpgradeCase {
-        id: "upgrade_prefetch_cache_corruption_retries_once",
-        cli_args: UPGRADE_SKIP_COMMIT_ARGS,
-        mode: "upgrade_prefetch_cache_corruption",
-        expected_exit: 0,
-        expected_calls: UPGRADE_PREFETCH_CACHE_RETRY_CALLS,
-        stdout_contains: &["Flake sources ready"],
     },
     UpgradeCase {
         id: "upgrade_brew_no_updates_short_circuit",
@@ -957,7 +948,11 @@ fn run_case_with_extra_env(
         case.id, stdout, stderr
     );
 
-    assert_invocations(case.id, repo_root.path(), &invocations, case.expected_calls);
+    let expected_calls = [NIX_VERSION_CALL, DETERMINATE_VERSION_CALL]
+        .into_iter()
+        .chain(case.expected_calls.iter().copied())
+        .collect::<Vec<_>>();
+    assert_invocations(case.id, repo_root.path(), &invocations, &expected_calls);
     for expected in case.stdout_contains {
         assert!(
             stdout.contains(expected),
@@ -1017,10 +1012,7 @@ fn seed_flake_lock_if_needed(repo_root: &Path, mode: &str) -> Result<(), Box<dyn
     }
     if matches!(
         mode,
-        "upgrade_flake_changed"
-            | "upgrade_prefetch_cache_corruption"
-            | "upgrade_hash_repair"
-            | "upgrade_lock_unreadable_post"
+        "upgrade_flake_changed" | "upgrade_hash_repair" | "upgrade_lock_unreadable_post"
     ) {
         fs::write(repo_root.join("flake.lock"), UPGRADE_FLAKE_LOCK_OLD)?;
     }
@@ -1034,10 +1026,7 @@ fn seed_flake_lock_if_needed(repo_root: &Path, mode: &str) -> Result<(), Box<dyn
 }
 
 fn seed_home_state_if_needed(home_dir: &Path, mode: &str) -> Result<(), Box<dyn Error>> {
-    if matches!(
-        mode,
-        "upgrade_cache_corruption" | "upgrade_prefetch_cache_corruption"
-    ) {
+    if matches!(mode, "upgrade_cache_corruption") {
         let cache_path = fetcher_cache_path(home_dir);
         if let Some(parent) = cache_path.parent() {
             fs::create_dir_all(parent)?;
@@ -1086,27 +1075,21 @@ fn assert_repo_state(
 
 fn expected_mutated_paths(mode: &str) -> &'static [&'static str] {
     match mode {
-        "upgrade_flake_changed"
-        | "upgrade_prefetch_cache_corruption"
-        | "upgrade_lock_unreadable_post" => &["flake.lock"],
+        "upgrade_flake_changed" | "upgrade_lock_unreadable_post" => &["flake.lock"],
         "upgrade_hash_repair" => &["flake.lock", "home/agent-sync.nix"],
         _ => &[],
     }
 }
 
 fn assert_home_state(case: &UpgradeCase, home_dir: &Path, stdout: &str, stderr: &str) {
-    if !matches!(
-        case.id,
-        "upgrade_flake_update_cache_corruption_retries_once"
-            | "upgrade_prefetch_cache_corruption_retries_once"
-    ) {
+    if case.id != "upgrade_flake_update_cache_corruption_is_diagnostic_only" {
         return;
     }
 
     let cache_path = fetcher_cache_path(home_dir);
     assert!(
-        !cache_path.exists(),
-        "case {} did not clear fetcher cache at {}\nstdout:\n{}\nstderr:\n{}",
+        cache_path.exists(),
+        "case {} unexpectedly cleared private cache at {}\nstdout:\n{}\nstderr:\n{}",
         case.id,
         cache_path.display(),
         stdout,

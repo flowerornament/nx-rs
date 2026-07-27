@@ -25,6 +25,7 @@ use super::{
         find_fixed_output_hash_targets, parse_fixed_output_hash_mismatch, path_is_clean,
     },
     lint::run_routing_lint,
+    nix_diagnostics::{NixCacheHome, diagnose_nix_failure},
 };
 
 const SPLIT_DARWIN_ENV: &str = "NX_SPLIT_DARWIN";
@@ -39,9 +40,6 @@ const ENV_WRAPPER: &str = "/usr/bin/env";
 const NO_AUTO_HASH_FIX_ENV: &str = "NX_NO_AUTO_HASH_FIX";
 const MAX_AUTO_HASH_FIXES: usize = 3;
 const MAX_REBUILD_ATTEMPTS: usize = 8;
-const MAX_SOURCE_CACHE_RETRIES: usize = 3;
-const MAX_FD_EXHAUSTION_RETRIES: usize = 2;
-const SPLIT_NIX_BUILD_NOFILE_LIMIT: u32 = 65536;
 const REBUILD_FAILURE_OUTPUT_LINES: usize = 80;
 
 pub fn cmd_rebuild(args: &RebuildArgs, ctx: &SystemContext<'_>) -> i32 {
@@ -315,43 +313,27 @@ fn check_flake(ctx: &SystemContext<'_>, output_mode: NixOutputMode) -> Result<()
     let args = output_mode.command_args(&base_args);
     let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
 
-    for attempt in 0..2 {
-        if attempt == 0 {
-            ctx.printer.action("Checking flake");
-        } else {
-            ctx.printer.action("Retrying flake check");
-        }
+    ctx.printer.action("Checking flake");
+    let output =
+        match run_nix_command_with_stdout_profiled("nix", &arg_refs, None, None, output_mode) {
+            Ok((output, _)) => output,
+            Err(err) => {
+                ctx.printer.error(&format!("Flake check failed: {err:#}"));
+                return Err(1);
+            }
+        };
 
-        let output =
-            match run_nix_command_with_stdout_profiled("nix", &arg_refs, None, None, output_mode) {
-                Ok((output, _)) => output,
-                Err(err) => {
-                    ctx.printer.error(&format!("Flake check failed: {err:#}"));
-                    return Err(1);
-                }
-            };
-
-        if output.code == 0 {
-            ctx.printer.success("Flake check passed");
-            return Ok(());
-        }
-
-        let err_text = first_nonempty_output(&output);
-        if attempt == 0 && super::upgrade::is_cache_corruption(err_text) {
-            super::upgrade::clear_user_source_caches();
-            ctx.printer
-                .warn("Nix cache corruption detected, clearing cache and retrying");
-            continue;
-        }
-
-        ctx.printer.error("Flake check failed");
-        let detail = first_unpresented_output(&output);
-        if !detail.is_empty() {
-            Printer::detail(detail);
-        }
-        return Err(1);
+    if output.code == 0 {
+        ctx.printer.success("Flake check passed");
+        return Ok(());
     }
 
+    diagnose_nix_failure(&output, NixCacheHome::User, ctx.printer);
+    ctx.printer.error("Flake check failed");
+    let detail = first_unpresented_output(&output);
+    if !detail.is_empty() {
+        Printer::detail(detail);
+    }
     Err(1)
 }
 
@@ -362,7 +344,6 @@ fn do_rebuild(
     let repo = ctx.repo_root.display().to_string();
     let manifest = ctx.config_files.manifest();
     let use_sudo = manifest.is_none_or(|m| m.platform.sudo);
-    let mut fd_exhaustion_retries = 0usize;
     let mut repaired_paths = Vec::new();
     let mut final_failure_output = None;
     let mut final_failure_phases = Vec::new();
@@ -394,20 +375,6 @@ fn do_rebuild(
         }
 
         let combined_output = combined_stream_output(&output.stdout, &output.stderr);
-        if super::upgrade::is_fd_exhaustion(&combined_output)
-            && fd_exhaustion_retries < MAX_FD_EXHAUSTION_RETRIES
-        {
-            fd_exhaustion_retries += 1;
-            ctx.printer
-                .warn("Nix hit file descriptor limits, clearing tarball caches and retrying");
-            super::upgrade::clear_user_tarball_pack_cache();
-            super::upgrade::clear_user_fetcher_cache();
-            if use_sudo {
-                let _ = clear_root_tarball_pack_cache_noninteractive();
-            }
-            continue;
-        }
-
         if let Some(path) =
             handle_fixed_output_hash_mismatch(ctx, &combined_output, repaired_paths.len())
         {
@@ -646,9 +613,18 @@ fn run_darwin_rebuild(
         (first.as_str(), rest.iter().map(String::as_str).collect())
     };
 
-    run_with_source_cache_recovery(ctx, use_sudo, || {
-        run_nix_command_with_stdout_profiled(runner, &runner_args, None, None, output_mode)
-    })
+    let result =
+        run_nix_command_with_stdout_profiled(runner, &runner_args, None, None, output_mode)?;
+    diagnose_nix_failure(
+        &result.0,
+        if use_sudo {
+            NixCacheHome::Root
+        } else {
+            NixCacheHome::User
+        },
+        ctx.printer,
+    );
+    Ok(result)
 }
 
 fn native_rebuild_output_enabled(args: &RebuildArgs) -> bool {
@@ -777,16 +753,14 @@ fn build_split_system_config(
     let build_arg_refs: Vec<&str> = build_args.iter().map(String::as_str).collect();
     let (build, mut phase) = timed_phase("build", || {
         ctx.printer.action("Building system configuration");
-        let (output, _) = run_with_source_cache_recovery(ctx, false, || {
-            run_nix_command_with_stdout(
-                &build_program,
-                &build_arg_refs,
-                None,
-                None,
-                output_mode.build,
-            )
-            .map(|output| (output, Vec::new()))
-        })?;
+        let output = run_nix_command_with_stdout(
+            &build_program,
+            &build_arg_refs,
+            None,
+            None,
+            output_mode.build,
+        )?;
+        diagnose_nix_failure(&output, NixCacheHome::User, ctx.printer);
         Ok(output)
     })?;
     phase.status = exit_status(build.code);
@@ -807,7 +781,7 @@ pub(super) fn split_nix_build_command_with_log_format(
     ];
     args.extend(["--log-format".to_string(), log_format.to_string()]);
     args.push(attr.to_string());
-    super::upgrade::build_nix_command(&args, Some(SPLIT_NIX_BUILD_NOFILE_LIMIT))
+    ("nix".to_string(), args)
 }
 
 enum SplitDarwinResult {
@@ -823,15 +797,22 @@ fn set_system_profile(
 ) -> anyhow::Result<(CapturedCommand, TimingPhase)> {
     let (output, mut phase) = timed_phase("profile-set", || {
         ctx.printer.action("Updating system profile");
-        run_with_source_cache_recovery(ctx, use_sudo, || {
-            run_split_nix_command(
-                use_sudo,
-                "nix-env",
-                &["-p", SYSTEM_PROFILE, "--set", system_config],
-                output_mode,
-            )
-        })
-        .map(|(output, _)| output)
+        let (output, _) = run_split_nix_command(
+            use_sudo,
+            "nix-env",
+            &["-p", SYSTEM_PROFILE, "--set", system_config],
+            output_mode,
+        )?;
+        diagnose_nix_failure(
+            &output,
+            if use_sudo {
+                NixCacheHome::Root
+            } else {
+                NixCacheHome::User
+            },
+            ctx.printer,
+        );
+        Ok(output)
     })?;
     phase.status = exit_status(output.code);
     Ok((output, phase))
@@ -847,13 +828,23 @@ fn activate_system(
     let (output, mut phase) = timed_phase("activate", || {
         ctx.printer.action("Activating system");
         let program = format!("{system_config}/activate");
-        let (output, phases) = run_with_source_cache_recovery(ctx, use_sudo, || {
-            if output_mode == ActivationOutputMode::Native {
-                return run_split_command_native(use_sudo, &program, &[], ctx)
-                    .map(|output| (output, Vec::new()));
-            }
-            run_split_command_captured(use_sudo, &program, &[])
-        })?;
+        let (output, phases) = if output_mode == ActivationOutputMode::Native {
+            (
+                run_split_command_native(use_sudo, &program, &[], ctx)?,
+                Vec::new(),
+            )
+        } else {
+            run_split_command_captured(use_sudo, &program, &[])?
+        };
+        diagnose_nix_failure(
+            &output,
+            if use_sudo {
+                NixCacheHome::Root
+            } else {
+                NixCacheHome::User
+            },
+            ctx.printer,
+        );
         child_phases = phases;
         Ok(output)
     })?;
@@ -870,36 +861,6 @@ fn run_split_command_native(
 ) -> anyhow::Result<CapturedCommand> {
     let (runner, runner_args) = split_command_invocation(use_sudo, program, args);
     run_native_command_with_env(runner, &runner_args, None, None, ctx.printer)
-}
-
-fn run_with_source_cache_recovery(
-    ctx: &SystemContext<'_>,
-    use_sudo: bool,
-    mut run: impl FnMut() -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)>,
-) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)> {
-    for attempt in 0..=MAX_SOURCE_CACHE_RETRIES {
-        let result = run()?;
-        let output = &result.0;
-        if output.code == 0
-            || attempt == MAX_SOURCE_CACHE_RETRIES
-            || !super::upgrade::is_cache_corruption(&combined_stream_output(
-                &output.stdout,
-                &output.stderr,
-            ))
-        {
-            return Ok(result);
-        }
-
-        super::upgrade::clear_user_source_caches();
-        if use_sudo && !clear_root_git_cache_noninteractive() {
-            ctx.printer
-                .warn("Could not clear root Nix source cache non-interactively");
-        }
-        ctx.printer
-            .warn("Nix source cache corruption detected, clearing cache and retrying");
-    }
-
-    unreachable!("bounded retry loop always returns")
 }
 
 fn run_split_nix_command(
@@ -1168,27 +1129,4 @@ fn build_rebuild_command_with_manifest_and_log_format(
 
 fn rebuild_supports_nix_log_format(rebuild_bin: &str) -> bool {
     rebuild_bin.rsplit('/').next() == Some("darwin-rebuild")
-}
-
-/// Clear root's nix tarball pack cache to reduce open file pressure during rebuild.
-fn clear_root_tarball_pack_cache_noninteractive() -> bool {
-    let pack_dir = "/var/root/.cache/nix/tarball-cache-v2/objects/pack";
-    command_succeeded("sudo", &["-n", "rm", "-rf", pack_dir])
-        && command_succeeded("sudo", &["-n", "mkdir", "-p", pack_dir])
-}
-
-/// Clear nix git caches under root to fix tree-builder corruption.
-///
-/// Removes both the gitv3 object store (where corrupt git trees live)
-/// and the fetcher-cache sqlite (which indexes them).
-fn clear_root_git_cache_noninteractive() -> bool {
-    let gitv3_dir = "/var/root/.cache/nix/gitv3";
-    let fetcher_db = "/var/root/.cache/nix/fetcher-cache-v4.sqlite";
-    let git_cleared = command_succeeded("sudo", &["-n", "rm", "-rf", gitv3_dir]);
-    let fetcher_cleared = command_succeeded("sudo", &["-n", "rm", "-f", fetcher_db]);
-    git_cleared && fetcher_cleared
-}
-
-fn command_succeeded(program: &str, args: &[&str]) -> bool {
-    run_captured_command(program, args, None).is_ok_and(|output| output.code == 0)
 }

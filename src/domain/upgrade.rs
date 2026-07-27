@@ -15,7 +15,6 @@ pub struct FlakeLockInput {
     pub owner: Option<String>,
     pub repo: Option<String>,
     pub rev: String,
-    pub prefetch_ref: Option<String>,
 }
 
 /// A changed input between two flake.lock states.
@@ -26,7 +25,6 @@ pub struct InputChange {
     pub repo: String,
     pub old_rev: String,
     pub new_rev: String,
-    pub prefetch_ref: Option<String>,
 }
 
 /// Result of comparing two flake.lock states.
@@ -167,34 +165,10 @@ pub fn parse_flake_lock(path: &Path) -> anyhow::Result<HashMap<String, FlakeLock
             (owner, repo, _) => (owner, repo),
         };
 
-        let prefetch_ref =
-            flake_prefetch_ref(source_type_str, owner.as_deref(), repo.as_deref(), &rev);
-
-        inputs.insert(
-            input_name.clone(),
-            FlakeLockInput {
-                owner,
-                repo,
-                rev,
-                prefetch_ref,
-            },
-        );
+        inputs.insert(input_name.clone(), FlakeLockInput { owner, repo, rev });
     }
 
     Ok(inputs)
-}
-
-fn flake_prefetch_ref(
-    source_type: &str,
-    owner: Option<&str>,
-    repo: Option<&str>,
-    rev: &str,
-) -> Option<String> {
-    if !matches!(source_type, "github" | "git") || rev.is_empty() {
-        return None;
-    }
-
-    Some(format!("github:{}/{}/{}", owner?, repo?, rev))
 }
 
 // ─── Lock Diff ───────────────────────────────────────────────────────────────
@@ -238,7 +212,6 @@ pub fn diff_locks(
                 repo: repo.clone(),
                 old_rev: old_input.rev.clone(),
                 new_rev: new_input.rev.clone(),
-                prefetch_ref: new_input.prefetch_ref.clone(),
             });
         }
     }
@@ -378,10 +351,6 @@ mod tests {
         assert_eq!(hm.owner.as_deref(), Some("nix-community"));
         assert_eq!(hm.repo.as_deref(), Some("home-manager"));
         assert!(hm.rev.starts_with("aaaa"));
-        assert_eq!(
-            hm.prefetch_ref.as_deref(),
-            Some("github:nix-community/home-manager/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        );
     }
 
     #[test]
@@ -408,7 +377,6 @@ mod tests {
         let fh = &inputs["flakehub-input"];
         assert_eq!(fh.owner.as_deref(), Some("DeterminateSystems"));
         assert_eq!(fh.repo.as_deref(), Some("nuenv"));
-        assert_eq!(fh.prefetch_ref, None);
     }
 
     #[test]
@@ -438,10 +406,6 @@ mod tests {
         let anneal = &inputs["anneal"];
         assert_eq!(anneal.owner.as_deref(), Some("flowerornament"));
         assert_eq!(anneal.repo.as_deref(), Some("anneal"));
-        assert_eq!(
-            anneal.prefetch_ref.as_deref(),
-            Some("github:flowerornament/anneal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        );
     }
 
     #[test]
@@ -501,10 +465,6 @@ mod tests {
         assert_eq!(diff.changed[0].name, "home-manager");
         assert!(diff.changed[0].old_rev.starts_with("aaaa"));
         assert!(diff.changed[0].new_rev.starts_with("1111"));
-        assert_eq!(
-            diff.changed[0].prefetch_ref.as_deref(),
-            Some("github:nix-community/home-manager/1111111111111111111111111111111111111111")
-        );
     }
 
     #[test]
@@ -616,14 +576,10 @@ mod tests {
         assert_eq!(diff.changed[0].name, "anneal");
         assert_eq!(diff.changed[0].owner, "flowerornament");
         assert_eq!(diff.changed[0].repo, "anneal");
-        assert_eq!(
-            diff.changed[0].prefetch_ref.as_deref(),
-            Some("github:flowerornament/anneal/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        );
     }
 
     #[test]
-    fn diff_flakehub_tarball_change_has_no_github_prefetch_ref() {
+    fn diff_tracks_flakehub_tarball_change() {
         let tmp = TempDir::new().unwrap();
         write_lock(
             tmp.path(),
@@ -672,7 +628,6 @@ mod tests {
         let diff = diff_locks(&old, &new);
         assert_eq!(diff.changed.len(), 1);
         assert_eq!(diff.changed[0].name, "determinate");
-        assert_eq!(diff.changed[0].prefetch_ref, None);
     }
 
     // --- short_rev ---

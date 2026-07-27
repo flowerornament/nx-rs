@@ -22,8 +22,7 @@ use super::rebuild::{
 };
 use super::undo::{git_diff_stat, git_modified_files};
 use super::upgrade::{
-    NixConfig, brew_compare_url, build_nix_command, flake_compare_endpoint, flake_compare_url,
-    flake_prefetch_ref, is_cache_corruption, is_fd_exhaustion, maybe_ai_summary,
+    NixConfig, brew_compare_url, flake_compare_endpoint, flake_compare_url, maybe_ai_summary,
     parse_ai_summary_output, parse_brew_info_json, parse_brew_outdated_json, parse_compare_json,
     should_use_detailed_ai_summary, upgrade_requires_manifest_system_safety,
 };
@@ -62,9 +61,5 @@ fn sample_input_change() -> InputChange {
         repo: "home-manager".to_string(),
         old_rev: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
         new_rev: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
-        prefetch_ref: Some(
-            "github:nix-community/home-manager/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                .to_string(),
-        ),
     }
 }

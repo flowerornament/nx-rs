@@ -461,6 +461,12 @@ Network behavior:
 - Single package: always prints result (success or "not installed" warning). `--show-location` adds file location.
 - Multi package: prints summary header with count, each result with location.
 
+## 9.7 `doctor`
+
+- Reports repository checks plus public Nix substrate health: installed Nix distribution/version, daemon and configuration checks, Determinate Nix freshness, effective `lazy-trees`, Determinate garbage-collector strategy, free space on the filesystem backing `/nix`, and FlakeHub authentication.
+- Substrate advisories do not change the exit status. Failed repository or required local Nix checks still exit `1`.
+- Reads public command output and Determinate configuration only. It never upgrades Nix, clears private Nix caches, or runs garbage collection.
+
 ## 10. System Command Contracts
 
 ## 10.1 `undo`
@@ -503,17 +509,19 @@ Experimental split Darwin rebuild:
 - `NX_SPLIT_DARWIN=1` enables the split path for Darwin repos without a manifest.
 - Applies only to Darwin manifests using the default `darwin-rebuild` command and no passthrough args.
 - Falls back to the default rebuild path when the split path cannot confidently preserve behavior.
-- Runs `nix build --no-link --print-out-paths <repo_root>#darwinConfigurations.<host>.system` under a raised file descriptor limit. Interactive runs select `--log-format bar`; `--verbose` selects `bar-with-logs`; non-interactive and `--timing` runs select `internal-json`.
+- Runs `nix build --no-link --print-out-paths <repo_root>#darwinConfigurations.<host>.system`. Interactive runs select `--log-format bar`; `--verbose` selects `bar-with-logs`; non-interactive and `--timing` runs select `internal-json`.
 - Interactive user-facing Nix commands inherit stdin and receive a pseudoterminal-backed stderr initialized from nx's terminal settings. Nx relays stderr bytes unchanged while retaining only a bounded diagnostic tail. Nx may capture stdout when it is command data, such as the split build's resulting store path, but it never parses, prefixes, indents, or re-renders native Nix terminal output.
 - Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get LocalHostName`, then `hostname -s`.
 - If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
 - Otherwise reports successful build and profile-update phase completion, then runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
 - If direct split activation would require an interactive sudo prompt but the legacy `sudo darwin-rebuild` path is available non-interactively, falls back to legacy `darwin-rebuild` to preserve passwordless sudoers setups.
 - In interactive terminals, profile updates use Nix's native `bar` format; `--verbose` selects `bar-with-logs`. Direct activation inherits stdin and stdout and receives the same pseudoterminal-backed stderr, so the activation script and nested tools retain terminal-aware behavior. Captured activation retains raw diagnostics but cannot impose a log format on nested commands. Non-interactive `darwin-rebuild` fallback uses `internal-json`. Nx owns the log format for Nix commands it invokes directly and removes conflicting passthrough selections.
-- Non-interactive runs and `--timing` do not render transient progress. They retain decoded diagnostics for retry/error detection and derive timing phases from typed Nix activities.
+- Non-interactive runs and `--timing` do not render transient progress. They retain decoded diagnostics for error detection and derive timing phases from typed Nix activities.
 - If a captured non-interactive or `--timing` rebuild fails with a Nix fixed-output hash mismatch, parse the `specified` and `got` hashes. If exactly one tracked `.nix` file contains the exact specified hash string and that file has no pre-existing staged or unstaged changes, update that occurrence to the got hash and retry rebuild. Disable automatic repair when `NX_NO_AUTO_HASH_FIX=1` (also accepting `true`, `yes`, or `on`). Stop automatic repairs after three fixed-output hash mismatches in one command and require manual review.
-- Every observable rebuild phase retries a bounded number of times after clearing the applicable user and root Nix git/tarball/fetcher caches when output reports lazy source object lookup failures. Recovery is phase-local for split build, profile update, and activation, and wraps the complete legacy `darwin-rebuild switch` command so its fresh flake evaluation is covered. Interactive retries use the bounded tail collected during native byte-for-byte relay; nx never re-executes a command solely to diagnose it.
-- Retries after file descriptor exhaustion by clearing tarball/fetcher caches; root cache cleanup must be non-interactive.
+- Recognized lazy-tree source-cache failures preserve the original command failure and print the manual repair command for the effective cache owner. Nx never clears Determinate's private caches or retries these failures automatically.
+  - User cache: `rm -rf "$HOME/.cache/nix/gitv3" "$HOME/.cache/nix/tarball-cache-v2" "$HOME/.cache/nix/fetcher-cache-v4.sqlite" "$HOME/.cache/nix/fetcher-cache-v4.sqlite-wal" "$HOME/.cache/nix/fetcher-cache-v4.sqlite-shm"`
+  - Root cache: `sudo rm -rf /var/root/.cache/nix/gitv3 /var/root/.cache/nix/tarball-cache-v2 /var/root/.cache/nix/fetcher-cache-v4.sqlite /var/root/.cache/nix/fetcher-cache-v4.sqlite-wal /var/root/.cache/nix/fetcher-cache-v4.sqlite-shm`
+- Recognized file-descriptor exhaustion is qualified by Nix distribution and version. Determinate Nix older than `3.16.0` receives `sudo determinate-nixd upgrade`; current or non-Determinate runtimes are not compared against the Determinate version space.
 
 Routing lint rules:
 
@@ -531,22 +539,27 @@ Runs the routing lint rules without invoking git, nix, or rebuild commands.
 
 High-level phases:
 
-1. Flake phase:
+1. Determinate substrate phase:
+  - when Determinate Nix is installed, run `determinate-nixd version` before flake evaluation
+  - when an update is available, report installed and latest versions and advise `sudo determinate-nixd upgrade`
+  - never upgrade or restart Determinate Nix inside the upgrade pipeline
+  - an unavailable or unrecognized freshness result is advisory and does not block the flow
+2. Flake phase:
   - load old lock
   - fail before update when the existing lock cannot be read or parsed; fail before brew, rebuild, or commit when the updated lock cannot be read or parsed
   - dry-run: skip update
   - non-dry-run with no positional inputs: stream `nix flake update`
   - non-dry-run with positional inputs: stream `nix flake update <input...>`, preserving CLI order
   - load new lock and diff
-  - for changed GitHub-backed inputs, run `nix flake prefetch --json github:<owner>/<repo>/<rev>` to force-realize lazy flake sources before check/rebuild
   - fetch change info and summaries
-2. Brew phase:
+  - normal flake check and build phases realize changed sources on demand
+3. Brew phase:
   - repo-wide upgrades run brew unless `--skip-brew`
   - targeted input upgrades skip brew by default
   - `brew outdated --json`
   - enrich and changelog fetch
   - non-dry-run `brew upgrade <pkgs...>`
-3. Rebuild unless `--skip-rebuild`
+4. Rebuild unless `--skip-rebuild`
   - Before rebuilding, run a binary cache preflight: `nix build <repo_root>#darwinConfigurations.<host>.system --dry-run`, parse the will-be-built and will-be-fetched sections, and list up to 10 source-build derivation names (store hash prefix and `.drv` suffix stripped).
   - When source builds exceed `NX_CACHE_MISS_THRESHOLD` (default 5), warn that the binary cache has likely not caught up with the new nixpkgs revision and, in interactive terminals, prompt to continue (default no). Declining exits `0` before rebuild/commit, keeps the updated `flake.lock`, and prints the `git checkout flake.lock` revert hint.
   - Non-interactive sessions and preflight dry-run failures are warning-only; the rebuild remains authoritative. The preflight applies to Darwin repos (manifest platform `darwin` or no manifest) with a resolvable host.
@@ -556,7 +569,7 @@ High-level phases:
   - Disable automatic repair when `NX_NO_AUTO_HASH_FIX=1` (also accepting `true`, `yes`, or `on`).
   - Stop automatic repairs after three fixed-output hash mismatches in one command and require manual review.
   - If the hash cannot be repaired safely, print the specified/got hashes and the matching file hints before failing.
-4. Commit `flake.lock` and any auto-repaired hash files unless `--skip-commit` (and if flake changes or repairs exist)
+5. Commit `flake.lock` and any auto-repaired hash files unless `--skip-commit` (and if flake changes or repairs exist)
 
 Dry-run behavior:
 
@@ -571,6 +584,7 @@ Dry-run behavior:
 - Excludes `nix-gc` from default scans/cleans because Nix store garbage collection can force future downloads or local source builds.
 - Includes `nix-gc` only when selected explicitly by positional cache name or `--only`.
 - Warns before cleaning selected `nix-gc` entries.
+- Never runs Nix store garbage collection implicitly; explicit user-invoked generation pruning and `clean-caches nix-gc` remain supported.
 - Excludes agent session history from default scans/cleans so `codex-sessions`, `codex-logs`, and `claude-file-history` do not break resume/history workflows during routine cleanup.
 - Includes `codex-sessions`, `codex-logs`, and `claude-file-history` only when selected explicitly by positional cache name or `--only`.
 - Shows live per-bucket loading feedback during cache sizing; large code roots may take minutes.
@@ -588,13 +602,7 @@ Dry-run behavior:
 - `stream_nix_update`:
   - fetches `gh auth token` and appends `extra-access-tokens = github.com=...` to inherited `NIX_CONFIG` when available, preserving existing token entries.
   - runs either `nix flake update` or `nix flake update <input...>` depending on whether targeted inputs were requested.
-  - retries once if output indicates known fetcher-cache corruption.
-  - corruption retry clears `~/.cache/nix/gitv3` and `~/.cache/nix/fetcher-cache-v4.sqlite`.
-- Changed-input prefetch:
-  - runs only for changed inputs with a non-empty new revision.
-  - uses the same GitHub access token bridge as flake update.
-  - retries once after clearing the user nix git/fetcher cache if prefetch output reports lazy source object lookup failures.
-  - failure is warning-only; the later flake check/rebuild remains authoritative.
+  - preserves the original failure and prints diagnostics for recognized Nix runtime issues without clearing private caches or retrying.
 - `parse_flake_lock`:
   - supports `github` and `tarball` inputs.
   - skips `file` type.

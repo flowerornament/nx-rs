@@ -42,16 +42,15 @@ check.
 
 ### `nx doctor`
 
-Report each substrate fact as `healthy`, `warning`, or `unavailable`; these
-states are advisory and do not change the doctor exit status:
+Report each substrate fact as `healthy`, `informational`, `warning`, or
+`unavailable`; these states do not change the doctor exit status:
 
 - Nix distribution and installed version;
 - Nix daemon reachability/version and `nix config check`;
 - Determinate daemon/client/latest version;
 - `lazy-trees`;
 - Determinate Nixd garbage-collector strategy;
-- real free space on the filesystem backing `/nix`;
-- FlakeHub authentication status.
+- observed available space on the filesystem backing `/nix`.
 
 Predicates:
 
@@ -63,17 +62,18 @@ Predicates:
 - Determinate current is healthy, stale is warning, and an unavailable or
   unrecognized version check is unavailable;
 - effective `nix config show lazy-trees` value `true` is healthy and `false` is
-  warning;
+  informational;
 - Determinate Nixd GC strategy `automatic`, including its documented default
-  when omitted, is healthy; `disabled` is warning;
-- at least 30 GiB free on the filesystem backing `/nix` is healthy; less is a
-  warning, with an urgent note below 5 percent free;
-- logged-in FlakeHub auth is healthy and logged-out is warning because private
-  flakes and cache entitlements are unavailable.
+  when omitted, is healthy; other explicit strategies are informational;
+- at least 30 GiB available on the filesystem backing `/nix` is healthy only
+  while `df` reports less than 95 percent used; lower availability remains
+  informational unless `df` reports at least 95 percent used, which is an
+  actionable warning.
 
 Missing required local tools or an unusable Nix installation remain failures.
-Staleness, logged-out auth, low disk, and unavailable network checks remain
-advisory here; rebuild admission policy is a separate contract.
+Staleness and daemon/client mismatch are actionable warnings. Optional settings,
+ordinary disk availability, and unavailable network checks remain informational
+or unavailable; rebuild admission policy is a separate contract.
 
 `determinate-nixd version` has state-dependent text output. Parsing recognizes
 the labeled daemon, client, and optional latest-version lines. The sentence
@@ -152,7 +152,8 @@ rebuild" in this spec forbids a new nx freshness request; it does not add Nix's
 - A fixed-in release is ignored for every other distribution.
 - Current or unknown versions never trigger obsolete repair.
 - `doctor` represents unavailable advisory checks without failing.
-- Doctor predicates cover disabled lazy trees/GC, low disk, and logged-out auth.
+- Doctor predicates cover disabled lazy trees/GC and ordinary versus urgent disk
+  headroom.
 - On Determinate Nix 3.21.8, source-cache diagnostics select the exact effective
   user/root manual command, report upstream, and invoke each failed phase
   exactly once. The upgrade test also proves a seeded user cache survives.
@@ -164,5 +165,7 @@ rebuild" in this spec forbids a new nx freshness request; it does not add Nix's
 - Managing Determinate releases for the user.
 - Replacing Determinate Nixd health or garbage-collection policy.
 - Treating FlakeHub login as universally required.
+- Removing FlakeHub URL parsing, lock/input support, or package discovery;
+  only authentication probing is outside `doctor`'s contract.
 - Adding a general workaround framework before a second documented issue needs
   it.

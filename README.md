@@ -336,7 +336,9 @@ Diagnoses repo and host prerequisites that affect normal `nx` usage.
   state, cache availability, and tool presence.
 - Reports public Nix substrate health: installed distribution/version, daemon
   and configuration checks, Determinate freshness, effective `lazy-trees`,
-  garbage-collector strategy, `/nix` disk headroom, and FlakeHub authentication.
+  garbage-collector strategy, and observed `/nix` filesystem availability.
+- Reserves substrate warnings for actionable conditions; optional settings and
+  ordinary disk availability remain informational.
 - Remains read-only: it never upgrades Nix, clears private caches, or runs
   garbage collection.
 - Supports `--verbose` for extra detail.

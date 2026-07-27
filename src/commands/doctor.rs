@@ -31,16 +31,17 @@ struct ToolCheck {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum AdvisoryStatus {
+enum SubstrateStatus {
     Healthy,
+    Informational,
     Warning,
     Unavailable,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct AdvisoryCheck {
+struct SubstrateCheck {
     name: String,
-    status: AdvisoryStatus,
+    status: SubstrateStatus,
     detail: String,
 }
 
@@ -53,7 +54,7 @@ struct DoctorReport {
     routing_ok: bool,
     routing_issue_count: usize,
     checks: Vec<DoctorCheck>,
-    substrate: Vec<AdvisoryCheck>,
+    substrate: Vec<SubstrateCheck>,
     tools: Vec<ToolCheck>,
     cache_path: String,
     cache_available: bool,
@@ -122,11 +123,14 @@ fn build_report(ctx: &AppContext) -> DoctorReport {
         ("darwin-rebuild", false),
     ]
     .into_iter()
-    .map(|(name, required)| ToolCheck {
-        name: name.to_string(),
-        required,
-        path: command_path(name),
-        available: command_path(name).is_some(),
+    .map(|(name, required)| {
+        let path = command_path(name);
+        ToolCheck {
+            name: name.to_string(),
+            required,
+            available: path.is_some(),
+            path,
+        }
     })
     .collect();
 
@@ -223,54 +227,49 @@ fn command_check(
     }
 }
 
-fn substrate_checks(installed: Option<&InstalledNix>) -> Vec<AdvisoryCheck> {
+fn substrate_checks(installed: Option<&InstalledNix>) -> Vec<SubstrateCheck> {
     let is_determinate =
         installed.is_some_and(|nix| nix.distribution == NixDistribution::Determinate);
     let determinate = is_determinate.then(determinate_check);
 
     vec![
         determinate
-            .unwrap_or_else(|| AdvisoryCheck::unavailable("Determinate Nix", "not installed")),
+            .unwrap_or_else(|| SubstrateCheck::unavailable("Determinate Nix", "not installed")),
         lazy_trees_check(),
         if is_determinate {
             determinate_gc_check()
         } else {
-            AdvisoryCheck::unavailable("Determinate GC", "not installed")
+            SubstrateCheck::unavailable("Determinate GC", "not installed")
         },
         nix_disk_check(),
-        if is_determinate {
-            flakehub_auth_check()
-        } else {
-            AdvisoryCheck::unavailable("FlakeHub authentication", "not installed")
-        },
     ]
 }
 
-fn determinate_check() -> AdvisoryCheck {
+fn determinate_check() -> SubstrateCheck {
     match determinate_version_status() {
         Ok(Some(status)) => match status.freshness {
-            DeterminateFreshness::Current => AdvisoryCheck::healthy(
+            DeterminateFreshness::Current => SubstrateCheck::healthy(
                 "Determinate Nix",
                 format!(
                     "daemon {} / client {} / current",
                     status.daemon, status.client
                 ),
             ),
-            DeterminateFreshness::UpdateAvailable(latest) => AdvisoryCheck::warning(
+            DeterminateFreshness::UpdateAvailable(latest) => SubstrateCheck::warning(
                 "Determinate Nix",
                 format!(
                     "daemon {} / client {} / latest {}; run `sudo determinate-nixd upgrade`",
                     status.daemon, status.client, latest
                 ),
             ),
-            DeterminateFreshness::DaemonClientMismatch => AdvisoryCheck::warning(
+            DeterminateFreshness::DaemonClientMismatch => SubstrateCheck::warning(
                 "Determinate Nix",
                 format!(
                     "daemon {} / client {} mismatch",
                     status.daemon, status.client
                 ),
             ),
-            DeterminateFreshness::Unknown => AdvisoryCheck::unavailable(
+            DeterminateFreshness::Unknown => SubstrateCheck::unavailable(
                 "Determinate Nix",
                 format!(
                     "daemon {} / client {}; freshness unknown",
@@ -278,47 +277,59 @@ fn determinate_check() -> AdvisoryCheck {
                 ),
             ),
         },
-        Ok(None) => AdvisoryCheck::unavailable("Determinate Nix", "version output unavailable"),
-        Err(err) => AdvisoryCheck::unavailable("Determinate Nix", format!("{err:#}")),
+        Ok(None) => SubstrateCheck::unavailable("Determinate Nix", "version output unavailable"),
+        Err(err) => SubstrateCheck::unavailable("Determinate Nix", format!("{err:#}")),
     }
 }
 
-fn lazy_trees_check() -> AdvisoryCheck {
+fn lazy_trees_check() -> SubstrateCheck {
     match run_captured_command("nix", &["config", "show", "lazy-trees"], None) {
         Ok(output) if output.code == 0 && output.stdout.trim() == "true" => {
-            AdvisoryCheck::healthy("lazy-trees", "enabled")
+            classify_lazy_trees(true)
         }
         Ok(output) if output.code == 0 && output.stdout.trim() == "false" => {
-            AdvisoryCheck::warning("lazy-trees", "disabled")
+            classify_lazy_trees(false)
         }
         Ok(output) => {
-            AdvisoryCheck::unavailable("lazy-trees", first_nonempty_output(&output).to_string())
+            SubstrateCheck::unavailable("lazy-trees", first_nonempty_output(&output).to_string())
         }
-        Err(err) => AdvisoryCheck::unavailable("lazy-trees", format!("{err:#}")),
+        Err(err) => SubstrateCheck::unavailable("lazy-trees", format!("{err:#}")),
     }
 }
 
-fn determinate_gc_check() -> AdvisoryCheck {
+fn classify_lazy_trees(enabled: bool) -> SubstrateCheck {
+    if enabled {
+        SubstrateCheck::healthy("lazy-trees", "enabled")
+    } else {
+        SubstrateCheck::informational("lazy-trees", "disabled")
+    }
+}
+
+fn determinate_gc_check() -> SubstrateCheck {
     let path = std::path::Path::new("/etc/determinate/config.json");
     let strategy = match std::fs::read_to_string(path) {
         Ok(text) => match determinate_gc_strategy(&text) {
             Ok(strategy) => strategy,
             Err(err) => {
-                return AdvisoryCheck::unavailable("Determinate GC", err);
+                return SubstrateCheck::unavailable("Determinate GC", err);
             }
         },
         Err(err) => {
-            return AdvisoryCheck::unavailable(
+            return SubstrateCheck::unavailable(
                 "Determinate GC",
                 format!("{}: {err}", path.display()),
             );
         }
     };
 
+    classify_gc_strategy(&strategy)
+}
+
+fn classify_gc_strategy(strategy: &str) -> SubstrateCheck {
     if strategy == "automatic" {
-        AdvisoryCheck::healthy("Determinate GC", "automatic")
+        SubstrateCheck::healthy("Determinate GC", "automatic")
     } else {
-        AdvisoryCheck::warning("Determinate GC", strategy)
+        SubstrateCheck::informational("Determinate GC", strategy)
     }
 }
 
@@ -332,14 +343,14 @@ fn determinate_gc_strategy(text: &str) -> Result<String, String> {
         .to_string())
 }
 
-fn nix_disk_check() -> AdvisoryCheck {
+fn nix_disk_check() -> SubstrateCheck {
     match snapshot_nix_disk_usage() {
         Ok(disk) => classify_nix_disk(&disk),
-        Err(err) => AdvisoryCheck::unavailable("/nix disk", format!("{err:#}")),
+        Err(err) => SubstrateCheck::unavailable("/nix disk", format!("{err:#}")),
     }
 }
 
-fn classify_nix_disk(disk: &crate::domain::generations::DiskUsageSnapshot) -> AdvisoryCheck {
+fn classify_nix_disk(disk: &crate::domain::generations::DiskUsageSnapshot) -> SubstrateCheck {
     const TARGET_FREE_BYTES: u64 = 30 * 1024 * 1024 * 1024;
 
     let detail = format!(
@@ -351,51 +362,33 @@ fn classify_nix_disk(disk: &crate::domain::generations::DiskUsageSnapshot) -> Ad
         .trim_end_matches('%')
         .parse::<u8>()
         .is_ok_and(|used| used >= 95);
-    if disk.available_bytes >= TARGET_FREE_BYTES {
-        AdvisoryCheck::healthy("/nix disk", detail)
-    } else if urgent {
-        AdvisoryCheck::warning("/nix disk", format!("{detail}; urgent GC range"))
+    if urgent {
+        SubstrateCheck::warning("/nix disk", format!("{detail}; at least 95% used"))
+    } else if disk.available_bytes >= TARGET_FREE_BYTES {
+        SubstrateCheck::healthy("/nix disk", detail)
     } else {
-        AdvisoryCheck::warning(
-            "/nix disk",
-            format!("{detail}; below Determinate's 30 GiB target"),
-        )
+        SubstrateCheck::informational("/nix disk", detail)
     }
 }
 
-fn flakehub_auth_check() -> AdvisoryCheck {
-    match run_captured_command("determinate-nixd", &["status"], None) {
-        Ok(output) if output.code == 0 && output.stdout.contains("logged-in") => {
-            AdvisoryCheck::healthy("FlakeHub authentication", "logged in")
-        }
-        Ok(output) if output.code == 0 && output.stdout.contains("logged-out") => {
-            AdvisoryCheck::warning(
-                "FlakeHub authentication",
-                "logged out; authenticated flakes and cache are unavailable",
-            )
-        }
-        Ok(output) => AdvisoryCheck::unavailable(
-            "FlakeHub authentication",
-            first_nonempty_output(&output).to_string(),
-        ),
-        Err(err) => AdvisoryCheck::unavailable("FlakeHub authentication", format!("{err:#}")),
-    }
-}
-
-impl AdvisoryCheck {
+impl SubstrateCheck {
     fn healthy(name: &str, detail: impl Into<String>) -> Self {
-        Self::new(name, AdvisoryStatus::Healthy, detail)
+        Self::new(name, SubstrateStatus::Healthy, detail)
+    }
+
+    fn informational(name: &str, detail: impl Into<String>) -> Self {
+        Self::new(name, SubstrateStatus::Informational, detail)
     }
 
     fn warning(name: &str, detail: impl Into<String>) -> Self {
-        Self::new(name, AdvisoryStatus::Warning, detail)
+        Self::new(name, SubstrateStatus::Warning, detail)
     }
 
     fn unavailable(name: &str, detail: impl Into<String>) -> Self {
-        Self::new(name, AdvisoryStatus::Unavailable, detail)
+        Self::new(name, SubstrateStatus::Unavailable, detail)
     }
 
-    fn new(name: &str, status: AdvisoryStatus, detail: impl Into<String>) -> Self {
+    fn new(name: &str, status: SubstrateStatus, detail: impl Into<String>) -> Self {
         Self {
             name: name.to_string(),
             status,
@@ -445,7 +438,6 @@ fn render_json(report: &DoctorReport) -> i32 {
 
 fn render_plain(report: &DoctorReport, verbose: bool, ctx: &AppContext) {
     ctx.printer.action("Diagnosing nx environment");
-    println!();
 
     Printer::heading("Doctor Report");
     Printer::body(&format!("Repo root: {}", report.repo_root));
@@ -471,7 +463,6 @@ fn render_plain(report: &DoctorReport, verbose: bool, ctx: &AppContext) {
         }
     ));
 
-    println!();
     Printer::heading("Checks");
     for check in &report.checks {
         let line = format!("{}: {}", check.name, check.detail);
@@ -482,18 +473,17 @@ fn render_plain(report: &DoctorReport, verbose: bool, ctx: &AppContext) {
         }
     }
 
-    println!();
     Printer::heading("Nix Substrate");
     for check in &report.substrate {
         let line = format!("{}: {}", check.name, check.detail);
         match check.status {
-            AdvisoryStatus::Healthy => ctx.printer.success(&line),
-            AdvisoryStatus::Warning => ctx.printer.warn(&line),
-            AdvisoryStatus::Unavailable => Printer::detail(&line),
+            SubstrateStatus::Healthy => ctx.printer.success(&line),
+            SubstrateStatus::Informational => Printer::detail(&line),
+            SubstrateStatus::Warning => ctx.printer.warn(&line),
+            SubstrateStatus::Unavailable => Printer::detail(&format!("unavailable: {line}")),
         }
     }
 
-    println!();
     Printer::heading("Tools");
     for tool in &report.tools {
         let line = if verbose {
@@ -582,32 +572,72 @@ mod tests {
         };
         assert_eq!(
             classify_nix_disk(&disk(30 * 1024 * 1024 * 1024, "70%")).status,
-            AdvisoryStatus::Healthy
+            SubstrateStatus::Healthy
+        );
+        assert_eq!(
+            classify_nix_disk(&disk(25 * 1024 * 1024 * 1024, "75%")).status,
+            SubstrateStatus::Informational
+        );
+        assert_eq!(
+            classify_nix_disk(&disk(40 * 1024 * 1024 * 1024, "94%")).status,
+            SubstrateStatus::Healthy
+        );
+        assert_eq!(
+            classify_nix_disk(&disk(40 * 1024 * 1024 * 1024, "95%")).status,
+            SubstrateStatus::Warning
         );
         let urgent = classify_nix_disk(&disk(512 * 1024, "99%"));
-        assert_eq!(urgent.status, AdvisoryStatus::Warning);
-        assert!(urgent.detail.contains("urgent"));
+        assert_eq!(urgent.status, SubstrateStatus::Warning);
+        assert!(urgent.detail.contains("at least 95% used"));
     }
 
     #[test]
-    fn advisory_warnings_do_not_fail_doctor() {
-        let report = DoctorReport {
-            repo_root: String::new(),
-            repo_root_source: String::new(),
-            manifest_status: String::new(),
-            manifest_detail: None,
-            routing_ok: true,
-            routing_issue_count: 0,
-            checks: vec![DoctorCheck {
-                name: String::new(),
-                ok: true,
-                detail: String::new(),
-            }],
-            substrate: vec![AdvisoryCheck::warning("test", "advisory")],
-            tools: Vec::new(),
-            cache_path: String::new(),
-            cache_available: true,
-        };
-        assert!(doctor_ok(&report));
+    fn optional_substrate_settings_are_informational() {
+        assert_eq!(
+            classify_lazy_trees(false).status,
+            SubstrateStatus::Informational
+        );
+        assert_eq!(
+            classify_gc_strategy("disabled").status,
+            SubstrateStatus::Informational
+        );
+        assert_eq!(classify_lazy_trees(true).status, SubstrateStatus::Healthy);
+        assert_eq!(
+            classify_gc_strategy("automatic").status,
+            SubstrateStatus::Healthy
+        );
+    }
+
+    #[test]
+    fn every_substrate_status_is_exit_neutral_and_serialized() {
+        for status in [
+            SubstrateStatus::Healthy,
+            SubstrateStatus::Informational,
+            SubstrateStatus::Warning,
+            SubstrateStatus::Unavailable,
+        ] {
+            let report = DoctorReport {
+                repo_root: String::new(),
+                repo_root_source: String::new(),
+                manifest_status: String::new(),
+                manifest_detail: None,
+                routing_ok: true,
+                routing_issue_count: 0,
+                checks: vec![DoctorCheck {
+                    name: String::new(),
+                    ok: true,
+                    detail: String::new(),
+                }],
+                substrate: vec![SubstrateCheck::new("test", status, "detail")],
+                tools: Vec::new(),
+                cache_path: String::new(),
+                cache_available: true,
+            };
+            assert!(doctor_ok(&report));
+            assert!(serde_json::to_string(&report).unwrap().contains(&format!(
+                r#""status":"{}""#,
+                serde_json::to_value(status).unwrap().as_str().unwrap()
+            )));
+        }
     }
 }

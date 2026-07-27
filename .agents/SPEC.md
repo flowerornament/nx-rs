@@ -145,7 +145,7 @@ Defined at root callback:
 - `version`: `0`.
 - `help`: `0` when help renders successfully; `2` when the requested topic path cannot be resolved.
 - `completion`: `0`.
-- `doctor`: `0` when all checks pass; `1` when any check fails.
+- `doctor`: `0` when all required checks pass; `1` when any required check fails.
 - `generations status`: `0`.
 - `generations plan`: `0`.
 - `generations prune`: `0` on success, no-op, user cancellation, or `--dry-run`; `1` on discovery, command execution, or post-prune refresh failure.
@@ -463,7 +463,8 @@ Network behavior:
 
 ## 9.7 `doctor`
 
-- Reports repository checks plus public Nix substrate health: installed Nix distribution/version, daemon and configuration checks, Determinate Nix freshness, effective `lazy-trees`, Determinate garbage-collector strategy, free space on the filesystem backing `/nix`, and FlakeHub authentication.
+- Reports repository checks plus public Nix substrate health: installed Nix distribution/version, daemon and configuration checks, Determinate Nix freshness, effective `lazy-trees`, Determinate garbage-collector strategy, and free space on the filesystem backing `/nix`.
+- Substrate status distinguishes healthy, informational, actionable warning, and unavailable facts. Optional feature settings and ordinary disk availability are informational; stale or mismatched Determinate versions and `/nix` filesystems reported at least 95 percent used warn.
 - Substrate advisories do not change the exit status. Failed repository or required local Nix checks still exit `1`.
 - Reads public command output and Determinate configuration only. It never upgrades Nix, clears private Nix caches, or runs garbage collection.
 

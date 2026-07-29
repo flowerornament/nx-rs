@@ -22,9 +22,9 @@
 > Checking flake
 [nix-native:bar] flake check complete
 + Flake check passed
-  darwin host: test-host
 
 > Checking binary cache coverage
+  darwin host: test-host
   Source Builds (2)
   starship-1.23.0
   terminal-notifier-2.0.0
@@ -41,9 +41,9 @@
 > Checking flake
 [nix-native:bar-with-logs] flake check complete
 + Flake check passed
-  darwin host: test-host
 
 > Checking binary cache coverage
+  darwin host: test-host
   Source Builds (2)
   starship-1.23.0
   terminal-notifier-2.0.0
@@ -67,17 +67,17 @@ x Flake check failed
 
 > Updating flake inputs
 [nix-native:bar] flake inputs complete
-+ All flake inputs up to date
-
-> Checking Homebrew updates
-+ All Homebrew packages up to date
-  darwin host: test-host
 
 > Checking binary cache coverage
+  darwin host: test-host
   Source Builds (2)
   starship-1.23.0
   terminal-notifier-2.0.0
   1 paths will be fetched from the binary cache
++ All flake inputs up to date
+
+> Checking Homebrew updates
++ All Homebrew packages up to date
 
 > Checking tracked nix files
 + Git preflight passed

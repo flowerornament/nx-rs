@@ -578,7 +578,7 @@ High-level phases:
   - dry-run: skip update
   - non-dry-run with no positional inputs: stream `nix flake update`
   - non-dry-run with positional inputs: stream `nix flake update <input...>`, preserving CLI order
-  - load new lock and diff
+  - load the new lock and derive one root-input change set through the lock's `root.inputs` mapping; transitive node churn remains part of `flake.lock` but is not reported as a user-managed input
   - fetch change info and summaries
   - normal flake check and build phases realize changed sources on demand
 3. Binary cache admission, when rebuild is enabled:
@@ -610,7 +610,13 @@ High-level phases:
   - Disable automatic repair when `NX_NO_AUTO_HASH_FIX=1` (also accepting `true`, `yes`, or `on`).
   - Stop automatic repairs after three fixed-output hash mismatches in one command and require manual review.
   - If the hash cannot be repaired safely, print the specified/got hashes and the matching file hints before failing.
-6. Commit `flake.lock` and any auto-repaired hash files unless `--skip-commit` (and if flake changes or repairs exist)
+6. Commit at the end of a successful upgrade unless `--skip-commit`:
+  - nx owns this commit; `--commit-lock-file` is rejected from upgrade passthrough (use `nx update -- --commit-lock-file` for a Nix-owned commit)
+  - commit only `flake.lock` and auto-repaired hash files, preserving unrelated staged and unstaged work
+  - commit `flake.lock` whenever its candidate bytes differ from the original, including unreportable metadata or transitive-node changes
+  - an admitted candidate owns the complete `flake.lock` path and supersedes an older staged version of that same generated file
+  - name changed, added, and removed root inputs from the same change set used by the report; do not name transitive lock nodes
+  - when all intended paths are already committed, report no changes and succeed without parsing Git's human-readable output
 
 Dry-run behavior:
 

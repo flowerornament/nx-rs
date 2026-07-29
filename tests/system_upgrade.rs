@@ -95,7 +95,7 @@ const UPGRADE_PASSTHROUGH_ARGS: &[&str] = &[
     "--skip-commit",
     "--no-ai",
     "--",
-    "--commit-lock-file",
+    "--show-trace",
     "foo",
 ];
 const UPGRADE_TARGETED_ARGS: &[&str] = &[
@@ -176,6 +176,60 @@ const UPGRADE_FLAKE_LOCK_NEW: &str = r#"{
 }
 "#;
 
+const UPGRADE_TRANSITIVE_LOCK_OLD: &str = r#"{
+  "nodes": {
+    "anneal": {
+      "locked": {
+        "owner": "flowerornament",
+        "repo": "anneal",
+        "rev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "1111111111111111111111111111111111111111",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "anneal": "anneal"
+      }
+    }
+  }
+}
+"#;
+
+const UPGRADE_TRANSITIVE_LOCK_NEW: &str = r#"{
+  "nodes": {
+    "anneal": {
+      "locked": {
+        "owner": "flowerornament",
+        "repo": "anneal",
+        "rev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "2222222222222222222222222222222222222222",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "anneal": "anneal"
+      }
+    }
+  }
+}
+"#;
+
 #[derive(Debug, Clone, Copy)]
 struct UpgradeCase {
     id: &'static str,
@@ -193,17 +247,13 @@ const UPGRADE_COMMIT_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new(
         "git",
         EXPECTED_CWD_REPO_ROOT,
-        &["-C", REPO_ROOT_TOKEN, "add", "--", "flake.lock"],
-    ),
-    ExpectedCall::new(
-        "git",
-        EXPECTED_CWD_REPO_ROOT,
         &[
-            "-C",
-            REPO_ROOT_TOKEN,
             "commit",
+            "--only",
             "-m",
             "Update flake (nixpkgs)",
+            "--",
+            "flake.lock",
         ],
     ),
 ];
@@ -212,6 +262,23 @@ const UPGRADE_SKIP_COMMIT_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
+];
+
+const UPGRADE_TRANSITIVE_COMMIT_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
+    ExpectedCall::new(
+        "git",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "commit",
+            "--only",
+            "-m",
+            "Update flake inputs",
+            "--",
+            "flake.lock",
+        ],
+    ),
 ];
 
 const UPGRADE_FAILURE_CALLS: &[ExpectedCall] = &[
@@ -229,7 +296,7 @@ const UPGRADE_PASSTHROUGH_CALLS: &[ExpectedCall] = &[
             "internal-json",
             "flake",
             "update",
-            "--commit-lock-file",
+            "--show-trace",
             "foo",
         ],
     ),
@@ -604,23 +671,13 @@ const UPGRADE_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
         "git",
         EXPECTED_CWD_REPO_ROOT,
         &[
-            "-C",
-            REPO_ROOT_TOKEN,
-            "add",
+            "commit",
+            "--only",
+            "-m",
+            "Update flake (nixpkgs) + fix FOD hash drift in home/agent-sync.nix",
             "--",
             "flake.lock",
             "home/agent-sync.nix",
-        ],
-    ),
-    ExpectedCall::new(
-        "git",
-        EXPECTED_CWD_REPO_ROOT,
-        &[
-            "-C",
-            REPO_ROOT_TOKEN,
-            "commit",
-            "-m",
-            "Update flake (nixpkgs) + fix FOD hash drift in home/agent-sync.nix",
         ],
     ),
 ];
@@ -764,6 +821,17 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
         expected_exit: 0,
         expected_calls: UPGRADE_COMMIT_CALLS,
         stdout_contains: &["Committed: Update flake (nixpkgs)"],
+    },
+    UpgradeCase {
+        id: "upgrade_transitive_lock_change_commits_lockfile",
+        cli_args: UPGRADE_COMMIT_ARGS,
+        mode: "upgrade_transitive_lock_changed",
+        expected_exit: 0,
+        expected_calls: UPGRADE_TRANSITIVE_COMMIT_CALLS,
+        stdout_contains: &[
+            "All flake inputs up to date",
+            "Committed: Update flake inputs",
+        ],
     },
     UpgradeCase {
         id: "upgrade_flake_changed_skip_commit_gate",
@@ -973,6 +1041,35 @@ fn upgrade_split_rebuild_failure_surfaces_structured_diagnostics() -> Result<(),
     Ok(())
 }
 
+#[test]
+fn upgrade_rejects_nix_owned_commit_passthrough() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+    let repo_root = TempDir::new()?;
+    copy_tree(&repo_base, repo_root.path())?;
+
+    let output = Command::new(nx_bin)
+        .args([
+            "--plain",
+            "--minimal",
+            "upgrade",
+            "--",
+            "--commit-lock-file",
+        ])
+        .current_dir(repo_root.path())
+        .env("NX_REPO_ROOT", repo_root.path())
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let rendered = format!("{stdout}{stderr}");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(rendered.contains("nx upgrade owns the final git commit"));
+    assert!(rendered.contains("nx update -- --commit-lock-file"));
+    Ok(())
+}
+
 fn run_case(nx_bin: &Path, repo_base: &Path, case: &UpgradeCase) -> Result<(), Box<dyn Error>> {
     run_case_with_extra_env(nx_bin, repo_base, case, &[]).map(|_| ())
 }
@@ -1017,7 +1114,14 @@ fn run_case_with_extra_env(
         .env("NX_SYSTEM_PROFILE_PATH", &profile_link)
         .env("NX_SYSTEM_IT_LOG", &log_path)
         .env("NX_SYSTEM_IT_MODE", case.mode)
-        .env("NX_SYSTEM_IT_UPGRADE_NEW_LOCK", UPGRADE_FLAKE_LOCK_NEW)
+        .env(
+            "NX_SYSTEM_IT_UPGRADE_NEW_LOCK",
+            if case.mode == "upgrade_transitive_lock_changed" {
+                UPGRADE_TRANSITIVE_LOCK_NEW
+            } else {
+                UPGRADE_FLAKE_LOCK_NEW
+            },
+        )
         .env(
             "NX_SYSTEM_IT_DARWIN_REBUILD",
             stub_dir.join("darwin-rebuild"),
@@ -1105,13 +1209,19 @@ fn seed_flake_lock_if_needed(repo_root: &Path, mode: &str) -> Result<(), Box<dyn
     if matches!(
         mode,
         "upgrade_flake_changed"
+            | "upgrade_transitive_lock_changed"
             | "upgrade_hash_repair"
             | "upgrade_lock_unreadable_post"
             | "upgrade_cache_misses"
             | "upgrade_cache_preflight_fail"
             | "upgrade_cache_rollback_fail"
     ) {
-        fs::write(repo_root.join("flake.lock"), UPGRADE_FLAKE_LOCK_OLD)?;
+        let lock = if mode == "upgrade_transitive_lock_changed" {
+            UPGRADE_TRANSITIVE_LOCK_OLD
+        } else {
+            UPGRADE_FLAKE_LOCK_OLD
+        };
+        fs::write(repo_root.join("flake.lock"), lock)?;
     }
     if mode == "upgrade_hash_repair" {
         fs::write(
@@ -1190,7 +1300,7 @@ fn expected_mutated_paths(case: &UpgradeCase) -> &'static [&'static str] {
     }
 
     match case.mode {
-        "upgrade_flake_changed" => &["flake.lock"],
+        "upgrade_flake_changed" | "upgrade_transitive_lock_changed" => &["flake.lock"],
         "upgrade_hash_repair" => &["flake.lock", "home/agent-sync.nix"],
         _ => &[],
     }

@@ -1,4 +1,5 @@
 use super::*;
+use std::os::unix::fs::PermissionsExt;
 
 fn sample_upgrade_args() -> UpgradeArgs {
     UpgradeArgs {
@@ -12,6 +13,167 @@ fn sample_upgrade_args() -> UpgradeArgs {
         targets: Vec::new(),
         passthrough: Vec::new(),
     }
+}
+
+fn seed_upgrade_commit_repo() -> TempDir {
+    let tmp = init_git_repo();
+    fs::write(tmp.path().join("flake.lock"), "old lock\n").unwrap();
+    run_captured_command("git", &["add", "flake.lock"], Some(tmp.path())).unwrap();
+    run_captured_command(
+        "git",
+        &["commit", "-m", "seed flake lock"],
+        Some(tmp.path()),
+    )
+    .unwrap();
+    tmp
+}
+
+#[test]
+fn upgrade_commit_owns_only_requested_paths() {
+    let tmp = seed_upgrade_commit_repo();
+    fs::write(tmp.path().join("flake.lock"), "new lock\n").unwrap();
+    fs::write(tmp.path().join("file.txt"), "unrelated dirty change\n").unwrap();
+
+    let outcome = commit_upgrade_paths(
+        tmp.path(),
+        &["flake.lock".to_string()],
+        "Update flake (anneal)",
+    )
+    .unwrap();
+
+    assert_eq!(outcome, CommitOutcome::Committed);
+    let committed = run_captured_command(
+        "git",
+        &["show", "--format=", "--name-only", "HEAD"],
+        Some(tmp.path()),
+    )
+    .unwrap();
+    assert_eq!(committed.stdout.trim(), "flake.lock");
+    let status = run_captured_command("git", &["status", "--short"], Some(tmp.path())).unwrap();
+    assert_eq!(status.stdout.trim(), "M file.txt");
+}
+
+#[test]
+fn upgrade_commit_preserves_unrelated_staged_changes() {
+    let tmp = seed_upgrade_commit_repo();
+    fs::write(tmp.path().join("flake.lock"), "new lock\n").unwrap();
+    fs::write(tmp.path().join("file.txt"), "unrelated staged change\n").unwrap();
+    run_captured_command("git", &["add", "file.txt"], Some(tmp.path())).unwrap();
+
+    let outcome = commit_upgrade_paths(
+        tmp.path(),
+        &["flake.lock".to_string()],
+        "Update flake (anneal)",
+    )
+    .unwrap();
+
+    assert_eq!(outcome, CommitOutcome::Committed);
+    let committed = run_captured_command(
+        "git",
+        &["show", "--format=", "--name-only", "HEAD"],
+        Some(tmp.path()),
+    )
+    .unwrap();
+    assert_eq!(committed.stdout.trim(), "flake.lock");
+    let staged = run_captured_command(
+        "git",
+        &["diff", "--cached", "--name-only"],
+        Some(tmp.path()),
+    )
+    .unwrap();
+    assert_eq!(staged.stdout.trim(), "file.txt");
+}
+
+#[test]
+fn upgrade_commit_supersedes_staged_lock_with_candidate() {
+    let tmp = seed_upgrade_commit_repo();
+    fs::write(tmp.path().join("flake.lock"), "staged lock\n").unwrap();
+    run_captured_command("git", &["add", "flake.lock"], Some(tmp.path())).unwrap();
+    fs::write(tmp.path().join("flake.lock"), "candidate lock\n").unwrap();
+
+    let outcome = commit_upgrade_paths(
+        tmp.path(),
+        &["flake.lock".to_string()],
+        "Update flake (anneal)",
+    )
+    .unwrap();
+
+    assert_eq!(outcome, CommitOutcome::Committed);
+    let committed =
+        run_captured_command("git", &["show", "HEAD:flake.lock"], Some(tmp.path())).unwrap();
+    assert_eq!(committed.stdout, "candidate lock\n");
+    let status = run_captured_command("git", &["status", "--short"], Some(tmp.path())).unwrap();
+    assert!(status.stdout.is_empty());
+}
+
+#[test]
+fn upgrade_commit_treats_already_committed_paths_as_success() {
+    let tmp = seed_upgrade_commit_repo();
+    let outcome = commit_upgrade_paths(
+        tmp.path(),
+        &["flake.lock".to_string()],
+        "Update flake (anneal)",
+    )
+    .unwrap();
+
+    assert_eq!(outcome, CommitOutcome::NoChanges);
+}
+
+#[test]
+fn upgrade_commit_failure_leaves_the_index_unchanged() {
+    let tmp = seed_upgrade_commit_repo();
+    fs::write(tmp.path().join("flake.lock"), "new lock\n").unwrap();
+    fs::write(tmp.path().join("file.txt"), "unrelated staged change\n").unwrap();
+    run_captured_command("git", &["add", "file.txt"], Some(tmp.path())).unwrap();
+
+    let hook = tmp.path().join(".git/hooks/pre-commit");
+    fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    let mut permissions = fs::metadata(&hook).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&hook, permissions).unwrap();
+
+    let result = commit_upgrade_paths(
+        tmp.path(),
+        &["flake.lock".to_string()],
+        "Update flake (anneal)",
+    );
+
+    assert!(result.is_err());
+    let staged = run_captured_command(
+        "git",
+        &["diff", "--cached", "--name-only"],
+        Some(tmp.path()),
+    )
+    .unwrap();
+    assert_eq!(staged.stdout.trim(), "file.txt");
+}
+
+#[test]
+fn upgrade_commit_message_uses_all_root_input_change_kinds() {
+    let root_inputs = RootInputChanges {
+        changed: vec![sample_input_change()],
+        added: vec!["anneal".to_string()],
+        removed: vec!["nixpkgs".to_string()],
+    };
+
+    assert_eq!(
+        build_upgrade_commit_message(true, &root_inputs, &[]),
+        "Update flake (anneal, home-manager, nixpkgs)"
+    );
+}
+
+#[test]
+fn upgrade_commit_message_falls_back_for_unreportable_lock_changes() {
+    let root_inputs = RootInputChanges {
+        changed: Vec::new(),
+        added: Vec::new(),
+        removed: Vec::new(),
+    };
+
+    assert_eq!(
+        build_upgrade_commit_message(true, &root_inputs, &[]),
+        "Update flake inputs"
+    );
 }
 
 #[test]

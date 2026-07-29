@@ -567,6 +567,11 @@ Runs the upgrade flow for either the whole repo or named flake inputs.
   commit.
 - `nx upgrade <input...>` updates only the named flake inputs via
   `nix flake update <input...>`.
+- Nx commits `flake.lock` and any repaired hash files once, at the end of a
+  successful upgrade, using the reported root input names when available and
+  leaving unrelated staged or unstaged work untouched. Byte-level lock changes
+  are still committed when only metadata or transitive nodes changed. Use
+  `nx update -- --commit-lock-file` when Nix should own a lock-only commit instead.
 - Flake check and build realize changed sources on demand.
 - Before Homebrew or rebuild, nx dry-runs the candidate system closure. Excessive
   source builds require interactive approval; automation fails closed. Rejection
@@ -590,7 +595,7 @@ Runs the upgrade flow for either the whole repo or named flake inputs.
 - Use `--skip-brew`, `--skip-rebuild`, or `--skip-commit` to trim the flow.
 - Use `--no-ai` to disable AI-generated summaries and recovery prompts.
 - Additional args after `--` pass through to the underlying `nix flake update`
-  command except `--log-format`, which nx owns.
+  command except `--log-format` and `--commit-lock-file`, which nx owns.
 
 Examples:
 

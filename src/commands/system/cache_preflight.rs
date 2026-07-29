@@ -46,13 +46,13 @@ pub(super) fn check_cache_preflight(
         return CachePreflightOutcome::Admitted;
     }
 
+    ctx.printer.action("Checking binary cache coverage");
     let Some(host) = super::rebuild::darwin_host(ctx) else {
         ctx.printer
             .warn("Skipping binary cache preflight: could not resolve darwin host");
         return unavailable_outcome(mode);
     };
 
-    ctx.printer.action("Checking binary cache coverage");
     let attr = format!(
         "{}#darwinConfigurations.{host}.system",
         ctx.repo_root.display()

@@ -27,12 +27,32 @@ pub struct InputChange {
     pub new_rev: String,
 }
 
-/// Result of comparing two flake.lock states.
+/// Root input changes between two `flake.lock` states.
 #[derive(Debug, Clone)]
-pub struct LockDiff {
+pub struct RootInputChanges {
     pub changed: Vec<InputChange>,
     pub added: Vec<String>,
     pub removed: Vec<String>,
+}
+
+impl RootInputChanges {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.changed.is_empty() && self.added.is_empty() && self.removed.is_empty()
+    }
+
+    #[must_use]
+    pub fn names(&self) -> Vec<&str> {
+        let mut names = self
+            .changed
+            .iter()
+            .map(|change| change.name.as_str())
+            .chain(self.added.iter().map(String::as_str))
+            .chain(self.removed.iter().map(String::as_str))
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        names
+    }
 }
 
 static FLAKEHUB_RE: LazyLock<Regex> =
@@ -179,10 +199,10 @@ pub fn parse_flake_lock_content(content: &[u8]) -> anyhow::Result<HashMap<String
 /// Compare two flake.lock states and find changes.
 ///
 /// Only tracks changed inputs that have owner/repo (GitHub-trackable sources).
-pub fn diff_locks(
+pub fn diff_root_inputs(
     old: &HashMap<String, FlakeLockInput>,
     new: &HashMap<String, FlakeLockInput>,
-) -> LockDiff {
+) -> RootInputChanges {
     let mut changed = Vec::new();
     let mut added: Vec<String> = new
         .keys()
@@ -221,7 +241,7 @@ pub fn diff_locks(
 
     changed.sort_by(|a, b| a.name.cmp(&b.name));
 
-    LockDiff {
+    RootInputChanges {
         changed,
         added,
         removed,
@@ -450,7 +470,7 @@ mod tests {
         assert!(load_flake_lock(tmp.path()).is_err());
     }
 
-    // --- diff_locks ---
+    // --- diff_root_inputs ---
 
     #[test]
     fn diff_detects_changed_inputs() {
@@ -462,7 +482,7 @@ mod tests {
         write_lock(tmp.path(), FIXTURE_LOCK_UPDATED);
         let new = parse_flake_lock(&tmp.path().join("flake.lock")).unwrap();
 
-        let diff = diff_locks(&old, &new);
+        let diff = diff_root_inputs(&old, &new);
 
         assert_eq!(diff.changed.len(), 1);
         assert_eq!(diff.changed[0].name, "home-manager");
@@ -480,7 +500,7 @@ mod tests {
         write_lock(tmp.path(), FIXTURE_LOCK_UPDATED);
         let new = parse_flake_lock(&tmp.path().join("flake.lock")).unwrap();
 
-        let diff = diff_locks(&old, &new);
+        let diff = diff_root_inputs(&old, &new);
         assert!(diff.added.contains(&"new-input".to_string()));
     }
 
@@ -494,7 +514,7 @@ mod tests {
         write_lock(tmp.path(), FIXTURE_LOCK_UPDATED);
         let new = parse_flake_lock(&tmp.path().join("flake.lock")).unwrap();
 
-        let diff = diff_locks(&old, &new);
+        let diff = diff_root_inputs(&old, &new);
         assert!(diff.removed.contains(&"flakehub-input".to_string()));
     }
 
@@ -508,7 +528,7 @@ mod tests {
         write_lock(tmp.path(), FIXTURE_LOCK_UPDATED);
         let new = parse_flake_lock(&tmp.path().join("flake.lock")).unwrap();
 
-        let diff = diff_locks(&old, &new);
+        let diff = diff_root_inputs(&old, &new);
         // nixpkgs didn't change
         assert!(
             !diff.changed.iter().any(|c| c.name == "nixpkgs"),
@@ -522,11 +542,72 @@ mod tests {
         write_lock(tmp.path(), FIXTURE_LOCK);
 
         let inputs = parse_flake_lock(&tmp.path().join("flake.lock")).unwrap();
-        let diff = diff_locks(&inputs, &inputs);
+        let diff = diff_root_inputs(&inputs, &inputs);
 
-        assert!(diff.changed.is_empty());
-        assert!(diff.added.is_empty());
-        assert!(diff.removed.is_empty());
+        assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn diff_ignores_changed_transitive_nodes_with_root_like_names() {
+        let old = parse_flake_lock_content(
+            br#"{
+  "nodes": {
+    "anneal-node": {
+      "locked": {
+        "owner": "flowerornament",
+        "repo": "anneal",
+        "rev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "1111111111111111111111111111111111111111",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "anneal": "anneal-node"
+      }
+    }
+  }
+}"#,
+        )
+        .unwrap();
+        let new = parse_flake_lock_content(
+            br#"{
+  "nodes": {
+    "anneal-node": {
+      "locked": {
+        "owner": "flowerornament",
+        "repo": "anneal",
+        "rev": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "2222222222222222222222222222222222222222",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "anneal": "anneal-node"
+      }
+    }
+  }
+}"#,
+        )
+        .unwrap();
+
+        let changes = diff_root_inputs(&old, &new);
+        assert_eq!(changes.names(), ["anneal"]);
     }
 
     #[test]
@@ -574,7 +655,7 @@ mod tests {
         );
         let new = parse_flake_lock(&tmp.path().join("flake.lock")).unwrap();
 
-        let diff = diff_locks(&old, &new);
+        let diff = diff_root_inputs(&old, &new);
         assert_eq!(diff.changed.len(), 1);
         assert_eq!(diff.changed[0].name, "anneal");
         assert_eq!(diff.changed[0].owner, "flowerornament");
@@ -628,7 +709,7 @@ mod tests {
         );
         let new = parse_flake_lock(&tmp.path().join("flake.lock")).unwrap();
 
-        let diff = diff_locks(&old, &new);
+        let diff = diff_root_inputs(&old, &new);
         assert_eq!(diff.changed.len(), 1);
         assert_eq!(diff.changed[0].name, "determinate");
     }

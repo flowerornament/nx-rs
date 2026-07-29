@@ -191,7 +191,7 @@ case "$program" in
       fi
       if [ "$mode" = "upgrade_lock_unreadable_post" ]; then
         printf '\377' > flake.lock
-      elif [ "$mode" = "upgrade_flake_changed" ] || [ "$mode" = "upgrade_hash_repair" ] || [ "$mode" = "upgrade_cache_misses" ] || [ "$mode" = "upgrade_cache_preflight_fail" ] || [ "$mode" = "upgrade_cache_rollback_fail" ]; then
+      elif [ "$mode" = "upgrade_flake_changed" ] || [ "$mode" = "upgrade_transitive_lock_changed" ] || [ "$mode" = "upgrade_hash_repair" ] || [ "$mode" = "upgrade_cache_misses" ] || [ "$mode" = "upgrade_cache_preflight_fail" ] || [ "$mode" = "upgrade_cache_rollback_fail" ]; then
         printf '%s' "${NX_SYSTEM_IT_UPGRADE_NEW_LOCK:?NX_SYSTEM_IT_UPGRADE_NEW_LOCK must be set}" > flake.lock
         if [ "$mode" = "upgrade_cache_rollback_fail" ]; then
           chmod 444 flake.lock

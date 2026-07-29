@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use rustix::fs::{FlockOperation, flock};
@@ -8,8 +8,8 @@ use rustix::fs::{FlockOperation, flock};
 use crate::cli::{RebuildArgs, UpgradeArgs};
 use crate::commands::context::AppContext;
 use crate::domain::upgrade::{
-    FlakeLockInput, InputChange, LockDiff, build_flake_update_args, diff_locks, github_owner_repo,
-    load_flake_lock, parse_flake_lock_content, short_rev,
+    FlakeLockInput, InputChange, RootInputChanges, build_flake_update_args, diff_root_inputs,
+    github_owner_repo, load_flake_lock, parse_flake_lock_content, short_rev,
 };
 use crate::infra::ai_engine::DEFAULT_CODEX_MODEL;
 use crate::infra::nix_output::NixOutputMode;
@@ -35,6 +35,18 @@ use super::rebuild::cmd_rebuild_with_command_result;
 pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
     if args.dry_run() {
         ctx.printer.dry_run_banner();
+    }
+
+    if args
+        .passthrough
+        .iter()
+        .any(|arg| arg == "--commit-lock-file")
+    {
+        ctx.printer.error("nx upgrade owns the final git commit");
+        Printer::detail(
+            "Remove --commit-lock-file, or use `nx update -- --commit-lock-file` for a Nix-owned commit.",
+        );
+        return 2;
     }
 
     check_determinate_version(args, ctx);
@@ -80,8 +92,13 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
 
     // Phase 4: Commit
     if !args.skip_commit()
-        && (!prepared.changes.is_empty() || !repaired_paths.is_empty())
-        && let Err(code) = commit_flake_lock(ctx, &prepared.changes, &repaired_paths)
+        && (prepared.lock_changed || !repaired_paths.is_empty())
+        && let Err(code) = commit_flake_lock(
+            ctx,
+            prepared.lock_changed,
+            &prepared.root_inputs,
+            &repaired_paths,
+        )
     {
         return code;
     }
@@ -190,22 +207,25 @@ impl Drop for FlakeLockTransaction {
 }
 
 struct PreparedFlakeUpdate {
-    changes: Vec<InputChange>,
+    // Lock bytes decide commit ownership; root inputs only describe user-facing changes.
+    lock_changed: bool,
+    root_inputs: RootInputChanges,
     _lock: Option<UpgradeLock>,
 }
 
 fn prepare_flake_update(args: &UpgradeArgs, ctx: &AppContext) -> Result<PreparedFlakeUpdate, i32> {
     if args.dry_run() {
-        return run_flake_phase(args, ctx).map(|changes| PreparedFlakeUpdate {
-            changes,
+        let inputs = load_flake_lock(&ctx.repo_root).map_err(|err| {
+            ctx.printer
+                .error(&format!("Could not load flake.lock before update: {err}"));
+            1
+        })?;
+        let root_inputs = diff_root_inputs(&inputs, &inputs);
+        report_flake_changes(args, ctx, &root_inputs);
+        return Ok(PreparedFlakeUpdate {
+            lock_changed: false,
+            root_inputs,
             _lock: None,
-        });
-    }
-    if args.skip_rebuild() {
-        let lock = acquire_upgrade_lock(ctx)?;
-        return run_flake_phase(args, ctx).map(|changes| PreparedFlakeUpdate {
-            changes,
-            _lock: Some(lock),
         });
     }
 
@@ -224,7 +244,18 @@ fn prepare_flake_update(args: &UpgradeArgs, ctx: &AppContext) -> Result<Prepared
         Ok(candidate) => candidate,
         Err(code) => return Err(restore_rejected_lock(transaction, ctx, code)),
     };
+    let lock_changed = candidate.bytes != transaction.original;
     transaction.observe_candidate(candidate.bytes);
+
+    if args.skip_rebuild() {
+        let lock = transaction.admit();
+        report_flake_changes(args, ctx, &candidate.root_inputs);
+        return Ok(PreparedFlakeUpdate {
+            lock_changed,
+            root_inputs: candidate.root_inputs,
+            _lock: Some(lock),
+        });
+    }
 
     let mode = if args.allow_source_builds {
         CachePreflightMode::AllowSourceBuilds
@@ -234,8 +265,10 @@ fn prepare_flake_update(args: &UpgradeArgs, ctx: &AppContext) -> Result<Prepared
     match check_cache_preflight(&ctx.system_context(), mode) {
         CachePreflightOutcome::Admitted => {
             let lock = transaction.admit();
+            report_flake_changes(args, ctx, &candidate.root_inputs);
             Ok(PreparedFlakeUpdate {
-                changes: report_flake_diff(args, ctx, candidate.diff),
+                lock_changed,
+                root_inputs: candidate.root_inputs,
                 _lock: Some(lock),
             })
         }
@@ -245,14 +278,6 @@ fn prepare_flake_update(args: &UpgradeArgs, ctx: &AppContext) -> Result<Prepared
         }
         CachePreflightOutcome::Failed => Err(restore_rejected_lock(transaction, ctx, 1)),
     }
-}
-
-fn acquire_upgrade_lock(ctx: &AppContext) -> Result<UpgradeLock, i32> {
-    UpgradeLock::acquire(&ctx.repo_root).map_err(|err| {
-        ctx.printer
-            .error(&format!("Could not lock repository for upgrade: {err:#}"));
-        1
-    })
 }
 
 fn restore_rejected_lock(transaction: FlakeLockTransaction, ctx: &AppContext, code: i32) -> i32 {
@@ -323,26 +348,8 @@ pub(super) const fn upgrade_requires_manifest_system_safety(args: &UpgradeArgs) 
     !args.dry_run() && !args.skip_rebuild()
 }
 
-/// Flake phase: load old lock → update → load new lock → diff → report.
-///
-/// Returns changed flake inputs when any changed,
-/// `Err(exit_code)` on failure.
-fn run_flake_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<Vec<InputChange>, i32> {
-    let old_inputs = load_flake_lock(&ctx.repo_root).map_err(|err| {
-        ctx.printer
-            .error(&format!("Could not load flake.lock before update: {err}"));
-        1
-    })?;
-    let diff = if args.dry_run() {
-        diff_locks(&old_inputs, &old_inputs)
-    } else {
-        update_flake_lock(args, ctx, &old_inputs)?.diff
-    };
-    Ok(report_flake_diff(args, ctx, diff))
-}
-
 struct CandidateFlakeLock {
-    diff: LockDiff,
+    root_inputs: RootInputChanges,
     bytes: Vec<u8>,
 }
 
@@ -368,24 +375,27 @@ fn update_flake_lock(
     })?;
 
     Ok(CandidateFlakeLock {
-        diff: diff_locks(old_inputs, &inputs),
+        root_inputs: diff_root_inputs(old_inputs, &inputs),
         bytes,
     })
 }
 
-fn report_flake_diff(args: &UpgradeArgs, ctx: &AppContext, diff: LockDiff) -> Vec<InputChange> {
-    if diff.changed.is_empty() && diff.added.is_empty() && diff.removed.is_empty() {
+fn report_flake_changes(args: &UpgradeArgs, ctx: &AppContext, root_inputs: &RootInputChanges) {
+    if root_inputs.is_empty() {
         ctx.printer.success("All flake inputs up to date");
-        return Vec::new();
+        return;
     }
 
-    if !diff.changed.is_empty() {
-        Printer::heading(&format!("Flake Inputs Changed ({})", diff.changed.len()));
+    if !root_inputs.changed.is_empty() {
+        Printer::heading(&format!(
+            "Flake Inputs Changed ({})",
+            root_inputs.changed.len()
+        ));
 
         // Fetch summaries and AI descriptions in parallel across all inputs.
         let no_ai = args.no_ai();
         let enriched: Vec<_> = std::thread::scope(|s| {
-            let handles: Vec<_> = diff
+            let handles: Vec<_> = root_inputs
                 .changed
                 .iter()
                 .map(|change| {
@@ -423,14 +433,12 @@ fn report_flake_diff(args: &UpgradeArgs, ctx: &AppContext, diff: LockDiff) -> Ve
         }
     }
 
-    if !diff.added.is_empty() {
-        Printer::detail(&format!("Added: {}", diff.added.join(", ")));
+    if !root_inputs.added.is_empty() {
+        Printer::detail(&format!("Added: {}", root_inputs.added.join(", ")));
     }
-    if !diff.removed.is_empty() {
-        Printer::detail(&format!("Removed: {}", diff.removed.join(", ")));
+    if !root_inputs.removed.is_empty() {
+        Printer::detail(&format!("Removed: {}", root_inputs.removed.join(", ")));
     }
-
-    diff.changed
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1088,13 +1096,13 @@ impl NixCommandEnv {
 /// Commit `flake.lock` and any auto-repaired files after a successful upgrade.
 fn commit_flake_lock(
     ctx: &AppContext,
-    flake_changes: &[InputChange],
+    lock_changed: bool,
+    root_inputs: &RootInputChanges,
     extra_paths: &[PathBuf],
 ) -> Result<(), i32> {
-    let repo = ctx.repo_root.display().to_string();
-    let message = build_upgrade_commit_message(flake_changes, extra_paths);
+    let message = build_upgrade_commit_message(lock_changed, root_inputs, extra_paths);
     let mut paths = Vec::new();
-    if !flake_changes.is_empty() {
+    if lock_changed {
         paths.push("flake.lock".to_string());
     }
     for path in extra_paths {
@@ -1103,53 +1111,14 @@ fn commit_flake_lock(
         }
     }
 
-    let mut add_args = vec!["-C", repo.as_str(), "add", "--"];
-    add_args.extend(paths.iter().map(String::as_str));
-    let add_result = run_captured_command("git", &add_args, None);
-    match add_result {
-        Ok(cmd) if cmd.code == 0 => {}
-        Ok(cmd) => {
-            ctx.printer.error("Commit failed");
-            Printer::detail("Could not stage upgrade changes");
-            let detail = first_nonempty_output(&cmd);
-            if !detail.is_empty() {
-                Printer::detail(detail);
-            }
-            return Err(1);
-        }
-        Err(err) => {
-            ctx.printer.error("Commit failed");
-            Printer::detail(&format!("Could not stage upgrade changes: {err:#}"));
-            return Err(1);
-        }
-    }
-
-    let result = run_captured_command("git", &["-C", &repo, "commit", "-m", &message], None);
-    match result {
-        Ok(cmd) if cmd.code == 0 => {
+    match commit_upgrade_paths(&ctx.repo_root, &paths, &message) {
+        Ok(CommitOutcome::Committed) => {
             ctx.printer.success(&format!("Committed: {message}"));
             Ok(())
         }
-        Ok(cmd)
-            if cmd
-                .stdout
-                .to_ascii_lowercase()
-                .contains("nothing to commit")
-                || cmd
-                    .stderr
-                    .to_ascii_lowercase()
-                    .contains("nothing to commit") =>
-        {
+        Ok(CommitOutcome::NoChanges) => {
             Printer::detail("No changes to commit");
             Ok(())
-        }
-        Ok(cmd) => {
-            ctx.printer.error("Commit failed");
-            let detail = first_nonempty_output(&cmd);
-            if !detail.is_empty() {
-                Printer::detail(detail);
-            }
-            Err(1)
         }
         Err(err) => {
             ctx.printer.error("Commit failed");
@@ -1159,21 +1128,65 @@ fn commit_flake_lock(
     }
 }
 
-fn build_upgrade_commit_message(
-    flake_changes: &[InputChange],
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CommitOutcome {
+    Committed,
+    NoChanges,
+}
+
+pub(super) fn commit_upgrade_paths(
+    repo: &Path,
+    paths: &[String],
+    message: &str,
+) -> Result<CommitOutcome> {
+    let mut commit_args = vec!["commit", "--only", "-m", message, "--"];
+    commit_args.extend(paths.iter().map(String::as_str));
+    let commit = run_captured_command("git", &commit_args, Some(repo))?;
+    if commit.code == 0 {
+        return Ok(CommitOutcome::Committed);
+    }
+
+    if owned_paths_changed(repo, paths)? {
+        let detail = first_nonempty_output(&commit);
+        if detail.is_empty() {
+            anyhow::bail!("git commit exited with status {}", commit.code);
+        }
+        anyhow::bail!("{detail}");
+    }
+
+    Ok(CommitOutcome::NoChanges)
+}
+
+fn owned_paths_changed(repo: &Path, paths: &[String]) -> Result<bool> {
+    let mut args = vec!["diff", "--quiet", "HEAD", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    let result = run_captured_command("git", &args, Some(repo))?;
+    match result.code {
+        0 => Ok(false),
+        1 => Ok(true),
+        code => anyhow::bail!("Could not inspect upgrade changes (git exited {code})"),
+    }
+}
+
+pub(super) fn build_upgrade_commit_message(
+    lock_changed: bool,
+    root_inputs: &RootInputChanges,
     repaired_paths: &[PathBuf],
 ) -> String {
-    let flake_part = if flake_changes.is_empty() {
+    let flake_part = if !lock_changed {
         None
+    } else if root_inputs.is_empty() {
+        Some("Update flake inputs".to_string())
     } else {
-        let mut names = flake_changes
+        let root_names = root_inputs.names();
+        let mut names = root_names
             .iter()
-            .map(|change| change.name.as_str())
+            .copied()
             .take(5)
             .map(str::to_string)
             .collect::<Vec<_>>();
-        if flake_changes.len() > 5 {
-            names.push(format!("+{} more", flake_changes.len() - 5));
+        if root_names.len() > 5 {
+            names.push(format!("+{} more", root_names.len() - 5));
         }
         Some(format!("Update flake ({})", names.join(", ")))
     };

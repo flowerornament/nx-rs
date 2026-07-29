@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- makes `nx upgrade` commit every byte-level lock change exactly once at the end of a successful run, derives available commit names from the same root-input changes shown to the user, preserves unrelated staged and unstaged work, and treats already-committed upgrade paths as success
 - makes `nx upgrade` binary-cache admission transactional and fail-closed: rejected, failed, or unrecognized coverage atomically restores `flake.lock`, concurrent upgrades are locked out, automation requires `--allow-source-builds` to proceed, and enrichment and Homebrew run only after admission
 - runs singular and batch package-source lookups through one bounded executor with an absolute deadline, deterministic partial results, and no nested worker pools
 - carries each package edit's complete valid shape in `EditSpec`, with install and remove sharing one pure transform and atomic write path

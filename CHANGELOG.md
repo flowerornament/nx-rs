@@ -7,6 +7,8 @@
 - runs singular and batch package-source lookups through one bounded executor with an absolute deadline, deterministic partial results, and no nested worker pools
 - carries each package edit's complete valid shape in `EditSpec`, with install and remove sharing one pure transform and atomic write path
 - protects nx-owned manifest and configuration updates from torn or truncated files by syncing complete same-directory replacements before an atomic rename, while preserving existing modes and symlink targets
+- publishes the producer-owned Nix package runtime closure for all four supported systems to the public flowerornament Cachix cache, proves tokenless substitution on fresh native runners, pins the last three releases per system, and refuses to tag or advance `release` until every output is cache-ready
+- makes the Home Manager module install the producer package by exact derivation identity while preserving explicit package overrides, so consumers receive cached releases without replacing nx-rs's locked nixpkgs input
 
 ## v1.5.33 - 2026-07-26
 

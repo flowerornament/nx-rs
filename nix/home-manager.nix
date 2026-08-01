@@ -1,10 +1,7 @@
-{ src, nxVersion }:
+{ self }:
 { config, lib, pkgs, ... }:
 let
-  defaultPackage = import ./package.nix {
-    inherit pkgs src;
-    version = nxVersion;
-  };
+  defaultPackage = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
   cfg = config.programs.nx;
   sopsCfg = cfg.sops;
   cleanCachesCfg = cfg.cleanCaches;

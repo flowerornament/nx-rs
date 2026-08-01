@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -84,6 +84,125 @@ some-crate = "9.9.9"
                     "--force-with-lease",
                     "origin",
                     "refs/heads/release:refs/heads/release",
+                ],
+            ],
+        )
+
+
+class NixCacheReleaseTests(unittest.TestCase):
+    def test_cache_lookup_bypasses_stale_negative_narinfo(self) -> None:
+        with patch.object(release, "command_succeeds", return_value=True) as run:
+            self.assertTrue(release.cache_contains("/nix/store/nx"))
+
+        run.assert_called_once_with(
+            [
+                "nix",
+                "path-info",
+                "--store",
+                release.CACHE_URI,
+                "--option",
+                "narinfo-cache-negative-ttl",
+                "0",
+                "/nix/store/nx",
+            ]
+        )
+
+    def test_missing_cache_output_names_system_and_remediation(self) -> None:
+        error = io.StringIO()
+        with (
+            patch.object(
+                release, "flake_package_systems", return_value=["aarch64-darwin"]
+            ),
+            patch.object(
+                release,
+                "nix_output_path",
+                return_value="/nix/store/example-nx-1.5.34",
+            ),
+            patch.object(release, "cache_contains", return_value=False),
+            redirect_stderr(error),
+            self.assertRaises(SystemExit),
+        ):
+            release.verify_release_cache()
+
+        message = error.getvalue()
+        self.assertIn("aarch64-darwin", message)
+        self.assertIn("/nix/store/example-nx-1.5.34", message)
+        self.assertIn("Wait for the Nix Cache workflow", message)
+
+    def test_failed_cache_gate_cannot_mutate_git(self) -> None:
+        clean_result = release.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
+        with (
+            patch.object(release, "cargo_version", return_value="1.5.34"),
+            patch.object(release.subprocess, "run", return_value=clean_result),
+            patch.object(release, "verify_release_cache", side_effect=SystemExit(1)),
+            patch.object(release, "run") as mutate_git,
+            self.assertRaises(SystemExit),
+        ):
+            release.tag("1.5.34")
+
+        mutate_git.assert_not_called()
+
+    def test_consumer_build_disables_local_builds(self) -> None:
+        with patch.object(release, "capture", return_value="/nix/store/nx") as run:
+            output = release.build_nix_output("x86_64-linux", substitutes_only=True)
+
+        self.assertEqual(output, "/nix/store/nx")
+        run.assert_called_once_with(
+            [
+                "nix",
+                "build",
+                "--accept-flake-config",
+                "--no-link",
+                "--print-out-paths",
+                "--max-jobs",
+                "0",
+                "--option",
+                "substituters",
+                f"{release.CACHE_URI} https://cache.nixos.org/",
+                "--option",
+                "extra-trusted-public-keys",
+                release.CACHE_PUBLIC_KEY,
+                ".#packages.x86_64-linux.default",
+            ]
+        )
+
+    def test_release_pins_only_verified_release_outputs(self) -> None:
+        calls: list[list[str]] = []
+        outputs = {
+            "aarch64-darwin": "/nix/store/nx-darwin",
+            "x86_64-linux": "/nix/store/nx-linux",
+        }
+        with (
+            patch.dict(release.os.environ, {"CACHIX_AUTH_TOKEN": "test-token"}),
+            patch.object(release, "flake_package_systems", return_value=list(outputs)),
+            patch.object(release, "nix_output_path", side_effect=outputs.__getitem__),
+            patch.object(release, "run", side_effect=calls.append),
+            redirect_stdout(io.StringIO()),
+        ):
+            release.pin_release_cache()
+
+        self.assertEqual(
+            calls,
+            [
+                [
+                    "cachix",
+                    "pin",
+                    release.CACHE_NAME,
+                    "nx-aarch64-darwin",
+                    "/nix/store/nx-darwin",
+                    "--keep-revisions",
+                    str(release.CACHE_PIN_REVISIONS),
+                ],
+                [
+                    "cachix",
+                    "pin",
+                    release.CACHE_NAME,
+                    "nx-x86_64-linux",
+                    "/nix/store/nx-linux",
+                    "--keep-revisions",
+                    str(release.CACHE_PIN_REVISIONS),
                 ],
             ],
         )

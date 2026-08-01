@@ -65,7 +65,7 @@ persistent session defaults like `NX_REPO_ROOT`, prefer the Home Manager module.
 Run without installing:
 
 ```bash
-nix run github:flowerornament/nx-rs -- --help
+nix run github:flowerornament/nx-rs/release -- --help
 ```
 
 Install into your profile:
@@ -78,10 +78,7 @@ Add `nx-rs` to your Nix configuration repository:
 
 ```nix
 # flake.nix inputs
-nx-rs = {
-  url = "github:flowerornament/nx-rs?ref=refs/heads/release";
-  inputs.nixpkgs.follows = "nixpkgs";
-};
+nx-rs.url = "github:flowerornament/nx-rs?ref=refs/heads/release";
 
 # package list/module
 inputs.nx-rs.packages.${pkgs.system}.default
@@ -96,6 +93,14 @@ sudo /nix/var/nix/profiles/system/sw/bin/darwin-rebuild switch --flake .
 
 The `release` branch is a moving branch maintained by the release process. It
 points at the latest tagged release; the default branch is for development.
+The producer's committed `flake.lock` defines the cached package identity, so
+consumers should not make `nx-rs.inputs.nixpkgs` follow another input.
+
+The flake advertises the public `flowerornament.cachix.org` cache and its
+trusted key. Nix may ask you to approve that configuration on first use. The
+cache is an acceleration layer: when an output is unavailable, the same flake
+still builds correctly from source. To configure the cache persistently, use
+`cachix use flowerornament` or your system's supported Nix settings.
 
 #### Nix + Home Manager
 
@@ -106,10 +111,7 @@ that drive `nx` at runtime.
 Add the flake input:
 
 ```nix
-nx-rs = {
-  url = "github:flowerornament/nx-rs?ref=refs/heads/release";
-  inputs.nixpkgs.follows = "nixpkgs";
-};
+nx-rs.url = "github:flowerornament/nx-rs?ref=refs/heads/release";
 ```
 
 Then include the module in your Home Manager configuration:
@@ -744,16 +746,19 @@ jj commit -m "Release vX.Y.Z"
 just release-verify
 jj bookmark move main --to @-
 jj git push --bookmark main
+just cache-verify
 just release-tag X.Y.Z
 git ls-remote origin refs/heads/release 'refs/tags/vX.Y.Z^{}'
 ```
 
 `just release-verify` must run from a clean jj working copy, then runs the full
 CI gate, system matrix, release build, Home Manager and package consumer smoke
-tests, and Nix build/run checks. `just release-tag` still uses Git internally
-for the annotated tag and `origin/release` update because GitHub release
-publishing is tag-driven. It prompts before running; use `just --yes
-release-tag X.Y.Z` only for explicit automation.
+tests, and Nix build/run checks. After pushing the release commit, wait for its
+four-platform Nix Cache workflow to publish and prove tokenless substitution;
+`just cache-verify` checks the same outputs locally. `just release-tag` repeats
+that cache gate, pins the last three releases per system, then uses Git to
+create the annotated tag and update `origin/release`. It prompts before
+running; use `just --yes release-tag X.Y.Z` only for explicit automation.
 
 ### Task Tracking
 

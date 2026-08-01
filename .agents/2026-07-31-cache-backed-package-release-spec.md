@@ -1,6 +1,6 @@
 # Cache-Backed Package Release Channel Specification
 
-Status: Proposed
+Status: Active; Anneal pilot complete
 Date: 2026-07-31
 Owner: flowerornament projects
 Epic: `nx-rs-xet9`
@@ -21,6 +21,11 @@ reliable package channel:
 
 The first implementation is an Anneal pilot. No other project migrates until
 that pilot proves the complete producer-to-consumer path.
+
+The Anneal `v0.24.1` pilot proved the full path on 2026-07-31: all four native
+outputs published, fresh tokenless runners substituted with local builds
+disabled, the release tag and channel moved only after cache verification, and
+Ishikawa activated the exact cached `aarch64-darwin` output.
 
 ## Problem
 
@@ -107,9 +112,10 @@ The release order is:
 2. push the commit to the development branch;
 3. build and publish every required Nix package output;
 4. verify each output through the public cache endpoint from a clean context;
-5. create the immutable version tag;
-6. advance `release` to that tagged commit;
-7. publish ordinary GitHub release assets, when the project has them.
+5. pin the verified outputs under bounded release-retention names;
+6. create the immutable version tag;
+7. advance `release` to that tagged commit;
+8. publish ordinary GitHub release assets, when the project has them.
 
 Tagging and channel publication may be one guarded release operation, but
 channel visibility remains after cache verification.
@@ -182,16 +188,18 @@ Keep the two roles distinct:
 ### Retention
 
 The free Cachix tier is finite and least-recently-used paths may be collected.
-After publication, pin each package and system under a stable, system-specific
-name with bounded history:
+After publication and verification, the guarded release operation pins each
+package and system under a stable, system-specific name with bounded history:
 
 ```bash
 cachix pin <cache> anneal-aarch64-darwin "$out" --keep-revisions 3
 ```
 
 Retain the latest three release outputs per package and system unless measured
-usage justifies another bound. Every pin name includes the system so publishing
-one matrix entry cannot replace another system's retained revisions.
+usage justifies another bound. Candidate builds are not pinned: otherwise
+ordinary development pushes would consume the release-retention history. Every
+pin name includes the system so one target cannot replace another target's
+retained revisions.
 
 The pilot records compressed cache growth before the wider rollout.
 
@@ -331,7 +339,9 @@ enough.
 
 The Cachix CLI was installed locally on 2026-07-31 as
 `cachix 1.11.1` through the user's versioned Nix profile. `cachix doctor`
-currently reports no authentication and no configured caches, as expected.
+initially reported no authentication and no configured caches. The public
+cache trust is now declarative on Ishikawa, and cache-scoped write tokens are
+installed only as repository secrets for trusted publication workflows.
 
 This profile entry is bootstrap tooling, not permanent unmanaged machine state.
 During `nx-rs-ibnj`, add Cachix to the declarative system package set and remove
@@ -371,16 +381,16 @@ secrets, or writing a publication workflow.
 1. Build the supported matrix from the producer lock.
 2. Run existing Rust and installer gates unchanged.
 3. Publish only each runtime output to Cachix.
-4. Pin each output with bounded release retention.
-5. Query Cachix for each expected output path.
-6. Record build duration, uploaded size, and cache size.
+4. Query Cachix for each expected output path.
+5. Record build duration, uploaded size, and cache size.
 
 ### Phase D: release gate
 
 1. Make cache verification a prerequisite of the Anneal release operation.
-2. Prove a failed or absent cache output leaves the existing `release` branch
+2. Pin the verified outputs with bounded release retention before Git mutation.
+3. Prove a failed or absent cache output leaves the existing `release` branch
    unchanged.
-3. Publish a pilot release through the real path.
+4. Publish a pilot release through the real path.
 
 ### Phase E: external consumer proof
 
@@ -438,9 +448,10 @@ versions is insufficient.
 
 The migration order is:
 
-1. extract only the workflow structure proven common by Anneal
+1. migrate nx-rs and its release process as the second concrete producer
+   (`nx-rs-f5ti`);
+2. extract only the workflow structure proven common by Anneal and nx-rs
    (`nx-rs-h72d`);
-2. migrate nx-rs and its release process (`nx-rs-f5ti`);
 3. migrate public storage-planner and transcribe packages, then other public
    CLIs (`nx-rs-3wr3`);
 4. update `.nix-config` consumption only after each producer is independently

@@ -54,10 +54,7 @@ cat > "$CONSUMER_ROOT/flake.nix" <<EOF
 
   inputs = {
     nixpkgs.url = ${consumer_nixpkgs_json};
-    nx-rs = {
-      url = "path:${SOURCE_ROOT}";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    nx-rs.url = "path:${SOURCE_ROOT}";
   };
 
   outputs = { nx-rs, ... }: {
@@ -66,5 +63,13 @@ cat > "$CONSUMER_ROOT/flake.nix" <<EOF
 }
 EOF
 
-nix build --no-link "$CONSUMER_ROOT#packages.${SYSTEM}.default"
-printf 'Nix package consumer smoke test passed with %s.\n' "$CONSUMER_NIXPKGS"
+producer_drv="$(nix eval --accept-flake-config --raw "$SOURCE_ROOT#packages.${SYSTEM}.default.drvPath")"
+consumer_drv="$(nix eval --accept-flake-config --raw "$CONSUMER_ROOT#packages.${SYSTEM}.default.drvPath")"
+if [ "$consumer_drv" != "$producer_drv" ]; then
+    printf 'consumer package does not preserve producer identity:\n  producer: %s\n  consumer: %s\n' \
+        "$producer_drv" "$consumer_drv" >&2
+    exit 1
+fi
+
+nix build --accept-flake-config --no-link "$CONSUMER_ROOT#packages.${SYSTEM}.default"
+printf 'Nix package consumer smoke test preserved producer identity with %s.\n' "$CONSUMER_NIXPKGS"

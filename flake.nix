@@ -1,6 +1,13 @@
 {
   description = "nx - Nix configuration management tool";
 
+  nixConfig = {
+    extra-substituters = [ "https://flowerornament.cachix.org" ];
+    extra-trusted-public-keys = [
+      "flowerornament.cachix.org-1:gSODgIXgfRANrEGITBOF8XWaEKNy8hkNGfRVwqUG46c="
+    ];
+  };
+
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
   };
@@ -30,9 +37,6 @@
         };
       });
 
-      homeManagerModules.default = import ./nix/home-manager.nix {
-        src = ./.;
-        inherit nxVersion;
-      };
+      homeManagerModules.default = import ./nix/home-manager.nix { inherit self; };
     };
 }

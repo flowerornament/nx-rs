@@ -115,14 +115,19 @@ demo-output:
 release-bump version:
     @python3 scripts/release.py bump {{quote(version)}}
 
+# Verify every advertised Nix package output is present in the public cache.
+[group('release')]
+cache-verify:
+    @python3 scripts/release.py cache-verify
+
 # Release-readiness checks and validation.
 [group('release')]
 release-verify:
     @python3 scripts/release.py verify
 
-# Create and push an annotated release tag, then publish origin/release.
+# Verify cached outputs, create and push an annotated tag, then publish origin/release.
 [group('release')]
 [arg('version', pattern='[0-9]+\.[0-9]+\.[0-9]+', help='Semver release, for example 1.5.25')]
-[confirm("This will tag, force-update origin/release, and trigger the public GitHub release workflow. Continue?")]
+[confirm("This will verify cached Nix outputs, tag, force-update origin/release, and trigger the public GitHub release workflow. Continue?")]
 release-tag version:
     @python3 scripts/release.py tag {{quote(version)}}

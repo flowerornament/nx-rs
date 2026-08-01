@@ -44,6 +44,7 @@ mkdir -p "$SOURCE_ROOT"
 
 configured_json="$TMPDIR/configured.json"
 bare_json="$TMPDIR/bare.json"
+override_json="$TMPDIR/override.json"
 eval_module="$TMPDIR/eval-home-manager-module.nix"
 root_json="$(json_quote "$SOURCE_ROOT")"
 
@@ -52,6 +53,11 @@ cat > "$eval_module" <<'EOF'
 let
   flake = builtins.getFlake "path:${root}";
   pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; };
+  consumerPkgs = pkgs // {
+    rustPlatform = pkgs.rustPlatform // {
+      buildRustPackage = _: throw "Home Manager module rebuilt nx with consumer pkgs";
+    };
+  };
   lib = flake.inputs.nixpkgs.lib;
   module = flake.outputs.homeManagerModules.default;
   stub = { lib, ... }: {
@@ -72,6 +78,7 @@ let
       default = { };
     };
   };
+  overridePackage = consumerPkgs.writeShellScriptBin "nx-test-override" "exit 0";
   caseModule =
     if mode == "configured" then
       {
@@ -87,6 +94,11 @@ let
     else if mode == "bare" then
       {
         programs.nx.enable = true;
+      }
+    else if mode == "override" then
+      {
+        programs.nx.enable = true;
+        programs.nx.package = overridePackage;
       }
     else if mode == "invalid-sops-bin" then
       {
@@ -115,8 +127,10 @@ let
       };
   evaluated = lib.evalModules {
     modules = [ module stub caseModule ];
-    specialArgs = { inherit pkgs; };
+    specialArgs.pkgs = consumerPkgs;
   };
+  installedPackage = builtins.head evaluated.config.home.packages;
+  producerPackage = flake.outputs.packages.${builtins.currentSystem}.default;
 in
 {
   packageCount = builtins.length evaluated.config.home.packages;
@@ -132,12 +146,16 @@ in
   cleanScanDepth = evaluated.config.home.sessionVariables.NX_CLEAN_SCAN_DEPTH or null;
   hasCleanSkip = evaluated.config.home.sessionVariables ? NX_CLEAN_SKIP;
   cleanSkip = evaluated.config.home.sessionVariables.NX_CLEAN_SKIP or null;
+  packageDrvPath = installedPackage.drvPath;
+  producerPackageDrvPath = producerPackage.drvPath;
+  overridePackageDrvPath = overridePackage.drvPath;
 }
 EOF
 
 eval_module_json="$(json_quote "$eval_module")"
 nix eval --impure --json --expr "import ${eval_module_json} { root = ${root_json}; mode = \"configured\"; }" > "$configured_json"
 nix eval --impure --json --expr "import ${eval_module_json} { root = ${root_json}; mode = \"bare\"; }" > "$bare_json"
+nix eval --impure --json --expr "import ${eval_module_json} { root = ${root_json}; mode = \"override\"; }" > "$override_json"
 
 if nix eval --impure --json --expr "import ${eval_module_json} { root = ${root_json}; mode = \"invalid\"; }" >/dev/null 2>&1; then
     printf 'invalid repoRoot case unexpectedly succeeded\n' >&2
@@ -164,13 +182,14 @@ if nix eval --impure --json --expr "import ${eval_module_json} { root = ${root_j
     exit 1
 fi
 
-python3 - <<'PY' "$configured_json" "$bare_json"
+python3 - <<'PY' "$configured_json" "$bare_json" "$override_json"
 import json
 import pathlib
 import sys
 
 configured = json.loads(pathlib.Path(sys.argv[1]).read_text())
 bare = json.loads(pathlib.Path(sys.argv[2]).read_text())
+override = json.loads(pathlib.Path(sys.argv[3]).read_text())
 
 if configured["packageCount"] < 1:
     raise SystemExit("configured case did not add nx to home.packages")
@@ -180,6 +199,21 @@ if configured["packageCount"] < 2:
 
 if bare["packageCount"] < 1:
     raise SystemExit("bare case did not add nx to home.packages")
+
+for case_name, case in (("configured", configured), ("bare", bare)):
+    if case["packageDrvPath"] != case["producerPackageDrvPath"]:
+        raise SystemExit(
+            f"{case_name} module package does not use the producer derivation:\n"
+            f"  module:   {case['packageDrvPath']}\n"
+            f"  producer: {case['producerPackageDrvPath']}"
+        )
+
+if override["packageDrvPath"] != override["overridePackageDrvPath"]:
+    raise SystemExit(
+        "explicit programs.nx.package override was not installed:\n"
+        f"  module:   {override['packageDrvPath']}\n"
+        f"  override: {override['overridePackageDrvPath']}"
+    )
 
 if not configured["hasRepoRoot"] or configured["repoRoot"] != "/tmp/nix-config":
     raise SystemExit("configured case did not export NX_REPO_ROOT correctly")
@@ -225,6 +259,8 @@ print("configured_sops_bin=true")
 print("configured_clean_caches=true")
 print("bare_package_count=true")
 print("bare_clean_caches_defaults=true")
+print("package_identity=producer")
+print("package_override=preserved")
 PY
 
 printf 'Home Manager module smoke test passed.\n'

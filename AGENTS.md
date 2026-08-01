@@ -214,13 +214,12 @@ After the release commit reaches `main`, its Nix Cache workflow must publish and
 prove tokenless substitution for every system advertised by `flake.nix`.
 `just cache-verify` checks those exact outputs through the public cache.
 
-`just release-tag` repeats the cache gate, pins the verified outputs under
-system-specific names retaining the last three releases, creates and pushes
-`vX.Y.Z`, then publishes `origin/release` at the same commit. It prompts before
-running because this is the public release step; use `just --yes release-tag
-X.Y.Z` only for explicit automation. The final `git ls-remote` check should
-show matching object IDs for `refs/heads/release` and the peeled tag. Pushing
-the version tag triggers `.github/workflows/release.yml`.
+`just release-tag` repeats the cache gate, creates and pushes `vX.Y.Z`, then
+publishes `origin/release` at the same commit. It prompts before running because
+this is the public release step; use `just --yes release-tag X.Y.Z` only for
+explicit automation. The final `git ls-remote` check should show matching
+object IDs for `refs/heads/release` and the peeled tag. Pushing the version tag
+triggers `.github/workflows/release.yml`.
 
 ## Task Tracking (bd)
 

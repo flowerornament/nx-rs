@@ -168,45 +168,5 @@ class NixCacheReleaseTests(unittest.TestCase):
             ]
         )
 
-    def test_release_pins_only_verified_release_outputs(self) -> None:
-        calls: list[list[str]] = []
-        outputs = {
-            "aarch64-darwin": "/nix/store/nx-darwin",
-            "x86_64-linux": "/nix/store/nx-linux",
-        }
-        with (
-            patch.dict(release.os.environ, {"CACHIX_AUTH_TOKEN": "test-token"}),
-            patch.object(release, "flake_package_systems", return_value=list(outputs)),
-            patch.object(release, "nix_output_path", side_effect=outputs.__getitem__),
-            patch.object(release, "run", side_effect=calls.append),
-            redirect_stdout(io.StringIO()),
-        ):
-            release.pin_release_cache()
-
-        self.assertEqual(
-            calls,
-            [
-                [
-                    "cachix",
-                    "pin",
-                    release.CACHE_NAME,
-                    "nx-aarch64-darwin",
-                    "/nix/store/nx-darwin",
-                    "--keep-revisions",
-                    str(release.CACHE_PIN_REVISIONS),
-                ],
-                [
-                    "cachix",
-                    "pin",
-                    release.CACHE_NAME,
-                    "nx-x86_64-linux",
-                    "/nix/store/nx-linux",
-                    "--keep-revisions",
-                    str(release.CACHE_PIN_REVISIONS),
-                ],
-            ],
-        )
-
-
 if __name__ == "__main__":
     unittest.main()

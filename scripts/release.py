@@ -18,7 +18,6 @@ CACHE_URI = f"https://{CACHE_NAME}.cachix.org"
 CACHE_PUBLIC_KEY = (
     "flowerornament.cachix.org-1:gSODgIXgfRANrEGITBOF8XWaEKNy8hkNGfRVwqUG46c="
 )
-CACHE_PIN_REVISIONS = 3
 
 
 def fail(message: str) -> None:
@@ -312,8 +311,6 @@ def cache_summary(*, system: str, derivation: str, output: str, result: str) -> 
             f"- derivation: `{derivation}`",
             f"- output: `{output}`",
             f"- result: {result}",
-            f"- retention: release-tag pins `nx-{system}` "
-            f"(last {CACHE_PIN_REVISIONS} releases)",
         ]
     )
 
@@ -392,24 +389,6 @@ def verify_release_cache() -> None:
             "Wait for the Nix Cache workflow for this commit to succeed, then retry."
         )
     print("all advertised Nix package outputs are present in Cachix")
-
-
-def pin_release_cache() -> None:
-    if not os.environ.get("CACHIX_AUTH_TOKEN"):
-        fail("CACHIX_AUTH_TOKEN is required to pin release outputs")
-    for system in flake_package_systems():
-        run(
-            [
-                "cachix",
-                "pin",
-                CACHE_NAME,
-                f"nx-{system}",
-                nix_output_path(system),
-                "--keep-revisions",
-                str(CACHE_PIN_REVISIONS),
-            ]
-        )
-    print("pinned all advertised Nix package outputs as release retention roots")
 
 
 def update_release_branch(tag_name: str) -> None:
@@ -511,7 +490,6 @@ def tag(version: str) -> None:
         fail(f"tag {tag_name} already exists")
 
     verify_release_cache()
-    pin_release_cache()
 
     run(["git", "tag", "-a", tag_name, "-m", tag_name])
     run(["git", "push", "origin", tag_name])

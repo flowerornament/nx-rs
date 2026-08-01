@@ -112,10 +112,11 @@ The release order is:
 2. push the commit to the development branch;
 3. build and publish every required Nix package output;
 4. verify each output through the public cache endpoint from a clean context;
-5. pin the verified outputs under bounded release-retention names;
-6. create the immutable version tag;
-7. advance `release` to that tagged commit;
-8. publish ordinary GitHub release assets, when the project has them.
+5. create the immutable version tag;
+6. advance `release` to that tagged commit;
+7. publish ordinary GitHub release assets, when the project has them;
+8. apply bounded release retention asynchronously when the cache control plane
+   supports a reliable, independently retryable operation.
 
 Tagging and channel publication may be one guarded release operation, but
 channel visibility remains after cache verification.
@@ -188,8 +189,8 @@ Keep the two roles distinct:
 ### Retention
 
 The free Cachix tier is finite and least-recently-used paths may be collected.
-After publication and verification, the guarded release operation pins each
-package and system under a stable, system-specific name with bounded history:
+Release retention may pin each package and system under a stable,
+system-specific name with bounded history:
 
 ```bash
 cachix pin <cache> anneal-aarch64-darwin "$out" --keep-revisions 3
@@ -200,6 +201,11 @@ usage justifies another bound. Candidate builds are not pinned: otherwise
 ordinary development pushes would consume the release-retention history. Every
 pin name includes the system so one target cannot replace another target's
 retained revisions.
+
+Retention is not a release-readiness condition. Cache presence and tokenless
+substitution are the hard pre-tag invariants; pinning changes later garbage
+collection behavior and must be independently retryable after publication. A
+failed or hung pin request must not block an otherwise cache-ready release.
 
 The pilot records compressed cache growth before the wider rollout.
 
@@ -387,10 +393,9 @@ secrets, or writing a publication workflow.
 ### Phase D: release gate
 
 1. Make cache verification a prerequisite of the Anneal release operation.
-2. Pin the verified outputs with bounded release retention before Git mutation.
-3. Prove a failed or absent cache output leaves the existing `release` branch
+2. Prove a failed or absent cache output leaves the existing `release` branch
    unchanged.
-4. Publish a pilot release through the real path.
+3. Publish a pilot release through the real path.
 
 ### Phase E: external consumer proof
 
@@ -473,7 +478,7 @@ Each producer release reports:
 - whether the build substituted or built;
 - cache publication result;
 - cache presence verification;
-- pin name and retention;
+- retention result, when asynchronous release pinning is enabled;
 - elapsed build and upload time.
 
 `nx upgrade` remains responsible for consumer-side closure coverage. It should
@@ -488,8 +493,8 @@ not gain Cachix APIs, cache credentials, release discovery, or cache mutation.
   never advance the channel on an unverified path.
 - **Cache unavailable to a consumer**: Nix may build from source.
 - **Free tier pressure**: inspect measured cache usage, remove obsolete
-  unpinned paths through Cachix policy, or purchase capacity; do not silently
-  stop pinning current releases.
+  unpinned paths through Cachix policy, or purchase capacity; implement bounded
+  release pinning as an independently retryable retention operation.
 - **Compromised write token**: revoke it, stop releases, rotate the token,
   inspect published paths, and republish trusted current outputs before
   resuming.

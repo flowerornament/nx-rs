@@ -756,9 +756,9 @@ CI gate, system matrix, release build, Home Manager and package consumer smoke
 tests, and Nix build/run checks. After pushing the release commit, wait for its
 four-platform Nix Cache workflow to publish and prove tokenless substitution;
 `just cache-verify` checks the same outputs locally. `just release-tag` repeats
-that cache gate, pins the last three releases per system, then uses Git to
-create the annotated tag and update `origin/release`. It prompts before
-running; use `just --yes release-tag X.Y.Z` only for explicit automation.
+that cache gate, then uses Git to create the annotated tag and update
+`origin/release`. It prompts before running; use `just --yes release-tag X.Y.Z`
+only for explicit automation.
 
 ### Task Tracking
 

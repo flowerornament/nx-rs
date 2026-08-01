@@ -1307,31 +1307,54 @@ mod tests {
         let starts = Arc::new(AtomicUsize::new(0));
         let first_starts = Arc::clone(&starts);
         let second_starts = Arc::clone(&starts);
-        let task = |id, starts: Arc<AtomicUsize>, delay| SearchTask {
-            id,
+        let (release_tx, release_rx) = mpsc::channel();
+        let (worker_done_tx, worker_done_rx) = mpsc::channel();
+        let (execution_tx, execution_rx) = mpsc::channel();
+
+        let first = SearchTask {
+            id: 0,
             package: "ripgrep".to_string(),
             kind: SearchTaskKind::Source(PackageSource::Nxs),
             search: Box::new(move || {
-                starts.fetch_add(1, Ordering::SeqCst);
-                sleep(delay);
+                first_starts.fetch_add(1, Ordering::SeqCst);
+                release_rx.recv().expect("test releases running worker");
+                worker_done_tx.send(()).expect("test receives worker exit");
+                SourceBackendOutcome::default()
+            }),
+        };
+        let second = SearchTask {
+            id: 1,
+            package: "ripgrep".to_string(),
+            kind: SearchTaskKind::Source(PackageSource::Nxs),
+            search: Box::new(move || {
+                second_starts.fetch_add(1, Ordering::SeqCst);
                 SourceBackendOutcome::default()
             }),
         };
 
-        let started = Instant::now();
-        let execution = SearchExecutor {
-            worker_limit: 1,
-            timeout: Duration::from_millis(30),
-        }
-        .execute(vec![
-            task(0, first_starts, Duration::from_millis(120)),
-            task(1, second_starts, Duration::ZERO),
-        ]);
+        thread::spawn(move || {
+            let execution = SearchExecutor {
+                worker_limit: 1,
+                timeout: Duration::from_secs(1),
+            }
+            .execute(vec![first, second]);
+            execution_tx
+                .send(execution)
+                .expect("test receives execution result");
+        });
 
-        assert!(started.elapsed() < Duration::from_millis(90));
+        let execution = execution_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("executor returns without joining the blocked worker");
         assert_eq!(execution.completed.len(), 0);
         assert_eq!(execution.timed_out.len(), 2);
-        sleep(Duration::from_millis(120));
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+        release_tx
+            .send(())
+            .expect("running worker receives release");
+        worker_done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("running worker exits after release");
         assert_eq!(starts.load(Ordering::SeqCst), 1);
     }
 

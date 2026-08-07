@@ -626,21 +626,22 @@ Dry-run behavior:
 ## 10.6 `clean-caches`
 
 - Host-scoped and does not require repository discovery.
-- Scans known cache directories plus code-root build artifacts and reports sizes before cleaning.
+- Scans known home cache directories and reports sizes before cleaning.
 - Optional positional cache names or `--only <names>` limit the scan and clean plan to selected cache names.
+- Excludes code-root build artifacts from default scans/cleans; `rust-targets`, `elixir-builds`, and `node-modules` scan configured code roots only when selected explicitly.
 - Excludes `nix-gc` from default scans/cleans because Nix store garbage collection can force future downloads or local source builds.
 - Includes `nix-gc` only when selected explicitly by positional cache name or `--only`.
 - Warns before cleaning selected `nix-gc` entries.
 - Never runs Nix store garbage collection implicitly; explicit user-invoked generation pruning and `clean-caches nix-gc` remain supported.
 - Excludes agent session history from default scans/cleans so `codex-sessions`, `codex-logs`, and `claude-file-history` do not break resume/history workflows during routine cleanup.
 - Includes `codex-sessions`, `codex-logs`, and `claude-file-history` only when selected explicitly by positional cache name or `--only`.
-- Shows live per-bucket loading feedback during cache sizing; large code roots may take minutes.
+- Shows live per-bucket loading feedback during cache sizing; explicitly selected large code roots may take minutes.
 - Shows live per-cache loading feedback during confirmed cleaning before rendering permanent success or warning lines.
 - If selected, scans Nix GC last because dead-store estimation may be slower than normal cache directory sizing.
 - Reports code-root cache directory counts for grouped build artifact entries.
 - Prompts before mutation unless `--yes` is set.
 - `--dry-run` reports caches without mutation.
-- `NX_CODE_ROOTS` overrides code roots as a colon-separated list. Missing defaults to `~/code`; an empty value disables code-root scans.
+- `NX_CODE_ROOTS` overrides roots used by explicitly selected code-cache scans as a colon-separated list. Missing defaults to `~/code`; an empty value disables code-root scans.
 - `NX_CLEAN_SCAN_DEPTH` overrides code-root scan and removal depth. Missing or invalid values default to `3`; values above `8` clamp to `8`.
 - `NX_CLEAN_SKIP` skips comma-separated cache names and warns for unknown names.
 

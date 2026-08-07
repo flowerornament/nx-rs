@@ -82,9 +82,9 @@ in
         default = [ "${config.home.homeDirectory}/code" ];
         example = [ "/Users/alice/code" "/Volumes/work/code" ];
         description = ''
-          Code roots scanned by `nx clean-caches` for build artifacts. Exported
-          as colon-separated `NX_CODE_ROOTS`; set to an empty list to disable
-          code-root scanning.
+          Code roots scanned when `nx clean-caches` explicitly selects project
+          build artifacts. Exported as colon-separated `NX_CODE_ROOTS`; set to
+          an empty list to disable code-root scanning.
         '';
       };
 

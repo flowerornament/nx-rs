@@ -183,6 +183,12 @@ impl CleanCachesConfig {
     fn unknown_selected_names(&self) -> Vec<&str> {
         unknown_cache_names(&self.only)
     }
+
+    fn selects_code_caches(&self) -> bool {
+        CODE_CACHE_TARGETS
+            .iter()
+            .any(|target| self.selected(target.name))
+    }
 }
 
 pub fn cmd_clean_caches(args: &CleanCachesArgs, ctx: &HostContext<'_>) -> i32 {
@@ -220,10 +226,11 @@ pub fn cmd_clean_caches(args: &CleanCachesArgs, ctx: &HostContext<'_>) -> i32 {
             "agent session history is excluded by default; select codex-sessions, codex-logs, or claude-file-history explicitly to clean it.",
         );
     }
-    let scan_message = if config.selected("nix-gc") {
-        "Sizing caches; Nix GC and large code roots can take a while"
-    } else {
-        "Sizing caches; large code roots can take a while"
+    let scan_message = match (config.selected("nix-gc"), config.selects_code_caches()) {
+        (true, true) => "Sizing caches; Nix GC and large code roots can take a while",
+        (true, false) => "Sizing caches; Nix GC can take a while",
+        (false, true) => "Sizing caches; large code roots can take a while",
+        (false, false) => "Sizing caches",
     };
     let entries = ctx.printer.with_loading(scan_message, |loading| {
         scan_caches(&home, &config, |message| loading.set_text(message))
@@ -538,7 +545,7 @@ fn default_selected(name: &str) -> bool {
     CACHE_CANDIDATES
         .iter()
         .find(|candidate| candidate.name == name)
-        .is_none_or(|candidate| candidate.default_selected)
+        .is_some_and(|candidate| candidate.default_selected)
 }
 
 fn prune_code_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -827,10 +834,36 @@ mod tests {
         assert!(config.skips("rust-targets"));
         assert!(!config.selected("huggingface"));
         assert!(!config.selected("rust-targets"));
-        assert!(config.selected("node-modules"));
+        assert!(!config.selected("node-modules"));
         assert!(!config.selected("nix-gc"));
         assert!(!config.skips("node-modules"));
         assert!(config.unknown_skip_names().is_empty());
+    }
+
+    #[test]
+    fn code_caches_are_default_excluded_but_explicitly_selectable() {
+        let default_config = CleanCachesConfig {
+            code_roots: vec![PathBuf::from("/Users/tester/code")],
+            scan_depth: DEFAULT_SCAN_DEPTH,
+            skip: Vec::new(),
+            only: Vec::new(),
+        };
+        let explicit_config = CleanCachesConfig {
+            code_roots: vec![PathBuf::from("/Users/tester/code")],
+            scan_depth: DEFAULT_SCAN_DEPTH,
+            skip: Vec::new(),
+            only: CODE_CACHE_TARGETS
+                .iter()
+                .map(|target| target.name.to_string())
+                .collect(),
+        };
+
+        for target in CODE_CACHE_TARGETS {
+            assert!(!default_config.selected(target.name));
+            assert!(explicit_config.selected(target.name));
+        }
+        assert!(!default_config.selects_code_caches());
+        assert!(explicit_config.selects_code_caches());
     }
 
     #[test]

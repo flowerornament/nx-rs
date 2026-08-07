@@ -12,6 +12,12 @@ require_cmd git
 require_cmd nix
 require_cmd python3
 
+if command -v gh >/dev/null 2>&1 && github_token="$(gh auth token 2>/dev/null)" && [ -n "$github_token" ]; then
+    NIX_CONFIG="${NIX_CONFIG:+${NIX_CONFIG}
+}extra-access-tokens = github.com=${github_token}"
+    export NIX_CONFIG
+fi
+
 json_quote() {
     python3 - <<'PY' "$1"
 import json

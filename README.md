@@ -212,8 +212,9 @@ Requirements:
   `rebuild` and `upgrade`; set to `0`, `false`, or `no` to disable.
 - `NX_NO_AUTO_HASH_FIX`: disable fixed-output hash repair during `nx rebuild`
   and `nx upgrade`; set to `1`, `true`, `yes`, or `on`.
-- `NX_CODE_ROOTS`: colon-separated roots scanned by `nx clean-caches`; defaults
-  to `~/code`. Use an empty string to disable code-root scans.
+- `NX_CODE_ROOTS`: colon-separated roots scanned when project build-artifact
+  caches are selected explicitly; defaults to `~/code`. Use an empty string to
+  disable code-root scans.
 - `NX_CLEAN_SCAN_DEPTH`: maximum `nx clean-caches` code-root scan depth;
   defaults to `3`; values above `8` are clamped.
 - `NX_CLEAN_SKIP`: comma-separated cache names for `nx clean-caches` to skip.
@@ -628,11 +629,13 @@ directory and do not require a managed repo.
 
 #### `clean-caches`
 
-Scans host cache directories and common build artifacts, reports sizes, and
-cleans them after confirmation.
+Scans host cache directories, reports sizes, and cleans them after confirmation.
 
 - Supports `--dry-run` and `--yes`.
-- Code-root scans default to `~/code` and depth `3`; scan depth is capped at `8`.
+- Project build artifacts are excluded by default. Select `rust-targets`,
+  `elixir-builds`, or `node-modules` explicitly to scan configured code roots.
+- Explicit code-root scans default to `~/code` and depth `3`; scan depth is
+  capped at `8`.
 - Nix store GC is excluded by default because it can force future downloads or
   local source builds; select `nix-gc` explicitly when that is intended.
 - Nx never runs Nix store GC implicitly. Explicit `nx generations prune` and
@@ -640,8 +643,8 @@ cleans them after confirmation.
 - Agent session history is excluded by default so routine cleanup does not
   remove resume/history data. Select `codex-sessions`, `codex-logs`, or
   `claude-file-history` explicitly when you want to clean those directories.
-- Large code-root scans show live per-bucket loading feedback while sizes are
-  computed.
+- Explicitly selected large code-root scans show live per-bucket loading
+  feedback while sizes are computed.
 - If selected, Nix GC sizing runs last because dead-store estimation can be
   slower than normal cache directory sizing.
 - Confirmed cleaning shows live per-cache loading feedback before final success

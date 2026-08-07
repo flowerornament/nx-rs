@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v1.5.35 - 2026-08-06
+
+- keeps project build artifacts under configured code roots out of default `nx clean-caches` plans; select `rust-targets`, `elixir-builds`, or `node-modules` explicitly when that cleanup is intended
+
 ## v1.5.34 - 2026-08-01
 
 - makes `nx upgrade` commit every byte-level lock change exactly once at the end of a successful run, derives available commit names from the same root-input changes shown to the user, preserves unrelated staged and unstaged work, and treats already-committed upgrade paths as success

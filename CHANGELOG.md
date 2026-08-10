@@ -5,6 +5,7 @@
 ## v1.5.36 - 2026-08-10
 
 - accepts Nix input-realization progress around binary-cache dry-run plans without weakening fail-closed admission when no plan evidence is recognized
+- upgrading from an affected older nx can deadlock before installing this fix because cache-admission rollback restores `flake.lock`; bootstrap with `nix flake update nx-rs nx-rs-dev && nx rebuild`, verify `nx version` reports 1.5.36, then rerun `nx upgrade` without `--allow-source-builds`
 
 ## v1.5.35 - 2026-08-06
 

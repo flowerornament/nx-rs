@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- accepts Nix input-realization progress around binary-cache dry-run plans without weakening fail-closed admission when no plan evidence is recognized
+
 ## v1.5.35 - 2026-08-06
 
 - keeps project build artifacts under configured code roots out of default `nx clean-caches` plans; select `rust-targets`, `elixir-builds`, or `node-modules` explicitly when that cleanup is intended

@@ -585,7 +585,7 @@ High-level phases:
   - preserve the original `flake.lock` bytes before updating
   - hold an exclusive repository lock from the original snapshot through rollback or the complete admitted upgrade (including rebuild and commit); a concurrent nx upgrade fails before mutation
   - dry-run the planned whole-system closure for the candidate lock
-  - empty or recognized build/fetch output establishes coverage; successful but unrecognized output is unavailable and therefore fails closed
+  - empty output, diagnostic-only output (including first-fetch Git-cache unpacking), or recognized build/fetch sections establish coverage; unrelated progress around recognized sections is ignored, while successful output with no plan evidence remains unavailable and fails closed
   - coverage within `NX_CACHE_MISS_THRESHOLD` admits the candidate
   - excessive source builds require explicit interactive approval (default no)
   - non-interactive runs, unresolved hosts, and failed coverage checks reject the candidate by default
@@ -603,6 +603,7 @@ High-level phases:
   - non-dry-run `brew upgrade <pkgs...>`
 5. Rebuild unless `--skip-rebuild`
   - The binary cache admission step parses the `will be built` and `will be fetched` sections and lists up to 10 source-build derivation names (store hash prefix and `.drv` suffix stripped).
+  - Unrecognized lines end the active section so later store paths cannot be misclassified. When no plan is recognized, retrying once after input realization is the primary remediation; `--allow-source-builds` is reserved for independently verified coverage.
   - The admission step applies to Darwin repos (manifest platform `darwin` or no manifest). Non-Darwin manifests do not have a Darwin system closure to gate.
   - If a captured non-interactive or `--timing` rebuild fails with a Nix fixed-output hash mismatch, parse the `specified` and `got` hashes.
   - If exactly one tracked `.nix` file contains the exact specified hash string and that file has no pre-existing staged or unstaged changes, update that occurrence to the got hash and retry rebuild.

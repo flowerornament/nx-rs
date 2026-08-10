@@ -147,7 +147,10 @@ pub(super) fn unavailable_outcome(mode: CachePreflightMode) -> CachePreflightOut
         }
         CachePreflightMode::Enforce => {
             Printer::detail("Could not establish binary cache coverage; refusing the upgrade.");
-            Printer::detail("Rerun with --allow-source-builds to proceed explicitly.");
+            Printer::detail("Rerun once to confirm after Nix finishes realizing inputs.");
+            Printer::detail(
+                "Use --allow-source-builds only after independently verifying cache coverage.",
+            );
             CachePreflightOutcome::Failed
         }
     }
@@ -196,29 +199,38 @@ pub(super) fn parse_dry_run_plan(output: &str) -> Option<DryRunPlan> {
 
     let mut section = Section::None;
     let mut plan = DryRunPlan::default();
-    let mut recognized = true;
+    let mut saw_plan_section = false;
+    let mut saw_unrecognized = false;
 
     for line in output.lines() {
         let trimmed = line.trim();
         if is_build_section_header(trimmed) {
             section = Section::Build;
+            saw_plan_section = true;
         } else if is_fetch_section_header(trimmed) {
             section = Section::Fetch;
+            saw_plan_section = true;
         } else if trimmed.starts_with("/nix/store/") {
             match section {
                 Section::Build => plan.to_build.push(derivation_display_name(trimmed)),
                 Section::Fetch => plan.to_fetch += 1,
-                Section::None => recognized = false,
+                Section::None => saw_unrecognized = true,
             }
-        } else if trimmed.starts_with("warning:") || trimmed.starts_with("trace:") {
+        } else if is_dry_run_diagnostic(trimmed) {
             section = Section::None;
         } else if !trimmed.is_empty() {
-            recognized = false;
+            saw_unrecognized = true;
             section = Section::None;
         }
     }
 
-    recognized.then_some(plan)
+    (saw_plan_section || !saw_unrecognized).then_some(plan)
+}
+
+fn is_dry_run_diagnostic(line: &str) -> bool {
+    line.starts_with("warning:")
+        || line.starts_with("trace:")
+        || (line.starts_with("unpacking '") && line.ends_with("' into the Git cache..."))
 }
 
 fn is_build_section_header(line: &str) -> bool {

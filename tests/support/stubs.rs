@@ -235,6 +235,7 @@ case "$program" in
         fi
       done
       if [ "$is_dry_run" = "1" ]; then
+        echo "unpacking 'https://api.flakehub.com/f/pinned/example/source.tar.gz' into the Git cache..." >&2
         if [ "$mode" = "upgrade_cache_preflight_fail" ]; then
           echo "error: candidate closure could not be evaluated" >&2
           exit 1

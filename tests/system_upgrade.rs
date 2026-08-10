@@ -770,6 +770,8 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
         expected_calls: UPGRADE_CACHE_GATE_REJECT_CALLS,
         stdout_contains: &[
             "Could not establish binary cache coverage; refusing the upgrade.",
+            "Rerun once to confirm after Nix finishes realizing inputs.",
+            "Use --allow-source-builds only after independently verifying cache coverage.",
             "Restored original flake.lock",
         ],
     },

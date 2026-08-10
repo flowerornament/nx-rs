@@ -97,6 +97,48 @@ fn parse_dry_run_plan_allows_warning_only_no_work_output() {
 }
 
 #[test]
+fn parse_dry_run_plan_allows_flake_unpacking_only_no_work_output() {
+    let output = "unpacking 'https://api.flakehub.com/f/pinned/example/source.tar.gz' into the Git cache...\n";
+
+    assert_eq!(parse_dry_run_plan(output), Some(DryRunPlan::default()));
+}
+
+#[test]
+fn parse_dry_run_plan_ignores_progress_before_recognized_plan() {
+    let output = "\
+evaluating candidate system closure...
+this derivation will be built:
+  /nix/store/0kfh6g5wl8vvbmjmm6zkbz4nqhyfqhb0-starship-1.23.0.drv
+";
+
+    assert_eq!(
+        parse_dry_run_plan(output),
+        Some(DryRunPlan {
+            to_build: vec!["starship-1.23.0".to_string()],
+            to_fetch: 0,
+        })
+    );
+}
+
+#[test]
+fn parse_dry_run_plan_ends_section_at_unrecognized_output() {
+    let output = "\
+this derivation will be built:
+  /nix/store/0kfh6g5wl8vvbmjmm6zkbz4nqhyfqhb0-starship-1.23.0.drv
+evaluating another input...
+  /nix/store/1kq06fzk5f7jvvj0472pfcgyzcnl90ap-terminal-notifier-2.0.0.drv
+";
+
+    assert_eq!(
+        parse_dry_run_plan(output),
+        Some(DryRunPlan {
+            to_build: vec!["starship-1.23.0".to_string()],
+            to_fetch: 0,
+        })
+    );
+}
+
+#[test]
 fn derivation_display_name_strips_store_prefix_and_drv_suffix() {
     assert_eq!(
         derivation_display_name("/nix/store/0kfh6g5wl8vvbmjmm6zkbz4nqhyfqhb0-starship-1.23.0.drv"),

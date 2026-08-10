@@ -580,10 +580,11 @@ Runs the upgrade flow for either the whole repo or named flake inputs.
   source builds require interactive approval; automation fails closed. Rejection
   or an unavailable coverage check atomically restores the original
   `flake.lock`.
-- Successful but unrecognized Nix planning output is treated as unavailable,
-  and concurrent nx upgrades are refused while admission is in progress.
-- Use `--allow-source-builds` to proceed explicitly when source builds or
-  unavailable cache coverage are acceptable.
+- Nix input-realization diagnostics and unrelated progress around recognized
+  planning sections do not invalidate cache coverage. Output with no recognized
+  plan remains unavailable, and concurrent upgrades are refused during admission.
+- Retry unavailable coverage once after Nix realizes its inputs. Use
+  `--allow-source-builds` only after independently verifying cache coverage.
 - If a structured rebuild reports a fixed-output hash mismatch, `nx` updates
   the unique clean matching hash in a tracked `.nix` file, retries, and includes
   that file in the upgrade commit. It prints the file, line, old hash, and new

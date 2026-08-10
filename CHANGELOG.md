@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.5.36 - 2026-08-10
+
 - accepts Nix input-realization progress around binary-cache dry-run plans without weakening fail-closed admission when no plan evidence is recognized
 
 ## v1.5.35 - 2026-08-06

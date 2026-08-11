@@ -23,9 +23,10 @@ use super::rebuild::{
 };
 use super::undo::{git_diff_stat, git_modified_files};
 use super::upgrade::{
-    CommitOutcome, FlakeLockTransaction, NixConfig, brew_compare_url, build_upgrade_commit_message,
-    commit_upgrade_paths, flake_compare_endpoint, flake_compare_url, maybe_ai_summary,
-    parse_ai_summary_output, parse_brew_info_json, parse_brew_outdated_json, parse_compare_json,
+    CommitOutcome, CompareFetchError, FlakeLockTransaction, NixConfig, brew_compare_url,
+    build_upgrade_commit_message, commit_upgrade_paths, compare_summary_from_output,
+    flake_compare_endpoint, flake_compare_url, maybe_ai_summary, parse_ai_summary_output,
+    parse_brew_info_json, parse_brew_outdated_json, parse_compare_json,
     should_use_detailed_ai_summary, upgrade_requires_manifest_system_safety,
 };
 use crate::domain::upgrade::build_flake_update_args;

@@ -129,7 +129,10 @@ const UPGRADE_DRY_RUN_BREW_ARGS: &[&str] = &[
     "--no-ai",
 ];
 const GH_AUTH_TOKEN_ARGS: &[&str] = &["auth", "token"];
-const GH_NIXPKGS_COMPARE_ARGS: &[&str] = &["api", "repos/NixOS/nixpkgs/compare/aaaaaaa...bbbbbbb"];
+const GH_NIXPKGS_COMPARE_ARGS: &[&str] = &[
+    "api",
+    "repos/NixOS/nixpkgs/compare/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+];
 const UPGRADE_NIX_CONFIG: &str = "extra-access-tokens = github.com=ghp_system_matrix_token";
 const NIX_VERSION_CALL: ExpectedCall =
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, &["--version"]);

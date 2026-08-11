@@ -580,6 +580,7 @@ High-level phases:
   - non-dry-run with positional inputs: stream `nix flake update <input...>`, preserving CLI order
   - load the new lock and derive one root-input change set through the lock's `root.inputs` mapping; transitive node churn remains part of `flake.lock` but is not reported as a user-managed input
   - fetch change info and summaries
+  - use complete locked revisions for GitHub comparison identity while keeping abbreviated revisions display-only; comparison failures are advisory and report whether command execution, the API, or response parsing failed
   - normal flake check and build phases realize changed sources on demand
 3. Binary cache admission, when rebuild is enabled:
   - preserve the original `flake.lock` bytes before updating

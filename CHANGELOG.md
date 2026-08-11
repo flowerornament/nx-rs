@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- uses full flake revisions for GitHub comparisons and reports concise API, command, or response failures instead of collapsing every enrichment failure into the same warning
+
 ## v1.5.36 - 2026-08-10
 
 - accepts Nix input-realization progress around binary-cache dry-run plans without weakening fail-closed admission when no plan evidence is recognized

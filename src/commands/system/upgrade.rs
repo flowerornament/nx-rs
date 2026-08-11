@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
@@ -401,7 +402,7 @@ fn report_flake_changes(args: &UpgradeArgs, ctx: &AppContext, root_inputs: &Root
                 .map(|change| {
                     s.spawn(move || {
                         let summary = fetch_flake_compare_summary(change);
-                        let ai_summary = summary.as_ref().and_then(|sum| {
+                        let ai_summary = summary.as_ref().ok().and_then(|sum| {
                             maybe_ai_summary(no_ai, || summarize_flake_change_ai(change, sum))
                         });
                         (change, summary, ai_summary)
@@ -422,13 +423,16 @@ fn report_flake_changes(args: &UpgradeArgs, ctx: &AppContext, root_inputs: &Root
                 short_rev(&change.new_rev),
             ));
 
-            if let Some(summary) = summary {
-                Printer::sub_detail(&format_compare_summary(summary));
-                if let Some(ai_summary) = ai_summary {
-                    Printer::sub_detail(ai_summary);
+            match summary {
+                Ok(summary) => {
+                    Printer::sub_detail(&format_compare_summary(summary));
+                    if let Some(ai_summary) = ai_summary {
+                        Printer::sub_detail(ai_summary);
+                    }
                 }
-            } else {
-                ctx.printer.warn("Failed to fetch comparison from GitHub");
+                Err(error) => ctx
+                    .printer
+                    .warn(&format!("Failed to fetch comparison from GitHub: {error}")),
             }
         }
     }
@@ -447,22 +451,59 @@ pub(super) struct CompareSummary {
     pub(super) commit_subjects: Vec<String>,
 }
 
-fn fetch_flake_compare_summary(change: &InputChange) -> Option<CompareSummary> {
-    let endpoint = flake_compare_endpoint(change)?;
+fn fetch_flake_compare_summary(change: &InputChange) -> Result<CompareSummary, CompareFetchError> {
+    let endpoint = flake_compare_endpoint(change).ok_or(CompareFetchError::MissingRevision)?;
     fetch_compare_summary(&endpoint)
 }
 
 fn fetch_brew_compare_summary(package: &BrewOutdatedPackage) -> Option<CompareSummary> {
     let endpoint = brew_compare_endpoint(package)?;
-    fetch_compare_summary(&endpoint)
+    fetch_compare_summary(&endpoint).ok()
 }
 
-fn fetch_compare_summary(endpoint: &str) -> Option<CompareSummary> {
-    let output = run_captured_command("gh", &["api", endpoint], None).ok()?;
-    if output.code != 0 {
-        return None;
+fn fetch_compare_summary(endpoint: &str) -> Result<CompareSummary, CompareFetchError> {
+    let output = run_captured_command("gh", &["api", endpoint], None)
+        .map_err(|error| CompareFetchError::Command(format!("{error:#}")))?;
+    compare_summary_from_output(&output)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum CompareFetchError {
+    MissingRevision,
+    Command(String),
+    Api { code: i32, detail: String },
+    InvalidResponse,
+}
+
+impl fmt::Display for CompareFetchError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingRevision => formatter.write_str("missing commit revision"),
+            Self::Command(detail) => write!(formatter, "could not run gh: {detail}"),
+            Self::Api { code, detail } => {
+                write!(formatter, "GitHub API exited with status {code}: {detail}")
+            }
+            Self::InvalidResponse => formatter.write_str("GitHub returned an unexpected response"),
+        }
     }
-    parse_compare_json(&output.stdout)
+}
+
+pub(super) fn compare_summary_from_output(
+    output: &crate::infra::shell::CapturedCommand,
+) -> Result<CompareSummary, CompareFetchError> {
+    if output.code != 0 {
+        let detail = first_commit_line(first_nonempty_output(output));
+        let detail = if detail.is_empty() {
+            "no error detail".to_string()
+        } else {
+            truncate_with_ellipsis(detail, 160)
+        };
+        return Err(CompareFetchError::Api {
+            code: output.code,
+            detail,
+        });
+    }
+    parse_compare_json(&output.stdout).ok_or(CompareFetchError::InvalidResponse)
 }
 
 pub(super) fn parse_compare_json(json_str: &str) -> Option<CompareSummary> {
@@ -665,8 +706,8 @@ fn first_commit_line(message: &str) -> &str {
 }
 
 pub(super) fn flake_compare_endpoint(change: &InputChange) -> Option<String> {
-    let old = short_rev(&change.old_rev);
-    let new = short_rev(&change.new_rev);
+    let old = change.old_rev.trim();
+    let new = change.new_rev.trim();
     if old.is_empty() || new.is_empty() {
         return None;
     }

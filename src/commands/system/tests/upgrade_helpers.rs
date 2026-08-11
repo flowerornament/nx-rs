@@ -222,11 +222,45 @@ fn flake_compare_url_uses_short_revs() {
 }
 
 #[test]
-fn flake_compare_endpoint_uses_short_revs() {
+fn flake_compare_endpoint_preserves_full_revs() {
     let endpoint = flake_compare_endpoint(&sample_input_change());
     assert_eq!(
         endpoint.as_deref(),
-        Some("repos/nix-community/home-manager/compare/aaaaaaa...bbbbbbb")
+        Some(
+            "repos/nix-community/home-manager/compare/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        )
+    );
+}
+
+#[test]
+fn compare_failure_preserves_api_status_and_detail() {
+    let output = CapturedCommand::captured(
+        1,
+        String::new(),
+        "gh: Not Found (HTTP 404)\nmore detail".to_string(),
+    );
+
+    let error = compare_summary_from_output(&output).unwrap_err();
+    assert_eq!(
+        error,
+        CompareFetchError::Api {
+            code: 1,
+            detail: "gh: Not Found (HTTP 404)".to_string(),
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "GitHub API exited with status 1: gh: Not Found (HTTP 404)"
+    );
+}
+
+#[test]
+fn compare_failure_distinguishes_invalid_response() {
+    let output = CapturedCommand::captured(0, "not json".to_string(), String::new());
+
+    assert_eq!(
+        compare_summary_from_output(&output),
+        Err(CompareFetchError::InvalidResponse)
     );
 }
 

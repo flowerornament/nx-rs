@@ -13,9 +13,11 @@ pub(super) enum CachePreflightMode {
     /// Report and warn without prompting.
     ReportOnly,
     /// Require usable coverage or explicit approval before continuing.
-    Enforce,
-    /// Proceed despite excessive or unavailable cache coverage.
-    AllowSourceBuilds,
+    RequireApproval,
+    /// Admit a recognized build plan without prompting.
+    ApproveSourceBuilds,
+    /// Proceed even when cache coverage cannot be established.
+    Bypass,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,7 +110,10 @@ pub(super) fn check_cache_preflight(
         Printer::confirm("Continue with rebuild?", false)
     });
     match outcome {
-        CachePreflightOutcome::Admitted if mode == CachePreflightMode::AllowSourceBuilds => {
+        CachePreflightOutcome::Admitted if mode == CachePreflightMode::ApproveSourceBuilds => {
+            Printer::detail("Continuing because --yes pre-approved this source-build plan.");
+        }
+        CachePreflightOutcome::Admitted if mode == CachePreflightMode::Bypass => {
             Printer::detail("Continuing because --allow-source-builds was passed.");
         }
         CachePreflightOutcome::Failed => {
@@ -126,12 +131,12 @@ pub(super) fn source_builds_outcome(
     confirm: impl FnOnce() -> bool,
 ) -> CachePreflightOutcome {
     match mode {
-        CachePreflightMode::ReportOnly | CachePreflightMode::AllowSourceBuilds => {
-            CachePreflightOutcome::Admitted
-        }
-        CachePreflightMode::Enforce if !interactive => CachePreflightOutcome::Failed,
-        CachePreflightMode::Enforce if confirm() => CachePreflightOutcome::Admitted,
-        CachePreflightMode::Enforce => CachePreflightOutcome::Cancelled,
+        CachePreflightMode::ReportOnly
+        | CachePreflightMode::ApproveSourceBuilds
+        | CachePreflightMode::Bypass => CachePreflightOutcome::Admitted,
+        CachePreflightMode::RequireApproval if !interactive => CachePreflightOutcome::Failed,
+        CachePreflightMode::RequireApproval if confirm() => CachePreflightOutcome::Admitted,
+        CachePreflightMode::RequireApproval => CachePreflightOutcome::Cancelled,
     }
 }
 
@@ -141,11 +146,11 @@ pub(super) fn unavailable_outcome(mode: CachePreflightMode) -> CachePreflightOut
             Printer::detail("Coverage is advisory for rebuild preflight.");
             CachePreflightOutcome::Admitted
         }
-        CachePreflightMode::AllowSourceBuilds => {
+        CachePreflightMode::Bypass => {
             Printer::detail("Continuing because --allow-source-builds was passed.");
             CachePreflightOutcome::Admitted
         }
-        CachePreflightMode::Enforce => {
+        CachePreflightMode::RequireApproval | CachePreflightMode::ApproveSourceBuilds => {
             Printer::detail("Could not establish binary cache coverage; refusing the upgrade.");
             Printer::detail("Rerun once to confirm after Nix finishes realizing inputs.");
             Printer::detail(

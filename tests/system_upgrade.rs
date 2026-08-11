@@ -78,6 +78,13 @@ const UPGRADE_CACHE_GATE_OVERRIDE_ARGS: &[&str] = &[
     "--no-ai",
     "--allow-source-builds",
 ];
+const UPGRADE_CACHE_GATE_PREAPPROVED_ARGS: &[&str] = &[
+    "upgrade",
+    "--skip-brew",
+    "--skip-commit",
+    "--no-ai",
+    "--yes",
+];
 const UPGRADE_REBUILD_FAILURE_ARGS: &[&str] =
     &["upgrade", "--skip-brew", "--skip-commit", "--no-ai"];
 const UPGRADE_HASH_REPAIR_ARGS: &[&str] = &["upgrade", "--skip-brew", "--no-ai"];
@@ -790,6 +797,28 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
         ],
     },
     UpgradeCase {
+        id: "upgrade_cache_gate_preapproval_reaches_rebuild",
+        cli_args: UPGRADE_CACHE_GATE_PREAPPROVED_ARGS,
+        mode: "upgrade_cache_misses",
+        expected_exit: 0,
+        expected_calls: UPGRADE_CACHE_GATE_OVERRIDE_CALLS,
+        stdout_contains: &[
+            "Continuing because --yes pre-approved this source-build plan.",
+            "System rebuilt",
+        ],
+    },
+    UpgradeCase {
+        id: "upgrade_cache_gate_preapproval_does_not_bypass_failed_planning",
+        cli_args: UPGRADE_CACHE_GATE_PREAPPROVED_ARGS,
+        mode: "upgrade_cache_preflight_fail",
+        expected_exit: 1,
+        expected_calls: UPGRADE_CACHE_GATE_REJECT_CALLS,
+        stdout_contains: &[
+            "Could not establish binary cache coverage; refusing the upgrade.",
+            "Restored original flake.lock",
+        ],
+    },
+    UpgradeCase {
         id: "upgrade_cache_gate_reports_rollback_failure",
         cli_args: UPGRADE_REBUILD_ARGS,
         mode: "upgrade_cache_rollback_fail",
@@ -1299,6 +1328,7 @@ fn expected_mutated_paths(case: &UpgradeCase) -> &'static [&'static str] {
     if matches!(
         case.id,
         "upgrade_cache_gate_explicit_override_reaches_rebuild"
+            | "upgrade_cache_gate_preapproval_reaches_rebuild"
             | "upgrade_cache_gate_reports_rollback_failure"
     ) {
         return &["flake.lock"];

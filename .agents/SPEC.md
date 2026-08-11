@@ -125,7 +125,7 @@ Defined at root callback:
   - passthrough args accepted
 - `upgrade`
   - args: `[inputs...]`
-  - options: `--dry-run/-n`, `--verbose/-v`, `--skip-rebuild`, `--skip-commit`, `--skip-brew`, `--no-ai`, `--allow-source-builds`
+  - options: `--dry-run/-n`, `--verbose/-v`, `--yes/-y`, `--skip-rebuild`, `--skip-commit`, `--skip-brew`, `--no-ai`, `--allow-source-builds`
   - passthrough args accepted
 - `generations`
   - subcommands: `status`, `plan`, `prune`
@@ -589,6 +589,7 @@ High-level phases:
   - empty output, diagnostic-only output (including first-fetch Git-cache unpacking), or recognized build/fetch sections establish coverage; unrelated progress around recognized sections is ignored, while successful output with no plan evidence remains unavailable and fails closed
   - coverage within `NX_CACHE_MISS_THRESHOLD` admits the candidate
   - excessive source builds require explicit interactive approval (default no)
+  - `--yes` preapproves an excessive recognized source-build plan without prompting, but does not admit failed or unavailable coverage
   - non-interactive runs, unresolved hosts, and failed coverage checks reject the candidate by default
   - `--allow-source-builds` explicitly admits excessive or unavailable coverage
   - every rejection and every failure before admission atomically restores the original `flake.lock`; an armed transaction also restores on unwinding, and refuses to overwrite a candidate changed after evaluation

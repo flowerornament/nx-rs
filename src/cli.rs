@@ -102,7 +102,7 @@ const CLEAN_CACHES_HELP: &str = concat!(
     "  - Configure with NX_CODE_ROOTS, NX_CLEAN_SCAN_DEPTH, and NX_CLEAN_SKIP.\n",
     "  - Valid NX_CLEAN_SKIP names: cargo-registry, uv, npm, homebrew, huggingface, puppeteer, playwright, xcode-derived, core-simulator, codex-sessions, codex-logs, claude-telemetry, claude-file-history, nix-gc, rust-targets, elixir-builds, node-modules.",
 );
-const UPGRADE_HELP: &str = "Examples:\n  nx upgrade\n  nx upgrade --dry-run\n  nx upgrade --verbose\n  nx upgrade nx-rs\n  nx upgrade nx-rs anneal -- --show-trace\n\nNotes:\n  - Without positional inputs, `upgrade` runs the full repo-wide flow: flake update, cache coverage gate, brew, rebuild, and commit.\n  - With positional inputs, `upgrade` updates only those flake inputs and skips the brew phase by default.\n  - Homebrew update checks show loading feedback before upgrade details are rendered.\n  - Interactive Nix phases preserve native colored progress and retain bounded diagnostics for recovery; non-interactive runs retain structured diagnostics.\n  - `--verbose` selects Nix's native progress with full build logs in a terminal.\n  - Before rebuilding, `upgrade` dry-runs the system build and prompts when more than NX_CACHE_MISS_THRESHOLD (default 5) derivations would build from source.\n  - Rejected or unavailable cache coverage restores the original flake.lock; non-interactive runs fail closed.\n  - `--allow-source-builds` explicitly bypasses the cache coverage gate.\n  - Nx owns the final commit; use `nx update -- --commit-lock-file` for a Nix-owned lock-only commit.\n  - Structured rebuilds can repair a fixed-output hash mismatch in a unique clean matching .nix file and retry.\n  - Set NX_NO_AUTO_HASH_FIX=1 to disable automatic fixed-output hash repairs.";
+const UPGRADE_HELP: &str = "Examples:\n  nx upgrade\n  nx upgrade --dry-run\n  nx upgrade --yes nx-rs\n  nx upgrade --verbose\n  nx upgrade nx-rs anneal -- --show-trace\n\nNotes:\n  - Without positional inputs, `upgrade` runs the full repo-wide flow: flake update, cache coverage gate, brew, rebuild, and commit.\n  - With positional inputs, `upgrade` updates only those flake inputs and skips the brew phase by default.\n  - Homebrew update checks show loading feedback before upgrade details are rendered.\n  - Interactive Nix phases preserve native colored progress and retain bounded diagnostics for recovery; non-interactive runs retain structured diagnostics.\n  - `--verbose` selects Nix's native progress with full build logs in a terminal.\n  - Before rebuilding, `upgrade` dry-runs the system build and prompts when more than NX_CACHE_MISS_THRESHOLD (default 5) derivations would build from source.\n  - `--yes` preapproves a recognized source-build plan; failed or unavailable coverage still fails closed.\n  - `--allow-source-builds` explicitly bypasses the cache coverage gate.\n  - Nx owns the final commit; use `nx update -- --commit-lock-file` for a Nix-owned lock-only commit.\n  - Structured rebuilds can repair a fixed-output hash mismatch in a unique clean matching .nix file and retry.\n  - Set NX_NO_AUTO_HASH_FIX=1 to disable automatic fixed-output hash repairs.";
 const SECRET_HELP: &str = "Examples:\n  nx secret add example_secret_key --value '<token>'\n  printf '%s' '<token>' | nx secret add example_secret_key --value-stdin";
 const SECRET_ADD_HELP: &str = "Examples:
   nx secret add example_secret_key --value '<token>'
@@ -786,6 +786,14 @@ pub struct UpgradeArgs {
     pub skip: UpgradeSkipArgs,
     #[arg(
         long,
+        short = 'y',
+        conflicts_with = "allow_source_builds",
+        help = "Approve a recognized source-build plan without prompting"
+    )]
+    pub yes: bool,
+    #[arg(
+        long,
+        conflicts_with = "yes",
         help = "Proceed when binary cache coverage is excessive or unavailable"
     )]
     pub allow_source_builds: bool,
@@ -1693,6 +1701,7 @@ mod tests {
             "skip-commit",
             "skip-brew",
             "no-ai",
+            "yes",
             "allow-source-builds",
         ]
         .into_iter()
@@ -1703,7 +1712,7 @@ mod tests {
             expected_longs
         );
 
-        let expected_shorts: BTreeSet<_> = ['n', 'v'].into_iter().collect();
+        let expected_shorts: BTreeSet<_> = ['n', 'v', 'y'].into_iter().collect();
         assert_eq!(
             declared_short_flags_for_subcommand("upgrade"),
             expected_shorts

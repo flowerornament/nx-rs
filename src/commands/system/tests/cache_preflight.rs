@@ -179,22 +179,30 @@ fn unavailable_coverage_is_advisory_only_when_requested() {
 #[test]
 fn unavailable_coverage_fails_closed_by_default() {
     assert_eq!(
-        unavailable_outcome(CachePreflightMode::Enforce),
+        unavailable_outcome(CachePreflightMode::RequireApproval),
         CachePreflightOutcome::Failed
     );
 }
 
 #[test]
-fn explicit_override_accepts_unavailable_coverage() {
+fn preapproval_does_not_accept_unavailable_coverage() {
     assert_eq!(
-        unavailable_outcome(CachePreflightMode::AllowSourceBuilds),
+        unavailable_outcome(CachePreflightMode::ApproveSourceBuilds),
+        CachePreflightOutcome::Failed
+    );
+}
+
+#[test]
+fn explicit_bypass_accepts_unavailable_coverage() {
+    assert_eq!(
+        unavailable_outcome(CachePreflightMode::Bypass),
         CachePreflightOutcome::Admitted
     );
 }
 
 #[test]
 fn interactive_source_builds_follow_explicit_acceptance() {
-    let mode = CachePreflightMode::Enforce;
+    let mode = CachePreflightMode::RequireApproval;
 
     assert_eq!(
         source_builds_outcome(mode, true, || true),
@@ -209,7 +217,7 @@ fn interactive_source_builds_follow_explicit_acceptance() {
 #[test]
 fn noninteractive_source_builds_fail_without_prompting() {
     let mut prompted = false;
-    let outcome = source_builds_outcome(CachePreflightMode::Enforce, false, || {
+    let outcome = source_builds_outcome(CachePreflightMode::RequireApproval, false, || {
         prompted = true;
         true
     });
@@ -219,9 +227,9 @@ fn noninteractive_source_builds_fail_without_prompting() {
 }
 
 #[test]
-fn source_build_override_never_prompts() {
+fn source_build_preapproval_never_prompts() {
     let mut prompted = false;
-    let outcome = source_builds_outcome(CachePreflightMode::AllowSourceBuilds, false, || {
+    let outcome = source_builds_outcome(CachePreflightMode::ApproveSourceBuilds, false, || {
         prompted = true;
         false
     });

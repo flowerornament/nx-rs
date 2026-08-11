@@ -258,10 +258,10 @@ fn prepare_flake_update(args: &UpgradeArgs, ctx: &AppContext) -> Result<Prepared
         });
     }
 
-    let mode = if args.allow_source_builds {
-        CachePreflightMode::AllowSourceBuilds
-    } else {
-        CachePreflightMode::Enforce
+    let mode = match (args.allow_source_builds, args.yes) {
+        (true, _) => CachePreflightMode::Bypass,
+        (false, true) => CachePreflightMode::ApproveSourceBuilds,
+        (false, false) => CachePreflightMode::RequireApproval,
     };
     match check_cache_preflight(&ctx.system_context(), mode) {
         CachePreflightOutcome::Admitted => {

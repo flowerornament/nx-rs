@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `nx upgrade --yes` preapproves a recognized source-build plan so long cache planning does not require babysitting; unavailable coverage still fails closed unless explicitly bypassed with `--allow-source-builds`
+
 ## v1.5.37 - 2026-08-11
 
 - uses full flake revisions for GitHub comparisons and reports concise API, command, or response failures instead of collapsing every enrichment failure into the same warning

@@ -9,6 +9,7 @@ fn sample_upgrade_args() -> UpgradeArgs {
             no_ai: true,
         },
         skip: UpgradeSkipArgs::default(),
+        yes: false,
         allow_source_builds: false,
         targets: Vec::new(),
         passthrough: Vec::new(),

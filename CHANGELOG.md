@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.5.38 - 2026-08-12
+
 - `nx upgrade --yes` preapproves a recognized source-build plan so long cache planning does not require babysitting; unavailable coverage still fails closed unless explicitly bypassed with `--allow-source-builds`
 
 ## v1.5.37 - 2026-08-11

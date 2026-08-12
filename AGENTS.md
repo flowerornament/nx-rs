@@ -213,6 +213,9 @@ Manager module smoke tests, Nix package consumer smoke tests, `nix build .`,
 After the release commit reaches `main`, its Nix Cache workflow must publish and
 prove tokenless substitution for every system advertised by `flake.nix`.
 `just cache-verify` checks those exact outputs through the public cache.
+Other public flowerornament producers call
+`.github/workflows/nix-cache-package.yml` at an immutable nx-rs commit SHA and
+keep their supported system/runner matrix in the producer repository.
 
 `just release-tag` repeats the cache gate, creates and pushes `vX.Y.Z`, then
 publishes `origin/release` at the same commit. It prompts before running because

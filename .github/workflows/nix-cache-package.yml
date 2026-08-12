@@ -1,0 +1,144 @@
+name: Cache Nix package
+
+on:
+  workflow_call:
+    inputs:
+      executable:
+        description: Executable expected in the default package output
+        required: true
+        type: string
+      matrix:
+        description: JSON array of Nix system and GitHub runner pairs
+        required: true
+        type: string
+    secrets:
+      CACHIX_AUTH_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  CACHE_NAME: flowerornament
+  CACHE_URI: https://flowerornament.cachix.org
+  CACHE_PUBLIC_KEY: flowerornament.cachix.org-1:gSODgIXgfRANrEGITBOF8XWaEKNy8hkNGfRVwqUG46c=
+
+jobs:
+  publish:
+    name: Publish (${{ matrix.system }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31.11.0
+        with:
+          extra_nix_config: experimental-features = nix-command flakes
+
+      - name: Configure public cache
+        uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+        with:
+          name: flowerornament
+          skipPush: true
+
+      - name: Publish runtime closure
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          SYSTEM: ${{ matrix.system }}
+        run: |
+          set -euo pipefail
+          attribute=".#packages.$SYSTEM.default"
+          derivation="$(nix eval --accept-flake-config --raw "$attribute.drvPath")"
+          expected="$(nix eval --accept-flake-config --raw "$attribute.outPath")"
+
+          result="built and published"
+          if nix path-info --store "$CACHE_URI" \
+            --option narinfo-cache-negative-ttl 0 "$expected" >/dev/null 2>&1; then
+            result="substituted and republished"
+          fi
+
+          built="$(nix build --accept-flake-config --no-link --print-out-paths "$attribute")"
+          test "$built" = "$expected" || {
+            echo "expected $expected, built $built" >&2
+            exit 1
+          }
+
+          cachix push "$CACHE_NAME" "$built"
+          nix path-info --store "$CACHE_URI" \
+            --option narinfo-cache-negative-ttl 0 "$built" >/dev/null
+
+          {
+            echo "### ${GITHUB_REPOSITORY#*/} Nix cache: $SYSTEM"
+            echo
+            echo "- revision: \`$GITHUB_SHA\`"
+            echo "- derivation: \`$derivation\`"
+            echo "- output: \`$built\`"
+            echo "- result: $result"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  consume:
+    name: Substitute (${{ matrix.system }})
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31.11.0
+        with:
+          extra_nix_config: experimental-features = nix-command flakes
+
+      - name: Configure public cache
+        uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+        with:
+          name: flowerornament
+          skipPush: true
+
+      - name: Prove public substitution
+        env:
+          EXECUTABLE: ${{ inputs.executable }}
+          SYSTEM: ${{ matrix.system }}
+        run: |
+          set -euo pipefail
+          attribute=".#packages.$SYSTEM.default"
+          derivation="$(nix eval --accept-flake-config --raw "$attribute.drvPath")"
+          expected="$(nix eval --accept-flake-config --raw "$attribute.outPath")"
+
+          nix path-info --store "$CACHE_URI" \
+            --option narinfo-cache-negative-ttl 0 "$expected" >/dev/null
+          if nix path-info "$expected" >/dev/null 2>&1; then
+            echo "consumer proof started with $expected already in the local store" >&2
+            exit 1
+          fi
+
+          built="$(nix build --accept-flake-config --no-link --print-out-paths \
+            --max-jobs 0 \
+            --option substituters "$CACHE_URI https://cache.nixos.org/" \
+            --option extra-trusted-public-keys "$CACHE_PUBLIC_KEY" \
+            "$attribute")"
+          test "$built" = "$expected" || {
+            echo "expected $expected, substituted $built" >&2
+            exit 1
+          }
+          test -x "$built/bin/$EXECUTABLE"
+
+          {
+            echo "### ${GITHUB_REPOSITORY#*/} Nix cache: $SYSTEM"
+            echo
+            echo "- revision: \`$GITHUB_SHA\`"
+            echo "- derivation: \`$derivation\`"
+            echo "- output: \`$built\`"
+            echo "- result: substituted from the public cache with local builds disabled"
+          } | tee -a "$GITHUB_STEP_SUMMARY"

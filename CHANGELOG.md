@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- centralizes native Nix runtime-closure publication and fresh-runner substitution proof in a reusable GitHub workflow, leaving producer repositories to declare only their supported system/runner matrix and cache-gated release boundary
+
 ## v1.5.38 - 2026-08-12
 
 - `nx upgrade --yes` preapproves a recognized source-build plan so long cache planning does not require babysitting; unavailable coverage still fails closed unless explicitly bypassed with `--allow-source-builds`

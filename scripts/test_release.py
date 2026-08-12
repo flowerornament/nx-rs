@@ -144,29 +144,12 @@ class NixCacheReleaseTests(unittest.TestCase):
 
         mutate_git.assert_not_called()
 
-    def test_consumer_build_disables_local_builds(self) -> None:
-        with patch.object(release, "capture", return_value="/nix/store/nx") as run:
-            output = release.build_nix_output("x86_64-linux", substitutes_only=True)
+    def test_cache_workflow_preserves_substitution_proof(self) -> None:
+        workflow = (ROOT / ".github/workflows/nix-cache-package.yml").read_text()
 
-        self.assertEqual(output, "/nix/store/nx")
-        run.assert_called_once_with(
-            [
-                "nix",
-                "build",
-                "--accept-flake-config",
-                "--no-link",
-                "--print-out-paths",
-                "--max-jobs",
-                "0",
-                "--option",
-                "substituters",
-                f"{release.CACHE_URI} https://cache.nixos.org/",
-                "--option",
-                "extra-trusted-public-keys",
-                release.CACHE_PUBLIC_KEY,
-                ".#packages.x86_64-linux.default",
-            ]
-        )
+        self.assertIn('if nix path-info "$expected"', workflow)
+        self.assertIn("--max-jobs 0", workflow)
+        self.assertIn('--option substituters "$CACHE_URI https://cache.nixos.org/"', workflow)
 
 if __name__ == "__main__":
     unittest.main()

@@ -767,6 +767,11 @@ that cache gate, then uses Git to create the annotated tag and update
 `origin/release`. It prompts before running; use `just --yes release-tag X.Y.Z`
 only for explicit automation.
 
+Public flowerornament producers reuse nx-rs's cache workflow at an immutable
+commit SHA. Each caller owns only its supported system/runner matrix and
+executable name; the shared workflow owns runtime-closure publication and the
+fresh-runner, local-build-disabled substitution proof.
+
 ### Task Tracking
 
 Work is tracked in `bd` (`./.beads`):

@@ -467,6 +467,23 @@ Do not create a generalized workflow before the pilot. Duplication in one
 pilot is cheaper than preserving an unproven abstraction across every
 repository.
 
+The two-producer extraction is a reusable GitHub workflow owned by nx-rs.
+Producer callers:
+
+- pin the called workflow by immutable nx-rs commit SHA;
+- declare the executable name and the producer-owned system/runner matrix;
+- pass only the per-cache `CACHIX_AUTH_TOKEN` secret;
+- retain a local release gate that queries every advertised output before any
+  tag or `release` branch mutation.
+
+The called workflow checks out the caller repository, builds and publishes the
+default package runtime closure, then proves the same output on a separate fresh
+runner with local builds disabled. It checks that the expected output was not
+already in the consumer store before invoking `nix build --max-jobs 0`, and
+limits substitutes to flowerornament Cachix plus `cache.nixos.org`. The proof
+therefore establishes that the project-owned output came from flowerornament;
+upstream runtime dependencies may come from the NixOS cache.
+
 ## Observability
 
 Each producer release reports:

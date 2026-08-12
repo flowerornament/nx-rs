@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import subprocess
 import sys
@@ -15,9 +14,6 @@ ROOT = Path(__file__).resolve().parent.parent
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 CACHE_NAME = "flowerornament"
 CACHE_URI = f"https://{CACHE_NAME}.cachix.org"
-CACHE_PUBLIC_KEY = (
-    "flowerornament.cachix.org-1:gSODgIXgfRANrEGITBOF8XWaEKNy8hkNGfRVwqUG46c="
-)
 
 
 def fail(message: str) -> None:
@@ -75,15 +71,9 @@ def flake_package_systems() -> list[str]:
     return re.findall(r'"([^"]+)"', match.group("body"))
 
 
-def cache_workflow_systems(job: str) -> list[str]:
+def cache_workflow_systems() -> list[str]:
     text = read_text(ROOT / ".github/workflows/nix-cache.yml")
-    match = re.search(
-        rf"(?ms)^  {re.escape(job)}:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:\n|\Z)",
-        text,
-    )
-    if match is None:
-        fail(f"could not find {job} job in nix-cache.yml")
-    return re.findall(r"- system: ([^\n]+)", match.group("body"))
+    return re.findall(r'"system"\s*:\s*"([^"]+)"', text)
 
 
 def changelog_text() -> str:
@@ -234,18 +224,6 @@ def nix_output_path(system: str) -> str:
     )
 
 
-def nix_derivation_path(system: str) -> str:
-    return capture(
-        [
-            "nix",
-            "eval",
-            "--accept-flake-config",
-            "--raw",
-            f".#packages.{system}.default.drvPath",
-        ]
-    )
-
-
 def cache_contains(path: str) -> bool:
     # Publication probes the same path before and after pushing, so bypass cached misses.
     return command_succeeds(
@@ -259,119 +237,6 @@ def cache_contains(path: str) -> bool:
             "0",
             path,
         ]
-    )
-
-
-def local_store_contains(path: str) -> bool:
-    return command_succeeds(["nix", "path-info", path])
-
-
-def check_cache_system(system: str) -> None:
-    if system not in flake_package_systems():
-        fail(f"{system} is not advertised by flake.nix")
-
-
-def build_nix_output(system: str, *, substitutes_only: bool = False) -> str:
-    command = [
-        "nix",
-        "build",
-        "--accept-flake-config",
-        "--no-link",
-        "--print-out-paths",
-    ]
-    if substitutes_only:
-        command.extend(
-            [
-                "--max-jobs",
-                "0",
-                "--option",
-                "substituters",
-                f"{CACHE_URI} https://cache.nixos.org/",
-                "--option",
-                "extra-trusted-public-keys",
-                CACHE_PUBLIC_KEY,
-            ]
-        )
-    command.append(f".#packages.{system}.default")
-    output = capture(command)
-    paths = output.splitlines()
-    if len(paths) != 1:
-        fail(f"expected one Nix output for {system}, got {len(paths)}")
-    return paths[0]
-
-
-def cache_summary(*, system: str, derivation: str, output: str, result: str) -> str:
-    revision = capture(["git", "rev-parse", "HEAD"])
-    return "\n".join(
-        [
-            f"### nx Nix cache: {system}",
-            "",
-            f"- revision: `{revision}`",
-            f"- version: `{cargo_version()}`",
-            f"- derivation: `{derivation}`",
-            f"- output: `{output}`",
-            f"- result: {result}",
-        ]
-    )
-
-
-def emit_cache_summary(summary: str) -> None:
-    print(summary)
-    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary_path is not None:
-        with Path(summary_path).open("a", encoding="utf-8") as file:
-            file.write(f"{summary}\n")
-
-
-def publish_nix_cache(system: str) -> None:
-    check_cache_system(system)
-    derivation = nix_derivation_path(system)
-    expected_output = nix_output_path(system)
-    was_cached = cache_contains(expected_output)
-    built_output = build_nix_output(system)
-    if built_output != expected_output:
-        fail(
-            f"Nix output changed during the {system} build: "
-            f"expected {expected_output}, got {built_output}"
-        )
-
-    run(["cachix", "push", CACHE_NAME, built_output])
-    if not cache_contains(built_output):
-        fail(f"Cachix did not expose {built_output} after a successful push")
-    result = "substituted and republished" if was_cached else "built and published"
-    emit_cache_summary(
-        cache_summary(
-            system=system,
-            derivation=derivation,
-            output=built_output,
-            result=result,
-        )
-    )
-
-
-def consume_nix_cache(system: str) -> None:
-    check_cache_system(system)
-    derivation = nix_derivation_path(system)
-    expected_output = nix_output_path(system)
-    if not cache_contains(expected_output):
-        fail(f"Cachix is missing {system} output {expected_output}")
-    if local_store_contains(expected_output):
-        fail(f"consumer proof started with {expected_output} already in the local store")
-
-    built_output = build_nix_output(system, substitutes_only=True)
-    if built_output != expected_output:
-        fail(
-            f"substitution returned the wrong {system} output: "
-            f"expected {expected_output}, got {built_output}"
-        )
-    run([f"{built_output}/bin/nx", "--version"])
-    emit_cache_summary(
-        cache_summary(
-            system=system,
-            derivation=derivation,
-            output=built_output,
-            result="substituted from the public cache with local builds disabled",
-        )
     )
 
 
@@ -441,13 +306,12 @@ def verify() -> None:
         fail(f"release versions do not match: {details}")
 
     package_systems = flake_package_systems()
-    for job in ("publish", "consume"):
-        cache_systems = cache_workflow_systems(job)
-        if cache_systems != package_systems:
-            fail(
-                f"Nix cache {job} systems do not match flake.nix: "
-                f"flake={package_systems}, workflow={cache_systems}"
-            )
+    cache_systems = cache_workflow_systems()
+    if cache_systems != package_systems:
+        fail(
+            "Nix cache systems do not match flake.nix: "
+            f"flake={package_systems}, workflow={cache_systems}"
+        )
 
     version = unique_versions.pop()
     if not changelog_entry_is_ready(version):
@@ -508,16 +372,6 @@ def main() -> None:
     tag_parser = subparsers.add_parser("tag", help="create and push a release tag")
     tag_parser.add_argument("version")
 
-    cache_publish_parser = subparsers.add_parser(
-        "cache-publish", help="build and publish one native Nix package output"
-    )
-    cache_publish_parser.add_argument("system")
-
-    cache_consume_parser = subparsers.add_parser(
-        "cache-consume", help="prove one Nix package output substitutes"
-    )
-    cache_consume_parser.add_argument("system")
-
     subparsers.add_parser(
         "cache-verify", help="verify every advertised Nix package output is cached"
     )
@@ -529,10 +383,6 @@ def main() -> None:
         verify()
     elif args.command == "tag":
         tag(args.version)
-    elif args.command == "cache-publish":
-        publish_nix_cache(args.system)
-    elif args.command == "cache-consume":
-        consume_nix_cache(args.system)
     else:
         verify_release_cache()
 

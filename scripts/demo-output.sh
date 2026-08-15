@@ -93,6 +93,9 @@ run_nx success rebuild --preflight
 scenario 'nx rebuild --preflight --verbose'
 run_nx success rebuild --preflight --verbose
 
+scenario 'nx rebuild --preflight  # local configuration builds'
+run_nx cache_preflight_glue rebuild --preflight
+
 scenario 'nx rebuild --preflight  # expected failure'
 if run_nx flake_check_fail rebuild --preflight; then
   error 'Expected rebuild preflight to fail'

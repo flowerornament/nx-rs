@@ -525,7 +525,7 @@ Preflight requirements:
 1. Git preflight must succeed.
 2. No untracked `.nix` files under `home/`, `packages/`, `system/`, `hosts/`.
 3. `nix flake check <repo_root>` must pass.
-4. When `--preflight` is passed, additionally report binary cache coverage from `nix build <repo_root>#darwinConfigurations.<host>.system --dry-run` before exiting. The report lists up to 10 source-build derivation names and warns when they exceed `NX_CACHE_MISS_THRESHOLD` (default 5); it is warning-only and never fails the preflight.
+4. When `--preflight` is passed, additionally report binary cache coverage from `nix build <repo_root>#darwinConfigurations.<host>.system --dry-run` before exiting. Inspect planned derivations in one `nix derivation show` call and separate substitute-eligible source builds from local builds whose derivations set `allowSubstitutes = false` or `preferLocalBuild = true`. The report lists up to 10 names from each non-empty class and warns only when substitute-eligible source builds exceed `NX_CACHE_MISS_THRESHOLD` (default 5); it is warning-only and never fails the preflight. Missing, failed, unrecognized, or incomplete derivation metadata classifies all planned builds as source builds.
 
 Then run the default rebuild path:
 
@@ -587,8 +587,10 @@ High-level phases:
   - hold an exclusive repository lock from the original snapshot through rollback or the complete admitted upgrade (including rebuild and commit); a concurrent nx upgrade fails before mutation
   - dry-run the planned whole-system closure for the candidate lock
   - empty output, diagnostic-only output (including first-fetch Git-cache unpacking), or recognized build/fetch sections establish coverage; unrelated progress around recognized sections is ignored, while successful output with no plan evidence remains unavailable and fails closed
-  - coverage within `NX_CACHE_MISS_THRESHOLD` admits the candidate
-  - excessive source builds require explicit interactive approval (default no)
+  - inspect planned derivations in one `nix derivation show` call; derivations with `allowSubstitutes = false` or `preferLocalBuild = true` are reported as local builds and excluded from the cache-miss threshold
+  - missing, failed, unrecognized, or incomplete derivation metadata classifies all planned builds as source builds
+  - substitute-eligible source builds within `NX_CACHE_MISS_THRESHOLD` admit the candidate
+  - excessive substitute-eligible source builds require explicit interactive approval (default no)
   - `--yes` preapproves an excessive recognized source-build plan without prompting, but does not admit failed or unavailable coverage
   - non-interactive runs, unresolved hosts, and failed coverage checks reject the candidate by default
   - `--allow-source-builds` explicitly admits excessive or unavailable coverage
@@ -604,7 +606,7 @@ High-level phases:
   - enrich and changelog fetch
   - non-dry-run `brew upgrade <pkgs...>`
 5. Rebuild unless `--skip-rebuild`
-  - The binary cache admission step parses the `will be built` and `will be fetched` sections and lists up to 10 source-build derivation names (store hash prefix and `.drv` suffix stripped).
+  - The binary cache admission step parses the `will be built` and `will be fetched` sections and lists up to 10 names from each non-empty source-build or local-build class (store hash prefix and `.drv` suffix stripped).
   - Unrecognized lines end the active section so later store paths cannot be misclassified. When no plan is recognized, retrying once after input realization is the primary remediation; `--allow-source-builds` is reserved for independently verified coverage.
   - The admission step applies to Darwin repos (manifest platform `darwin` or no manifest). Non-Darwin manifests do not have a Darwin system closure to gate.
   - If a captured non-interactive or `--timing` rebuild fails with a Nix fixed-output hash mismatch, parse the `specified` and `got` hashes.

@@ -9,8 +9,9 @@ use crate::infra::nix_output::NixOutputMode;
 use crate::infra::shell::{CapturedCommand, run_captured_command};
 
 use super::cache_preflight::{
-    CachePreflightMode, CachePreflightOutcome, DryRunPlan, derivation_display_name,
-    parse_cache_miss_threshold, parse_dry_run_plan, source_builds_outcome, unavailable_outcome,
+    CachePreflightMode, CachePreflightOutcome, DryRunPlan, cache_plan_from_metadata,
+    derivation_display_name, derivation_key, parse_cache_miss_threshold, parse_dry_run_plan,
+    source_builds_outcome, unavailable_outcome, unclassified_cache_plan,
 };
 use super::fixed_output_hash::{
     FixedOutputHashMismatch, apply_fixed_output_hash_repair, find_fixed_output_hash_targets,

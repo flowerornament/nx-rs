@@ -3,6 +3,7 @@
 ## Unreleased
 
 - centralizes native Nix runtime-closure publication and fresh-runner substitution proof in a reusable GitHub workflow, leaving producer repositories to declare only their supported system/runner matrix and cache-gated release boundary
+- distinguishes substitute-eligible source builds from derivations Nix marks cheap or required to build locally, so Home Manager and nix-darwin activation glue remains visible without triggering cache-miss approval
 
 ## v1.5.38 - 2026-08-12
 

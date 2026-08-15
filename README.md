@@ -576,10 +576,12 @@ Runs the upgrade flow for either the whole repo or named flake inputs.
   are still committed when only metadata or transitive nodes changed. Use
   `nx update -- --commit-lock-file` when Nix should own a lock-only commit instead.
 - Flake check and build realize changed sources on demand.
-- Before Homebrew or rebuild, nx dry-runs the candidate system closure. Excessive
-  source builds require interactive approval or `--yes`; otherwise automation
-  fails closed. Rejection or an unavailable coverage check atomically restores
-  the original `flake.lock`.
+- Before Homebrew or rebuild, nx dry-runs the candidate system closure and
+  separates substitute-eligible source builds from derivations Nix marks cheap
+  or required to build locally. Only excessive substitute-eligible builds
+  require interactive approval or `--yes`; otherwise automation fails closed.
+  Rejection or an unavailable coverage check atomically restores the original
+  `flake.lock`.
 - Use `--yes` to preapprove an excessive source-build plan and let a long cache
   check continue unattended. It still fails closed when coverage cannot be
   established.

@@ -191,7 +191,7 @@ case "$program" in
       fi
       if [ "$mode" = "upgrade_lock_unreadable_post" ]; then
         printf '\377' > flake.lock
-      elif [ "$mode" = "upgrade_flake_changed" ] || [ "$mode" = "upgrade_transitive_lock_changed" ] || [ "$mode" = "upgrade_hash_repair" ] || [ "$mode" = "upgrade_cache_misses" ] || [ "$mode" = "upgrade_cache_preflight_fail" ] || [ "$mode" = "upgrade_cache_rollback_fail" ]; then
+      elif [ "$mode" = "upgrade_flake_changed" ] || [ "$mode" = "upgrade_transitive_lock_changed" ] || [ "$mode" = "upgrade_hash_repair" ] || [ "$mode" = "upgrade_cache_misses" ] || [ "$mode" = "upgrade_cache_glue" ] || [ "$mode" = "upgrade_cache_preflight_fail" ] || [ "$mode" = "upgrade_cache_rollback_fail" ]; then
         printf '%s' "${NX_SYSTEM_IT_UPGRADE_NEW_LOCK:?NX_SYSTEM_IT_UPGRADE_NEW_LOCK must be set}" > flake.lock
         if [ "$mode" = "upgrade_cache_rollback_fail" ]; then
           chmod 444 flake.lock
@@ -227,6 +227,23 @@ case "$program" in
       exit 0
     fi
 
+    if [ "${1:-}" = "derivation" ] && [ "${2:-}" = "show" ]; then
+      shift 2
+      printf '{"version":4,"derivations":{'
+      separator=''
+      for path in "$@"; do
+        name="${path##*/}"
+        printf '%s"%s":{"env":{' "$separator" "$name"
+        if [ "$mode" = "cache_preflight_glue" ] || [ "$mode" = "upgrade_cache_glue" ]; then
+          printf '"preferLocalBuild":"1"'
+        fi
+        printf '}}'
+        separator=','
+      done
+      printf '}}\n'
+      exit 0
+    fi
+
     if [ "${1:-}" = "build" ]; then
       is_dry_run=0
       for arg in "$@"; do
@@ -239,7 +256,7 @@ case "$program" in
         if [ "$mode" = "upgrade_cache_preflight_fail" ]; then
           echo "error: candidate closure could not be evaluated" >&2
           exit 1
-        elif [ "$mode" = "cache_preflight_misses" ] || [ "$mode" = "upgrade_cache_misses" ] || [ "$mode" = "upgrade_cache_rollback_fail" ]; then
+        elif [ "$mode" = "cache_preflight_misses" ] || [ "$mode" = "cache_preflight_glue" ] || [ "$mode" = "upgrade_cache_misses" ] || [ "$mode" = "upgrade_cache_glue" ] || [ "$mode" = "upgrade_cache_rollback_fail" ]; then
           echo "these 6 derivations will be built:" >&2
           for name in starship-1.23.0 terminal-notifier-2.0.0 python3.12-httpx-0.28.1 darwin-system-26.05pre home-manager-generation nix-2.24.9; do
             echo "  /nix/store/00000000000000000000000000000000-${name}.drv" >&2

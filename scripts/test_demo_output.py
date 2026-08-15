@@ -136,7 +136,7 @@ class DemoOutputTest(unittest.TestCase):
     def assert_native_nix_passthrough(self, stream: str) -> None:
         expected = {
             native_progress("bar", "flake inputs"): 1,
-            native_progress("bar", "flake check"): 2,
+            native_progress("bar", "flake check"): 3,
             native_progress("bar", "system build"): 1,
             native_progress("default", "activation"): 1,
             native_progress("bar-with-logs", "flake check"): 1,

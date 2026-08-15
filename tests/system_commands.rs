@@ -62,6 +62,22 @@ const CACHE_PREFLIGHT_BUILD_ARGS: &[&str] = &[
     "<REPO_ROOT>#darwinConfigurations.test-host.system",
     "--dry-run",
 ];
+const CACHE_PREFLIGHT_DERIVATION_ARGS: &[&str] = &[
+    "derivation",
+    "show",
+    "/nix/store/00000000000000000000000000000000-starship-1.23.0.drv",
+    "/nix/store/00000000000000000000000000000000-terminal-notifier-2.0.0.drv",
+    "/nix/store/00000000000000000000000000000000-python3.12-httpx-0.28.1.drv",
+    "/nix/store/00000000000000000000000000000000-darwin-system-26.05pre.drv",
+    "/nix/store/00000000000000000000000000000000-home-manager-generation.drv",
+    "/nix/store/00000000000000000000000000000000-nix-2.24.9.drv",
+];
+const CACHE_PREFLIGHT_DEFAULT_DERIVATION_ARGS: &[&str] = &[
+    "derivation",
+    "show",
+    "/nix/store/00000000000000000000000000000000-starship-1.23.0.drv",
+    "/nix/store/11111111111111111111111111111111-terminal-notifier-2.0.0.drv",
+];
 const TEST_CI_ARGS: &[&str] = &["ci"];
 
 const UPDATE_PASSTHROUGH_ARGS: &[&str] = &["update", "--", "--commit-lock-file", "foo"];
@@ -166,6 +182,24 @@ const REBUILD_CHECK_ONLY_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        CACHE_PREFLIGHT_DEFAULT_DERIVATION_ARGS,
+    ),
+];
+
+const REBUILD_CHECK_ONLY_MISS_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
+    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
+    ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        CACHE_PREFLIGHT_DERIVATION_ARGS,
+    ),
 ];
 
 const REBUILD_DARWIN_FAIL_CALLS: &[ExpectedCall] = &[
@@ -591,7 +625,7 @@ const COMMAND_CASES: &[CommandCase] = &[
         cli_args: REBUILD_CHECK_ONLY_ARGS,
         mode: "cache_preflight_misses",
         expected_exit: 0,
-        expected_calls: REBUILD_CHECK_ONLY_CALLS,
+        expected_calls: REBUILD_CHECK_ONLY_MISS_CALLS,
         stdout_contains: &[
             "Source Builds (6)",
             "6 derivations will build from source (threshold: 5)",

@@ -50,6 +50,30 @@
   1 paths will be fetched from the binary cache
 + Rebuild preflight passed
 
+  $ nx rebuild --preflight  # local configuration builds
+> Checking nx routing metadata
++ Routing metadata passed
+
+> Checking tracked nix files
++ Git preflight passed
+
+> Checking flake
+[nix-native:bar] flake check complete
++ Flake check passed
+
+> Checking binary cache coverage
+  darwin host: test-host
+  Local Builds (6)
+  starship-1.23.0
+  terminal-notifier-2.0.0
+  python3.12-httpx-0.28.1
+  darwin-system-26.05pre
+  home-manager-generation
+  nix-2.24.9
+  Nix marks these as cheap or required to build locally.
+  1 paths will be fetched from the binary cache
++ Rebuild preflight passed
+
   $ nx rebuild --preflight  # expected failure
 > Checking nx routing metadata
 + Routing metadata passed

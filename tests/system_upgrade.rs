@@ -54,6 +54,22 @@ const CACHE_PREFLIGHT_BUILD_ARGS: &[&str] = &[
     "<REPO_ROOT>#darwinConfigurations.test-host.system",
     "--dry-run",
 ];
+const CACHE_PREFLIGHT_DERIVATION_ARGS: &[&str] = &[
+    "derivation",
+    "show",
+    "/nix/store/00000000000000000000000000000000-starship-1.23.0.drv",
+    "/nix/store/00000000000000000000000000000000-terminal-notifier-2.0.0.drv",
+    "/nix/store/00000000000000000000000000000000-python3.12-httpx-0.28.1.drv",
+    "/nix/store/00000000000000000000000000000000-darwin-system-26.05pre.drv",
+    "/nix/store/00000000000000000000000000000000-home-manager-generation.drv",
+    "/nix/store/00000000000000000000000000000000-nix-2.24.9.drv",
+];
+const CACHE_PREFLIGHT_DEFAULT_DERIVATION_ARGS: &[&str] = &[
+    "derivation",
+    "show",
+    "/nix/store/00000000000000000000000000000000-starship-1.23.0.drv",
+    "/nix/store/11111111111111111111111111111111-terminal-notifier-2.0.0.drv",
+];
 const REBUILD_FLAKE_ARGS: &[&str] = &[
     "--log-format",
     "internal-json",
@@ -356,6 +372,11 @@ const UPGRADE_REBUILD_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        CACHE_PREFLIGHT_DEFAULT_DERIVATION_ARGS,
+    ),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
@@ -391,11 +412,28 @@ const UPGRADE_CACHE_GATE_REJECT_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
 ];
 
+const UPGRADE_CACHE_GATE_SOURCE_REJECT_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
+    ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        CACHE_PREFLIGHT_DERIVATION_ARGS,
+    ),
+];
+
 const UPGRADE_CACHE_GATE_OVERRIDE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        CACHE_PREFLIGHT_DERIVATION_ARGS,
+    ),
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
@@ -430,6 +468,11 @@ const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        CACHE_PREFLIGHT_DEFAULT_DERIVATION_ARGS,
+    ),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
@@ -486,6 +529,11 @@ const UPGRADE_SPLIT_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        CACHE_PREFLIGHT_DEFAULT_DERIVATION_ARGS,
+    ),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
@@ -513,6 +561,11 @@ const UPGRADE_SPLIT_REBUILD_RUN_CURRENT_LEGACY_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        CACHE_PREFLIGHT_DEFAULT_DERIVATION_ARGS,
+    ),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
@@ -588,6 +641,11 @@ const UPGRADE_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        CACHE_PREFLIGHT_DEFAULT_DERIVATION_ARGS,
+    ),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
@@ -621,6 +679,11 @@ const UPGRADE_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_HOST_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, CACHE_PREFLIGHT_BUILD_ARGS),
+    ExpectedCall::new(
+        "nix",
+        EXPECTED_CWD_REPO_ROOT,
+        CACHE_PREFLIGHT_DEFAULT_DERIVATION_ARGS,
+    ),
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
@@ -761,11 +824,23 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
         stdout_contains: &[],
     },
     UpgradeCase {
+        id: "upgrade_cache_gate_admits_nix_local_glue_without_approval",
+        cli_args: UPGRADE_REBUILD_ARGS,
+        mode: "upgrade_cache_glue",
+        expected_exit: 0,
+        expected_calls: UPGRADE_CACHE_GATE_OVERRIDE_CALLS,
+        stdout_contains: &[
+            "Local Builds (6)",
+            "Nix marks these as cheap or required to build locally.",
+            "System rebuilt",
+        ],
+    },
+    UpgradeCase {
         id: "upgrade_cache_gate_rejects_noninteractive_source_builds",
         cli_args: UPGRADE_REBUILD_ARGS,
         mode: "upgrade_cache_misses",
         expected_exit: 1,
-        expected_calls: UPGRADE_CACHE_GATE_REJECT_CALLS,
+        expected_calls: UPGRADE_CACHE_GATE_SOURCE_REJECT_CALLS,
         stdout_contains: &[
             "Non-interactive session; refusing unapproved source builds.",
             "Rerun with --allow-source-builds to proceed explicitly.",
@@ -823,7 +898,7 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
         cli_args: UPGRADE_REBUILD_ARGS,
         mode: "upgrade_cache_rollback_fail",
         expected_exit: 1,
-        expected_calls: UPGRADE_CACHE_GATE_REJECT_CALLS,
+        expected_calls: UPGRADE_CACHE_GATE_SOURCE_REJECT_CALLS,
         stdout_contains: &[
             "The candidate flake.lock may still be present; inspect it before retrying.",
         ],
@@ -1247,6 +1322,7 @@ fn seed_flake_lock_if_needed(repo_root: &Path, mode: &str) -> Result<(), Box<dyn
             | "upgrade_hash_repair"
             | "upgrade_lock_unreadable_post"
             | "upgrade_cache_misses"
+            | "upgrade_cache_glue"
             | "upgrade_cache_preflight_fail"
             | "upgrade_cache_rollback_fail"
     ) {
@@ -1327,7 +1403,8 @@ fn assert_repo_state(
 fn expected_mutated_paths(case: &UpgradeCase) -> &'static [&'static str] {
     if matches!(
         case.id,
-        "upgrade_cache_gate_explicit_override_reaches_rebuild"
+        "upgrade_cache_gate_admits_nix_local_glue_without_approval"
+            | "upgrade_cache_gate_explicit_override_reaches_rebuild"
             | "upgrade_cache_gate_preapproval_reaches_rebuild"
             | "upgrade_cache_gate_reports_rollback_failure"
     ) {

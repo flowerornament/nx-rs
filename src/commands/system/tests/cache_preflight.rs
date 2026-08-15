@@ -26,12 +26,16 @@ fn parse_dry_run_plan_extracts_builds_and_fetches() {
         plan,
         Some(DryRunPlan {
             to_build: vec![
-                "starship-1.23.0".to_string(),
-                "terminal-notifier-2.0.0".to_string(),
-                "python3.12-httpx-0.28.1".to_string(),
-                "darwin-system-26.05pre".to_string(),
-                "home-manager-generation".to_string(),
-                "nix-2.24.9".to_string(),
+                "/nix/store/0kfh6g5wl8vvbmjmm6zkbz4nqhyfqhb0-starship-1.23.0.drv".to_string(),
+                "/nix/store/1kq06fzk5f7jvvj0472pfcgyzcnl90ap-terminal-notifier-2.0.0.drv"
+                    .to_string(),
+                "/nix/store/8m7wpjm3v0dz8sq9m6a0y6b2r7ln3c14-python3.12-httpx-0.28.1.drv"
+                    .to_string(),
+                "/nix/store/9qk3xw3nx6l0y5vjq3f9crw8z0l70y3s-darwin-system-26.05pre.drv"
+                    .to_string(),
+                "/nix/store/c2m0qapmzr5r1a6ml7d3sswy3l7d7nhy-home-manager-generation.drv"
+                    .to_string(),
+                "/nix/store/f9v0b39sslq7dxvzq3mfr5cvxrjr1c2j-nix-2.24.9.drv".to_string(),
             ],
             to_fetch: 4,
         })
@@ -61,7 +65,10 @@ this path will be fetched (1.02 MiB download, 4.51 MiB unpacked):
 ";
 
     let plan = parse_dry_run_plan(output).unwrap();
-    assert_eq!(plan.to_build, vec!["starship-1.23.0".to_string()]);
+    assert_eq!(
+        plan.to_build,
+        vec!["/nix/store/0kfh6g5wl8vvbmjmm6zkbz4nqhyfqhb0-starship-1.23.0.drv".to_string()]
+    );
     assert_eq!(plan.to_fetch, 1);
 }
 
@@ -114,7 +121,9 @@ this derivation will be built:
     assert_eq!(
         parse_dry_run_plan(output),
         Some(DryRunPlan {
-            to_build: vec!["starship-1.23.0".to_string()],
+            to_build: vec![
+                "/nix/store/0kfh6g5wl8vvbmjmm6zkbz4nqhyfqhb0-starship-1.23.0.drv".to_string(),
+            ],
             to_fetch: 0,
         })
     );
@@ -132,10 +141,111 @@ evaluating another input...
     assert_eq!(
         parse_dry_run_plan(output),
         Some(DryRunPlan {
-            to_build: vec!["starship-1.23.0".to_string()],
+            to_build: vec![
+                "/nix/store/0kfh6g5wl8vvbmjmm6zkbz4nqhyfqhb0-starship-1.23.0.drv".to_string(),
+            ],
             to_fetch: 0,
         })
     );
+}
+
+#[test]
+fn derivation_metadata_uses_nix_local_build_contract() {
+    let paths = vec![
+        "/nix/store/aaa-source-package.drv".to_string(),
+        "/nix/store/bbb-generated-file.drv".to_string(),
+        "/nix/store/ccc-local-generation.drv".to_string(),
+        "/nix/store/ddd-structured-local.drv".to_string(),
+    ];
+    let metadata = r#"{
+      "version": 4,
+      "derivations": {
+        "aaa-source-package.drv": {"env": {}},
+        "bbb-generated-file.drv": {"env": {"allowSubstitutes": ""}},
+        "ccc-local-generation.drv": {"env": {"preferLocalBuild": "1"}},
+        "ddd-structured-local.drv": {
+          "env": {},
+          "structuredAttrs": {"allowSubstitutes": false, "preferLocalBuild": true}
+        }
+      }
+    }"#;
+
+    let plan = cache_plan_from_metadata(
+        &DryRunPlan {
+            to_build: paths,
+            to_fetch: 0,
+        },
+        metadata,
+    )
+    .unwrap();
+
+    assert_eq!(
+        plan.local_builds,
+        ["generated-file", "local-generation", "structured-local",]
+    );
+    assert_eq!(plan.source_builds, ["source-package"]);
+}
+
+#[test]
+fn final_rollout_glue_does_not_count_as_source_builds() {
+    let names = [
+        "nx-dev",
+        "anneal-dev",
+        "home-manager-applications",
+        "home-manager-fonts",
+        "hm_LibraryFonts.homemanagerfontsversion",
+        "home-manager-files",
+        "activation-script",
+        "home-manager-path",
+        "home-manager-generation",
+        "activation-morgan",
+        "Brewfile",
+        "user-environment",
+        "etc",
+        "darwin-system-26.11.15abb8c",
+    ];
+    let paths = names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| format!("/nix/store/{index:032}-{name}.drv"))
+        .collect::<Vec<_>>();
+    let derivations = paths
+        .iter()
+        .map(|path| {
+            (
+                derivation_key(path),
+                serde_json::json!({"env": {"preferLocalBuild": "1"}}),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    let metadata = serde_json::json!({"version": 4, "derivations": derivations});
+
+    let plan = cache_plan_from_metadata(
+        &DryRunPlan {
+            to_build: paths,
+            to_fetch: 4,
+        },
+        &metadata.to_string(),
+    )
+    .unwrap();
+
+    assert!(plan.source_builds.is_empty());
+    assert_eq!(plan.local_builds, names);
+    assert_eq!(plan.to_fetch, 4);
+}
+
+#[test]
+fn unknown_derivation_metadata_fails_closed() {
+    let paths = vec!["/nix/store/aaa-package.drv".to_string()];
+    let metadata = r#"{"version": 4, "derivations": {}}"#;
+
+    let plan = DryRunPlan {
+        to_build: paths,
+        to_fetch: 0,
+    };
+
+    assert_eq!(cache_plan_from_metadata(&plan, metadata), None);
+    assert_eq!(unclassified_cache_plan(&plan).source_builds, ["package"]);
 }
 
 #[test]

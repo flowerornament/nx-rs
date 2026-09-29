@@ -199,7 +199,7 @@ pub fn run_native_command_with_env(
     env: Option<CommandEnv<'_>>,
     _printer: &Printer,
 ) -> anyhow::Result<CapturedCommand> {
-    run_native_command_observing_stderr(program, args, cwd, env, NativeStdout::Inherit)
+    run_native_command_observing_stderr(program, args, cwd, env, NativeCommandMode::Activation)
 }
 
 pub fn run_nix_command_with_stdout(
@@ -235,13 +235,13 @@ fn run_stdout_collecting_native_stderr(
     cwd: Option<&Path>,
     env: Option<CommandEnv<'_>>,
 ) -> anyhow::Result<CapturedCommand> {
-    run_native_command_observing_stderr(program, args, cwd, env, NativeStdout::Capture)
+    run_native_command_observing_stderr(program, args, cwd, env, NativeCommandMode::Nix)
 }
 
 #[derive(Clone, Copy)]
-enum NativeStdout {
-    Inherit,
-    Capture,
+enum NativeCommandMode {
+    Activation,
+    Nix,
 }
 
 fn run_native_command_observing_stderr(
@@ -249,7 +249,7 @@ fn run_native_command_observing_stderr(
     args: &[&str],
     cwd: Option<&Path>,
     env: Option<CommandEnv<'_>>,
-    stdout_mode: NativeStdout,
+    mode: NativeCommandMode,
 ) -> anyhow::Result<CapturedCommand> {
     let terminal = io::stderr();
     let termios = rustix::termios::tcgetattr(&terminal).ok();
@@ -258,7 +258,7 @@ fn run_native_command_observing_stderr(
         .map_err(|err| anyhow!("opening stderr pseudoterminal: {err}"))?;
     let mut pty_termios = rustix::termios::tcgetattr(&pty.user)
         .map_err(|err| anyhow!("reading stderr pseudoterminal settings: {err}"))?;
-    if matches!(stdout_mode, NativeStdout::Inherit) {
+    if matches!(mode, NativeCommandMode::Activation) {
         // Activation emits plain lines. Translate LF at its PTY so each line
         // starts at column zero even if the parent terminal has OPOST disabled.
         pty_termios
@@ -288,9 +288,9 @@ fn run_native_command_observing_stderr(
     command
         .stdin(Stdio::inherit())
         .stderr(Stdio::from(pty.user));
-    match stdout_mode {
-        NativeStdout::Inherit => command.stdout(Stdio::inherit()),
-        NativeStdout::Capture => command.stdout(Stdio::piped()),
+    match mode {
+        NativeCommandMode::Activation => command.stdout(Stdio::inherit()),
+        NativeCommandMode::Nix => command.stdout(Stdio::piped()),
     };
 
     let mut child = command

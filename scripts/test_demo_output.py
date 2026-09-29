@@ -86,7 +86,6 @@ def terminal_screen(stream: str) -> str:
         elif char == "\n":
             lines.append("".join(line).rstrip())
             line = []
-            cursor = 0
         elif char >= " ":
             if cursor == len(line):
                 line.append(char)
@@ -103,6 +102,10 @@ def terminal_screen(stream: str) -> str:
 
 
 class DemoOutputTest(unittest.TestCase):
+    def test_terminal_screen_distinguishes_lf_from_crlf(self) -> None:
+        self.assertEqual(terminal_screen("abc\nx\n"), "abc\n   x\n")
+        self.assertEqual(terminal_screen("abc\r\nx\r\n"), "abc\nx\n")
+
     def test_terminal_screen_models_erase_line_modes(self) -> None:
         self.assertEqual(terminal_screen("abc\rx\x1b[0Kz\n"), "xz\n")
         self.assertEqual(terminal_screen("abc\rxy\x1b[2Kz\n"), "  z\n")

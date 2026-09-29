@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## v1.5.39 - 2026-09-29
+
+- keeps successive Darwin and Home Manager activation messages at column zero instead of drifting right across the terminal
 - centralizes native Nix runtime-closure publication and fresh-runner substitution proof in a reusable GitHub workflow, leaving producer repositories to declare only their supported system/runner matrix and cache-gated release boundary
 - distinguishes substitute-eligible source builds from derivations Nix marks cheap or required to build locally, so Home Manager and nix-darwin activation glue remains visible without triggering cache-miss approval
 

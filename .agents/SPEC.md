@@ -676,6 +676,7 @@ Dry-run behavior:
   - carriage-return progress updates are collapsed to the final visible frame before printing, observing, or collecting.
 - `run_native_command`:
   - inherits stdin and stdout, and relays stderr unchanged from a child pseudoterminal initialized from and resized with the parent terminal.
+  - enables the pseudoterminal's LF-to-CRLF output processing for activation so successive messages return to column zero; native Nix progress retains its original control bytes.
   - retains a bounded stderr tail without parsing it so interactive failures remain classifiable.
   - is only selected for interactive terminal flows.
 

@@ -258,9 +258,18 @@ fn run_native_command_observing_stderr(
         .map_err(|err| anyhow!("opening stderr pseudoterminal: {err}"))?;
     let mut pty_termios = rustix::termios::tcgetattr(&pty.user)
         .map_err(|err| anyhow!("reading stderr pseudoterminal settings: {err}"))?;
-    pty_termios
-        .output_modes
-        .remove(rustix::termios::OutputModes::OPOST);
+    if matches!(stdout_mode, NativeStdout::Inherit) {
+        // Activation emits plain lines. Translate LF at its PTY so each line
+        // starts at column zero even if the parent terminal has OPOST disabled.
+        pty_termios
+            .output_modes
+            .insert(rustix::termios::OutputModes::OPOST | rustix::termios::OutputModes::ONLCR);
+    } else {
+        // Preserve Nix's native progress bytes, including explicit CRLF.
+        pty_termios
+            .output_modes
+            .remove(rustix::termios::OutputModes::OPOST);
+    }
     rustix::termios::tcsetattr(
         &pty.user,
         rustix::termios::OptionalActions::Now,
@@ -805,6 +814,27 @@ mod tests {
         assert_eq!(output.stdout, "json\n");
         assert_eq!(output.stderr, "progress\rprogress done\n");
         assert!(output.stderr_was_presented());
+    }
+
+    #[test]
+    fn native_stderr_newlines_return_to_column_zero() {
+        let printer = Printer::new(OutputStyle::from_flags(true, false, false));
+        let output = run_native_command_with_env(
+            "sh",
+            &[
+                "-c",
+                "printf 'setting up pam...\napplying patches...\n' >&2",
+            ],
+            None,
+            None,
+            &printer,
+        )
+        .expect("shell command should run");
+
+        assert_eq!(
+            output.stderr,
+            "setting up pam...\r\napplying patches...\r\n"
+        );
     }
 
     #[test]

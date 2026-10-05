@@ -48,7 +48,7 @@ const REBUILD_PREFLIGHT_ARGS: &[&str] = &[
     "hosts",
 ];
 const REBUILD_TIMING_HEAD_ARGS: &[&str] = &["rev-parse", "HEAD"];
-const CACHE_PREFLIGHT_HOST_ARGS: &[&str] = &["--get", "LocalHostName"];
+const CACHE_PREFLIGHT_HOST_ARGS: &[&str] = &["--get", "HostName"];
 const CACHE_PREFLIGHT_BUILD_ARGS: &[&str] = &[
     "build",
     "<REPO_ROOT>#darwinConfigurations.test-host.system",
@@ -476,11 +476,7 @@ const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
-    ExpectedCall::new(
-        "scutil",
-        EXPECTED_CWD_REPO_ROOT,
-        &["--get", "LocalHostName"],
-    ),
+    ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, &["--get", "HostName"]),
     ExpectedCall::new(
         "nix",
         EXPECTED_CWD_REPO_ROOT,
@@ -537,11 +533,7 @@ const UPGRADE_SPLIT_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
-    ExpectedCall::new(
-        "scutil",
-        EXPECTED_CWD_REPO_ROOT,
-        &["--get", "LocalHostName"],
-    ),
+    ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, &["--get", "HostName"]),
     ExpectedCall::new(
         "nix",
         EXPECTED_CWD_REPO_ROOT,
@@ -569,11 +561,7 @@ const UPGRADE_SPLIT_REBUILD_RUN_CURRENT_LEGACY_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
-    ExpectedCall::new(
-        "scutil",
-        EXPECTED_CWD_REPO_ROOT,
-        &["--get", "LocalHostName"],
-    ),
+    ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, &["--get", "HostName"]),
     ExpectedCall::new(
         "nix",
         EXPECTED_CWD_REPO_ROOT,

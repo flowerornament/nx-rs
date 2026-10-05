@@ -539,7 +539,7 @@ Experimental split Darwin rebuild:
 - Falls back to the default rebuild path when the split path cannot confidently preserve behavior.
 - Runs `nix build --no-link --print-out-paths <repo_root>#darwinConfigurations.<host>.system`. Interactive runs select `--log-format bar`; `--verbose` selects `bar-with-logs`; non-interactive and `--timing` runs select `internal-json`.
 - Interactive user-facing Nix commands inherit stdin and receive a pseudoterminal-backed stderr initialized from nx's terminal settings. Nx relays stderr bytes unchanged while retaining only a bounded diagnostic tail. Nx may capture stdout when it is command data, such as the split build's resulting store path, but it never parses, prefixes, indents, or re-renders native Nix terminal output.
-- Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get LocalHostName`, then `hostname -s`.
+- Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get HostName`, `scutil --get LocalHostName`, then `hostname -s`; an explicit hostname takes precedence over a Bonjour name with a collision suffix.
 - If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
 - Otherwise reports successful build and profile-update phase completion, then runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
 - If direct split activation would require an interactive sudo prompt but the legacy `sudo darwin-rebuild` path is available non-interactively, falls back to legacy `darwin-rebuild` to preserve passwordless sudoers setups.

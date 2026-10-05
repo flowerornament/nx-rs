@@ -569,8 +569,13 @@ case "$program" in
     exit 1
     ;;
   scutil)
-    if [ "${1:-}" = "--get" ] && [ "${2:-}" = "LocalHostName" ]; then
+    if [ "${1:-}" = "--get" ] && [ "${2:-}" = "HostName" ]; then
+      if [ "${NX_SYSTEM_IT_HOSTNAME_UNSET:-0}" = "1" ]; then exit 1; fi
       printf '%s\n' "${NX_SYSTEM_IT_DARWIN_HOST:-test-host}"
+      exit 0
+    fi
+    if [ "${1:-}" = "--get" ] && [ "${2:-}" = "LocalHostName" ]; then
+      printf '%s\n' "${NX_SYSTEM_IT_LOCAL_HOST:-test-host-2}"
       exit 0
     fi
     echo "stub scutil unsupported: $*" >&2

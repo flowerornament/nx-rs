@@ -506,6 +506,10 @@ Runs repo quality checks. This validates the managed Nix config repo itself.
 
 Runs `darwin-rebuild switch` for the managed repo.
 
+- Split builds and upgrade cache checks select the Darwin host from
+  `NX_DARWIN_HOST`, then macOS `HostName`, then `LocalHostName`, then
+  `hostname -s`. The configured hostname takes precedence over a Bonjour
+  name with a network collision suffix.
 - Use `--preflight` to stop after lint, git, and flake checks without switching.
 - Use `--timing` to print phase timings after recording them locally.
 - Use `--verbose` to ask Nix for full build logs during rebuild phases.

@@ -964,6 +964,7 @@ pub(super) fn darwin_host(ctx: &SystemContext<'_>) -> Option<String> {
     std::env::var(DARWIN_HOST_ENV)
         .ok()
         .filter(|host| !host.trim().is_empty())
+        .or_else(|| captured_trimmed("scutil", &["--get", "HostName"], None))
         .or_else(|| captured_trimmed("scutil", &["--get", "LocalHostName"], None))
         .or_else(|| captured_trimmed("hostname", &["-s"], None))
         .inspect(|host| Printer::detail(&format!("darwin host: {host}")))

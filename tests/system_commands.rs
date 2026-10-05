@@ -56,7 +56,7 @@ const REBUILD_FLAKE_ARGS: &[&str] = &[
     "check",
     REPO_ROOT_TOKEN,
 ];
-const CACHE_PREFLIGHT_HOST_ARGS: &[&str] = &["--get", "LocalHostName"];
+const CACHE_PREFLIGHT_HOST_ARGS: &[&str] = &["--get", "HostName"];
 const CACHE_PREFLIGHT_BUILD_ARGS: &[&str] = &[
     "build",
     "<REPO_ROOT>#darwinConfigurations.test-host.system",
@@ -314,11 +314,7 @@ const SPLIT_REBUILD_BUILD_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
-    ExpectedCall::new(
-        "scutil",
-        EXPECTED_CWD_REPO_ROOT,
-        &["--get", "LocalHostName"],
-    ),
+    ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, &["--get", "HostName"]),
     SPLIT_REBUILD_NIX_BUILD_CALL,
 ];
 
@@ -756,6 +752,35 @@ fn rebuild_hash_mismatch_repairs_and_retries() -> Result<(), Box<dyn Error>> {
     let repaired = fs::read_to_string(repo_root.path().join("home/agent-sync.nix"))?;
     assert!(repaired.contains("npmDepsHash = \"sha256-new\";"));
 
+    Ok(())
+}
+
+#[test]
+fn split_darwin_rebuild_falls_back_when_hostname_is_unset() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+    let mut expected_calls = split_rebuild_calls(false);
+    expected_calls.insert(
+        4,
+        ExpectedCall::new(
+            "scutil",
+            EXPECTED_CWD_REPO_ROOT,
+            &["--get", "LocalHostName"],
+        ),
+    );
+    let result = run_split_rebuild(
+        &nx_bin,
+        &workspace_root.join("tests/fixtures/system/repo_base"),
+        "split_rebuild_hostname_unset",
+        "success",
+        &[
+            ("NX_SPLIT_DARWIN", "1"),
+            ("NX_SYSTEM_IT_HOSTNAME_UNSET", "1"),
+            ("NX_SYSTEM_IT_LOCAL_HOST", "test-host"),
+        ],
+        &expected_calls,
+    )?;
+    assert!(result.stdout.contains("System rebuilt"));
     Ok(())
 }
 

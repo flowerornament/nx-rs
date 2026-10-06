@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v1.5.40 - 2026-10-06
+
+- selects the configured macOS hostname before the Bonjour network name, so collision suffixes such as `Ishikawa-2` do not select a nonexistent Darwin flake configuration
+- keeps upgrades running when optional flake or Homebrew summary workers panic, retaining every input/package row and other workers' summaries
+
 ## v1.5.39 - 2026-09-29
 
 - keeps successive Darwin and Home Manager activation messages at column zero instead of drifting right across the terminal

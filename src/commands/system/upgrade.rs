@@ -381,6 +381,23 @@ fn update_flake_lock(
     })
 }
 
+fn enrich_optional<T: Sync, R: Send>(
+    items: &[T],
+    enrich: impl Fn(&T) -> R + Sync,
+) -> Vec<(&T, std::thread::Result<R>)> {
+    std::thread::scope(|scope| {
+        let enrich = &enrich;
+        let handles: Vec<_> = items
+            .iter()
+            .map(|item| (item, scope.spawn(move || enrich(item))))
+            .collect();
+        handles
+            .into_iter()
+            .map(|(item, handle)| (item, handle.join()))
+            .collect()
+    })
+}
+
 fn report_flake_changes(args: &UpgradeArgs, ctx: &AppContext, root_inputs: &RootInputChanges) {
     if root_inputs.is_empty() {
         ctx.printer.success("All flake inputs up to date");
@@ -395,24 +412,16 @@ fn report_flake_changes(args: &UpgradeArgs, ctx: &AppContext, root_inputs: &Root
 
         // Fetch summaries and AI descriptions in parallel across all inputs.
         let no_ai = args.no_ai();
-        let enriched: Vec<_> = std::thread::scope(|s| {
-            let handles: Vec<_> = root_inputs
-                .changed
-                .iter()
-                .map(|change| {
-                    s.spawn(move || {
-                        let summary = fetch_flake_compare_summary(change);
-                        let ai_summary = summary.as_ref().ok().and_then(|sum| {
-                            maybe_ai_summary(no_ai, || summarize_flake_change_ai(change, sum))
-                        });
-                        (change, summary, ai_summary)
-                    })
-                })
-                .collect();
-            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        let enriched = enrich_optional(&root_inputs.changed, |change| {
+            let summary = fetch_flake_compare_summary(change);
+            let ai_summary = summary
+                .as_ref()
+                .ok()
+                .and_then(|sum| maybe_ai_summary(no_ai, || summarize_flake_change_ai(change, sum)));
+            (summary, ai_summary)
         });
 
-        for (change, summary, ai_summary) in &enriched {
+        for (change, enrichment) in &enriched {
             println!();
             Printer::body(&change.name);
             Printer::sub_detail(&format!(
@@ -423,6 +432,12 @@ fn report_flake_changes(args: &UpgradeArgs, ctx: &AppContext, root_inputs: &Root
                 short_rev(&change.new_rev),
             ));
 
+            let Ok((summary, ai_summary)) = enrichment else {
+                ctx.printer.warn(
+                    "Optional flake summary worker panicked; continuing without its summary.",
+                );
+                continue;
+            };
             match summary {
                 Ok(summary) => {
                     Printer::sub_detail(&format_compare_summary(summary));
@@ -760,23 +775,14 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
 
     // Fetch summaries and AI descriptions in parallel across all packages.
     let no_ai = args.no_ai();
-    let enriched: Vec<_> = std::thread::scope(|s| {
-        let handles: Vec<_> = outdated
-            .iter()
-            .map(|package| {
-                s.spawn(move || {
-                    let ai_summary = maybe_ai_summary(no_ai, || {
-                        fetch_brew_compare_summary(package)
-                            .and_then(|summary| summarize_brew_change_ai(package, &summary))
-                    });
-                    (package, ai_summary)
-                })
-            })
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    let enriched = enrich_optional(&outdated, |package| {
+        maybe_ai_summary(no_ai, || {
+            fetch_brew_compare_summary(package)
+                .and_then(|summary| summarize_brew_change_ai(package, &summary))
+        })
     });
 
-    for (package, ai_summary) in &enriched {
+    for (package, enrichment) in &enriched {
         println!();
         Printer::body(&package.name);
         Printer::sub_detail(&format!(
@@ -790,8 +796,12 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
             Printer::sub_detail(homepage);
         }
 
-        if let Some(ai_summary) = ai_summary {
-            Printer::sub_detail(ai_summary);
+        match enrichment {
+            Ok(Some(ai_summary)) => Printer::sub_detail(ai_summary),
+            Ok(None) => {}
+            Err(_) => ctx
+                .printer
+                .warn("Optional Homebrew summary worker panicked; continuing without its summary."),
         }
     }
 
@@ -1246,5 +1256,37 @@ fn format_repaired_paths(repaired_paths: &[PathBuf]) -> Option<String> {
         [] => None,
         [path] => Some(path.display().to_string()),
         [first, rest @ ..] => Some(format!("{} +{} more", first.display(), rest.len())),
+    }
+}
+
+#[cfg(test)]
+mod enrichment_tests {
+    use super::enrich_optional;
+
+    #[test]
+    fn flake_enrichment_preserves_rows_and_other_workers_after_panic() {
+        let items = ["failed-input", "healthy-input"];
+        let rows = enrich_optional(&items, |item| -> Result<&str, &str> {
+            assert_ne!(*item, "failed-input", "injected summary panic");
+            Ok("comparison")
+        });
+        assert_eq!(rows.len(), 2);
+        assert_eq!(*rows[0].0, "failed-input");
+        assert!(rows[0].1.is_err());
+        assert_eq!(rows[1].1.as_ref().unwrap(), &Ok("comparison"));
+    }
+
+    #[test]
+    fn brew_enrichment_distinguishes_panic_from_missing_summary() {
+        let items = ["failed-package", "no-summary", "healthy-package"];
+        let rows = enrich_optional(&items, |item| {
+            assert_ne!(*item, "failed-package", "injected summary panic");
+            (*item == "healthy-package").then_some("summary")
+        });
+        assert_eq!(rows.len(), 3);
+        assert_eq!(*rows[0].0, "failed-package");
+        assert!(rows[0].1.is_err());
+        assert_eq!(rows[1].1.as_ref().unwrap(), &None);
+        assert_eq!(rows[2].1.as_ref().unwrap(), &Some("summary"));
     }
 }

@@ -1,6 +1,9 @@
 use crate::commands::context::SystemContext;
 use crate::domain::manifest::PlatformKind;
-use crate::infra::shell::{first_nonempty_output, run_captured_command, terminal_stdio_available};
+use crate::infra::shell::{
+    first_nonempty_output, run_captured_command, run_captured_command_observing_stderr,
+    terminal_stdio_available,
+};
 use crate::output::printer::Printer;
 use serde_json::{Map, Value};
 use std::path::Path;
@@ -70,8 +73,13 @@ pub(super) fn check_cache_preflight(
     );
     let output = ctx
         .printer
-        .with_loading("Planning build with nix --dry-run", |_| {
-            run_captured_command("nix", &["build", &attr, "--dry-run"], None)
+        .with_loading("Planning build with nix --dry-run", |loading| {
+            run_captured_command_observing_stderr("nix", &["build", &attr, "--dry-run"], |chunk| {
+                let progress = planning_progress(chunk);
+                if !progress.is_empty() {
+                    loading.set_text(&format!("Planning build: {progress}"));
+                }
+            })
         });
 
     let output = match output {
@@ -133,6 +141,18 @@ pub(super) fn check_cache_preflight(
         _ => {}
     }
     outcome
+}
+
+fn planning_progress(chunk: &[u8]) -> String {
+    let text = String::from_utf8_lossy(chunk);
+    text.lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or_default()
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(120)
+        .collect()
 }
 
 pub(super) fn source_builds_outcome(

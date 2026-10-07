@@ -586,6 +586,9 @@ Runs the upgrade flow for either the whole repo or named flake inputs.
   require interactive approval or `--yes`; otherwise automation fails closed.
   Rejection or an unavailable coverage check atomically restores the original
   `flake.lock`.
+- Interactive cache planning shows live Nix stderr progress in the shared loading
+  indicator. Planning output is capped at 256 KiB per stream; exceeding the cap
+  makes coverage unavailable rather than parsing an incomplete plan.
 - Use `--yes` to preapprove an excessive source-build plan and let a long cache
   check continue unattended. It still fails closed when coverage cannot be
   established.

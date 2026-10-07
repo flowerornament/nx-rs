@@ -155,6 +155,62 @@ pub fn run_captured_command_with_env(
     ))
 }
 
+/// Capture complete command data while observing stderr before the child exits.
+/// Oversized output is drained, then rejected rather than returned truncated.
+pub(crate) fn run_captured_command_observing_stderr(
+    program: &str,
+    args: &[&str],
+    observe: impl Fn(&[u8]) + Sync,
+) -> anyhow::Result<CapturedCommand> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("failed to spawn {program}"))?;
+    let stdout = child.stdout.take().context("capturing stdout")?;
+    let stderr = child.stderr.take().context("capturing stderr")?;
+    thread::scope(|scope| {
+        let stdout = scope.spawn(|| collect_observed_stream(stdout, |_| {}));
+        let stderr = scope.spawn(|| collect_observed_stream(stderr, &observe));
+        let status = child.wait();
+        let stdout = stdout.join().map_err(|_| anyhow!("stdout reader panicked"));
+        let stderr = stderr.join().map_err(|_| anyhow!("stderr reader panicked"));
+        let status = status.context("waiting for child process")?;
+        Ok(CapturedCommand::captured(
+            status.code().unwrap_or(1),
+            String::from_utf8_lossy(&stdout??).into_owned(),
+            String::from_utf8_lossy(&stderr??).into_owned(),
+        ))
+    })
+}
+
+fn collect_observed_stream(
+    mut stream: impl Read,
+    observe: impl Fn(&[u8]),
+) -> anyhow::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0u8; 8192];
+    let mut overflow = false;
+    loop {
+        let count = stream.read(&mut buffer).context("reading command output")?;
+        if count == 0 {
+            break;
+        }
+        observe(&buffer[..count]);
+        if bytes.len().saturating_add(count) <= STDERR_TEE_CAPTURE_LIMIT && !overflow {
+            bytes.extend_from_slice(&buffer[..count]);
+        } else {
+            overflow = true;
+        }
+    }
+    anyhow::ensure!(
+        !overflow,
+        "command output exceeded capture limit; refusing an incomplete plan"
+    );
+    Ok(bytes)
+}
+
 pub fn run_indented_command(
     program: &str,
     args: &[&str],
@@ -668,6 +724,41 @@ mod tests {
     use crate::output::style::OutputStyle;
 
     struct FailingReader;
+
+    #[test]
+    fn observed_capture_reports_progress_before_child_can_finish() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let receipt = directory.path().join("observed");
+        let output = run_captured_command_observing_stderr(
+            "sh",
+            &[
+                "-c",
+                "printf 'evaluating inputs\\n' >&2; i=0; while [ ! -f \"$1\" ]; do i=$((i+1)); [ \"$i\" -lt 100 ] || exit 9; sleep 0.01; done; printf 'complete plan\\n'",
+                "test",
+                receipt.to_str().expect("temporary path"),
+            ],
+            |chunk| {
+                assert!(!chunk.is_empty());
+                fs::write(&receipt, b"observed").expect("progress receipt");
+            },
+        )
+        .expect("command capture");
+        assert_eq!(output.code, 0);
+        assert_eq!(output.stdout, "complete plan\n");
+        assert_eq!(output.stderr, "evaluating inputs\n");
+        assert!(!output.stderr_was_presented());
+    }
+
+    #[test]
+    fn observed_capture_rejects_overflow_instead_of_returning_partial_data() {
+        let bytes = vec![b'x'; STDERR_TEE_CAPTURE_LIMIT + 1];
+        assert!(collect_observed_stream(bytes.as_slice(), |_| {}).is_err());
+        let bytes = vec![b'x'; STDERR_TEE_CAPTURE_LIMIT];
+        assert_eq!(
+            collect_observed_stream(bytes.as_slice(), |_| {}).expect("exact limit"),
+            bytes
+        );
+    }
 
     #[test]
     fn failure_detail_skips_stderr_that_was_already_presented() {

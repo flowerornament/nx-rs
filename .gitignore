@@ -12,6 +12,8 @@ __pycache__/
 .dolt/
 *.db
 .beads-credential-key
+*.gate.lock*
+.beads/dolt-server-config.yaml
 
 .vercel
 .agents/reports/

@@ -698,8 +698,10 @@ Dry-run behavior:
   style, while native child output is exempt from the two-space indentation invariant.
   Non-interactive and `--timing` direct Nix commands use `internal-json` for diagnostics and
   timing data; captured activation retains raw diagnostics.
-- Machine-readable Nix queries and dry-run planning remain fully captured because their
-  stdout/stderr is command data. Structured warnings remain visible in non-interactive runs.
+- Machine-readable Nix queries and dry-run planning retain their command data for parsing.
+  Interactive cache planning updates the shared loading indicator with bounded live stderr
+  progress. Each planning stream is limited to 256 KiB; overflow rejects the plan rather
+  than interpreting truncated data. Structured warnings remain visible in non-interactive runs.
 - Store and generation maintenance commands stream their human result lines because the
   deleted paths and generations are the user-facing payload, not fetch/build progress.
 - `just demo-output` runs representative commands in a real pseudo-terminal. Tests verify

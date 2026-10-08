@@ -8,12 +8,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
 use serde_json::Value;
 
 use crate::infra::activation_profile::ActivationPhaseProfiler;
+use crate::infra::native_progress::NativeProgress;
 use crate::infra::nix_output::{NixOutputMode, NixRecord, decode_nix_record, feed_nix_output};
 use crate::infra::timing::TimingPhase;
 use crate::output::printer::Printer;
@@ -359,7 +360,7 @@ fn run_native_command_observing_stderr(
     let child_done = Arc::new(AtomicBool::new(false));
     let relay_done = Arc::clone(&child_done);
     let stderr_handle = thread::spawn(move || {
-        relay_native_stderr(File::from(pty.controller), &pty_user, &relay_done)
+        relay_native_stderr(File::from(pty.controller), &pty_user, &relay_done, mode)
     });
     let status = child.wait();
     child_done.store(true, Ordering::Release);
@@ -379,15 +380,26 @@ fn run_native_command_observing_stderr(
 }
 
 fn relay_native_stderr(
+    stream: impl Read,
+    pty_user: &rustix::fd::OwnedFd,
+    child_done: &AtomicBool,
+    mode: NativeCommandMode,
+) -> anyhow::Result<Vec<u8>> {
+    relay_native_stderr_to(stream, pty_user, child_done, mode, io::stderr().lock())
+}
+
+fn relay_native_stderr_to(
     mut stream: impl Read,
     pty_user: &rustix::fd::OwnedFd,
     child_done: &AtomicBool,
+    mode: NativeCommandMode,
+    mut stderr: impl Write,
 ) -> anyhow::Result<Vec<u8>> {
     let mut diagnostics = VecDeque::new();
     let mut buf = [0u8; 8192];
-    let mut stderr = io::stderr().lock();
     let mut write_error = None;
     let mut post_exit_bytes = 0usize;
+    let mut progress = matches!(mode, NativeCommandMode::Nix).then(NativeProgress::default);
 
     loop {
         let count = match stream.read(&mut buf) {
@@ -395,6 +407,12 @@ fn relay_native_stderr(
             Ok(count) => count,
             Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                 sync_pty_size(pty_user);
+                if write_error.is_none()
+                    && let Some(progress) = progress.as_mut()
+                    && let Err(err) = stderr.write_all(&progress.tick(Instant::now()))
+                {
+                    write_error = Some(err);
+                }
                 if child_done.load(Ordering::Acquire) {
                     break;
                 }
@@ -406,10 +424,14 @@ fn relay_native_stderr(
             Err(err) => return Err(err).context("reading native stderr stream"),
         };
         append_deque_tail(&mut diagnostics, &buf[..count], STDERR_TEE_CAPTURE_LIMIT);
-        if write_error.is_none()
-            && let Err(err) = stderr.write_all(&buf[..count])
-        {
-            write_error = Some(err);
+        if write_error.is_none() {
+            let bytes = progress.as_mut().map_or_else(
+                || Cow::Borrowed(&buf[..count]),
+                |progress| Cow::Owned(progress.push(&buf[..count], Instant::now())),
+            );
+            if let Err(err) = stderr.write_all(&bytes) {
+                write_error = Some(err);
+            }
         }
         if child_done.load(Ordering::Acquire) {
             post_exit_bytes = post_exit_bytes.saturating_add(count);
@@ -419,6 +441,12 @@ fn relay_native_stderr(
         }
     }
 
+    if write_error.is_none()
+        && let Some(progress) = progress.as_mut()
+        && let Err(err) = stderr.write_all(&progress.finish(Instant::now()))
+    {
+        write_error = Some(err);
+    }
     if write_error.is_none()
         && let Err(err) = stderr.flush()
     {
@@ -905,6 +933,35 @@ mod tests {
         assert_eq!(output.stdout, "json\n");
         assert_eq!(output.stderr, "progress\rprogress done\n");
         assert!(output.stderr_was_presented());
+    }
+
+    #[test]
+    fn native_redraw_coalescing_keeps_original_diagnostics_and_activation_output() {
+        let pty = rustix_openpty::openpty(None, None).expect("PTY should open");
+        let bytes = b"\rfirst\x1b[K\rsecond\x1b[K\rlatest\x1b[K";
+        let done = AtomicBool::new(true);
+        let mut displayed = Vec::new();
+        let diagnostics = relay_native_stderr_to(
+            io::Cursor::new(bytes),
+            &pty.user,
+            &done,
+            NativeCommandMode::Nix,
+            &mut displayed,
+        )
+        .expect("Nix relay should succeed");
+        assert_eq!(diagnostics, bytes);
+        assert_eq!(displayed, b"\rlatest\x1b[K");
+
+        displayed.clear();
+        relay_native_stderr_to(
+            io::Cursor::new(bytes),
+            &pty.user,
+            &done,
+            NativeCommandMode::Activation,
+            &mut displayed,
+        )
+        .expect("activation relay should succeed");
+        assert_eq!(displayed, bytes);
     }
 
     #[test]

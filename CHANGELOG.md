@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v1.5.41 - 2026-10-08
+
+- paces native Nix progress redraws at twice per second, retaining the latest and final frame while preserving permanent messages, prompts, terminal controls, original diagnostics, and activation output
+- shows live Nix input-realization feedback during binary-cache planning; incomplete captured plans fail closed when either stream exceeds its bounded capture limit
+- uses explicit Nix package build inputs so unrelated repository metadata does not invalidate the package source; embedded documentation and package-check fixtures remain included
+
 ## v1.5.40 - 2026-10-06
 
 - selects the configured macOS hostname before the Bonjour network name, so collision suffixes such as `Ishikawa-2` do not select a nonexistent Darwin flake configuration

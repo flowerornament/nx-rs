@@ -505,7 +505,7 @@ Network behavior:
 
 ## 10.2 `update`
 
-- In an interactive terminal, runs `nix flake update` with `--log-format bar`, inheriting stdin and relaying pseudoterminal-backed stderr bytes unchanged so Nix renders its native colored progress UI.
+- In an interactive terminal, runs `nix flake update` with `--log-format bar`, inheriting stdin and relaying pseudoterminal-backed stderr so Nix renders its native colored progress UI. Complete transient redraw frames are coalesced at the shared native relay as described below.
 - In non-interactive execution, uses `--log-format internal-json` and retains decoded diagnostics.
 - Accepts passthrough args except conflicting `--log-format` selections, which nx removes.
 - Success message instructs `nx rebuild` or `nx upgrade`.
@@ -538,7 +538,7 @@ Experimental split Darwin rebuild:
 - Applies only to Darwin manifests using the default `darwin-rebuild` command and no passthrough args.
 - Falls back to the default rebuild path when the split path cannot confidently preserve behavior.
 - Runs `nix build --no-link --print-out-paths <repo_root>#darwinConfigurations.<host>.system`. Interactive runs select `--log-format bar`; `--verbose` selects `bar-with-logs`; non-interactive and `--timing` runs select `internal-json`.
-- Interactive user-facing Nix commands inherit stdin and receive a pseudoterminal-backed stderr initialized from nx's terminal settings. Nx relays stderr bytes unchanged while retaining only a bounded diagnostic tail. Nx may capture stdout when it is command data, such as the split build's resulting store path, but it never parses, prefixes, indents, or re-renders native Nix terminal output.
+- Interactive user-facing Nix commands inherit stdin and receive a pseudoterminal-backed stderr initialized from nx's terminal settings. Nx retains the original bytes in a bounded diagnostic tail. For display, complete single-line replacement frames (`CR` through `ESC[K`) are coalesced to the latest at a 500 ms cadence; the final frame is flushed on exit. Permanent messages, clear-line controls and activation output are preserved unchanged. Unmatched partial frames/prompts flush within 100 ms, and partial-frame buffering is limited to 16 KiB. Nx may capture stdout when it is command data, such as the split build's resulting store path, but it never interprets progress content, prefixes, indents, or re-renders native Nix output.
 - Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get HostName`, `scutil --get LocalHostName`, then `hostname -s`; an explicit hostname takes precedence over a Bonjour name with a collision suffix.
 - If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
 - Otherwise reports successful build and profile-update phase completion, then runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
@@ -693,7 +693,8 @@ Dry-run behavior:
 - Captured package/source lookups (`search`, `info`, install resolution, and Homebrew
   outdated checks) use shared loading scopes rather than one-off progress printers.
 - Interactive Nix updates, checks, builds, and profile updates use Nix's native `bar`
-  renderer unchanged; `--verbose` selects `bar-with-logs`. Interactive activation inherits
+  renderer with the shared redraw cadence above; `--verbose` selects `bar-with-logs`.
+  Permanent verbose build logs remain unchanged. Interactive activation inherits
   the terminal and preserves each nested tool's normal output. Nx headings remain in its own
   style, while native child output is exempt from the two-space indentation invariant.
   Non-interactive and `--timing` direct Nix commands use `internal-json` for diagnostics and

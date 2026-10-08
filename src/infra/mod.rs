@@ -7,6 +7,7 @@ pub mod finder;
 pub mod flake_input;
 pub mod generations;
 pub mod hash;
+mod native_progress;
 pub mod nix_output;
 pub mod nix_runtime;
 pub mod package_query;

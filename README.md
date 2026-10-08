@@ -490,7 +490,8 @@ confirmation prompt.
 #### `update`
 
 Runs `nix flake update`. In a terminal, Nix owns stderr and renders its native
-colored `bar` progress unchanged. Non-interactive execution uses structured
+colored `bar` progress, with transient redraws limited to twice per second.
+Permanent messages stay immediate. Non-interactive execution uses structured
 diagnostics. Additional args after `--` pass through to the underlying flake
 update invocation except `--log-format`, which nx owns.
 
@@ -514,9 +515,10 @@ Runs `darwin-rebuild switch` for the managed repo.
 - Use `--timing` to print phase timings after recording them locally.
 - Use `--verbose` to ask Nix for full build logs during rebuild phases.
 - Interactive checks, builds, profile updates, and `darwin-rebuild` use Nix's
-  native colored `bar` renderer unchanged. `--verbose` selects
-  `bar-with-logs`. Nx gives stderr a pseudoterminal and relays its bytes
-  unchanged while retaining a bounded diagnostic tail; split-build stdout is
+  native colored `bar` renderer, with transient redraws limited to twice per
+  second. `--verbose` selects `bar-with-logs`; permanent logs stay immediate.
+  Nx gives stderr a pseudoterminal and retains the original diagnostic tail;
+  split-build stdout is
   captured only to read the resulting store path.
 - Direct Nix commands in non-interactive runs and `--timing` use Nix's
   `internal-json` protocol for diagnostics, timing, and safe hash repair.
@@ -604,7 +606,7 @@ Runs the upgrade flow for either the whole repo or named flake inputs.
 - Homebrew update checks show live loading feedback before upgrade details are
   rendered.
 - Interactive flake updates, checks, and builds preserve Nix's native colored
-  `bar` progress exactly; native Nix rows are intentionally not indented by nx.
+  `bar` progress with readable redraw pacing; native Nix rows are not indented.
 - Use `--verbose` to select Nix's native `bar-with-logs` output for direct Nix
   phases.
 - Targeted input upgrades skip the Homebrew phase by default.

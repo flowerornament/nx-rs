@@ -25,7 +25,7 @@
       packages = forAllSystems ({ pkgs, ... }: {
         default = import ./nix/package.nix {
           inherit pkgs;
-          src = ./.;
+          src = import ./nix/source.nix { lib = pkgs.lib; };
           version = nxVersion;
         };
       });

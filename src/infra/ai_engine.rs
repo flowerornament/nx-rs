@@ -231,6 +231,7 @@ impl ClaudeCodeEngine {
         allowed_tools: Option<&[&str]>,
         max_turns: Option<u32>,
     ) -> anyhow::Result<String> {
+        let mut trace = crate::infra::run_trace::command("claude", &[]);
         let printer = Printer::new(self.style);
         let session_id = uuid::Uuid::new_v4();
 
@@ -323,7 +324,11 @@ impl ClaudeCodeEngine {
             }
         }
 
-        let _ = child.wait();
+        if let Ok(status) = child.wait()
+            && let Some(trace) = trace.as_mut()
+        {
+            trace.finish(status.code().unwrap_or(1));
+        }
         Ok(final_text)
     }
 }

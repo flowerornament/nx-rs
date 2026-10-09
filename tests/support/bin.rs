@@ -4,7 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 pub fn resolve_nx_bin(workspace_root: &Path) -> Result<PathBuf, Box<dyn Error>> {
-    if let Some(path) = env::var_os("CARGO_BIN_EXE_nx") {
+    if let Some(path) = env::var_os("NX_TEST_BINARY").or_else(|| env::var_os("CARGO_BIN_EXE_nx")) {
         return Ok(PathBuf::from(path));
     }
 

@@ -4,7 +4,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-pub const LOG_FILE_NAME: &str = ".system-command-log.tsv";
+pub const LOG_FILE_NAME: &str = ".system-command-log.jsonl";
 pub const STUB_DIR_NAME: &str = ".system-stubs";
 
 pub fn prepend_path(stub_dir: &Path) -> String {
@@ -98,14 +98,13 @@ first_attempt() {
   : > "$marker"
 }
 
-line="${program}	${PWD}"
-if [ "${NIX_CONFIG:-}" != "" ]; then
-  line="${line}	ENV:NIX_CONFIG=${NIX_CONFIG}"
-fi
-for arg in "$@"; do
-  line="${line}	${arg}"
-done
-printf "%s\n" "$line" >> "$log_path"
+python3 - "$log_path" "$program" "$PWD" "$@" <<'PYLOG'
+import json, os, sys
+path, program, cwd, *args = sys.argv[1:]
+env = [["NIX_CONFIG", os.environ["NIX_CONFIG"]]] if os.environ.get("NIX_CONFIG") else []
+with open(path, "a") as log:
+    log.write(json.dumps(dict(program=program, cwd=cwd, args=args, env=env)) + "\n")
+PYLOG
 
 case "$program" in
   git)

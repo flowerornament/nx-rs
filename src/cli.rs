@@ -69,7 +69,7 @@ const INFO_HELP: &str = "Examples:\n  nx info ripgrep\n  nx info ripgrep --nur\n
 const STATUS_HELP: &str = "Examples:\n  nx status\n  nx status --json\n\nNotes:\n  - `status` is a read-only package distribution summary for the managed repo.";
 const UNUSED_HELP: &str = "Examples:\n  nx unused\n  nx unused --since 30d\n  nx unused --source nix --json\n  nx unused --history ~/.zsh_history --verbose\n\nNotes:\n  - `unused` is a read-only advisory audit of declared packages with little local evidence of recent use.\n  - It scans shell history locally, treats untimestamped entries as lower-confidence evidence, and never reports or stores raw command history.\n  - Absence of evidence is only a review signal; use `nx remove --dry-run <package>` before removing anything.";
 const INSTALLED_HELP: &str = "Examples:\n  nx installed ripgrep fd\n  nx installed ripgrep --show-location\n  nx installed ripgrep fd --json\n\nNotes:\n  - Exit status is success only when every requested package is installed.";
-const PROFILE_HELP: &str = "Examples:\n  nx profile\n  nx profile --limit 20\n  nx profile --json\n\nNotes:\n  - `profile` reads local rebuild timing records from ~/.local/state/nx/timings.jsonl.\n  - Set NX_PROFILE_PATH to override the timing file location.";
+const PROFILE_HELP: &str = "Examples:\n  nx profile\n  nx profile --limit 20\n  nx profile --json\n\nNotes:\n  - `profile` reads local command timing records from ~/.local/state/nx/timings.jsonl.\n  - Set NX_PROFILE_PATH to override the timing file location.";
 const LINT_HELP: &str = "Examples:\n  nx lint\n  nx lint --json\n\nNotes:\n  - `lint` checks first-line `# nx:` routing metadata and routing keyword overlap.";
 const UNDO_HELP: &str = "Examples:\n  nx undo\n  nx undo --yes\n\nNotes:\n  - `undo` reverts modified tracked files via git checkout and prompts by default.";
 const UPDATE_HELP: &str = "Examples:\n  nx update\n  nx update -- --commit-lock-file\n  nx update -- --flake ./hosts/macbook\n\nNotes:\n  - Interactive runs preserve Nix's native colored progress.\n  - Additional args after `--` are passed to `nix flake update`; nx owns `--log-format`.";
@@ -190,7 +190,7 @@ pub enum CommandKind {
     Unused(UnusedArgs),
     #[command(about = "Check whether package(s) are installed")]
     Installed(InstalledArgs),
-    #[command(about = "Show recent local rebuild timings")]
+    #[command(about = "Show recent local command timings")]
     Profile(ProfileArgs),
     #[command(about = "Check nx routing annotations and keyword conflicts")]
     Lint(LintArgs),

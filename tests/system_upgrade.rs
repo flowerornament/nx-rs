@@ -1,3 +1,6 @@
+#[path = "support/trace.rs"]
+mod support_trace;
+
 #[path = "support/bin.rs"]
 mod support_bin;
 #[path = "support/command_io.rs"]
@@ -24,7 +27,7 @@ use std::process::Command;
 use tempfile::TempDir;
 
 use support_bin::resolve_nx_bin;
-use support_command_io::{ensure_test_layout, run_command_with_optional_stdin};
+use support_command_io::{ensure_test_layout, run_measured_command};
 use support_invocations::{
     EXPECTED_CWD_REPO_ROOT, ExpectedCall, REPO_ROOT_TOKEN, assert_invocations, read_invocations,
 };
@@ -377,7 +380,6 @@ const UPGRADE_REBUILD_CALLS: &[ExpectedCall] = &[
         EXPECTED_CWD_REPO_ROOT,
         CACHE_PREFLIGHT_DEFAULT_DERIVATION_ARGS,
     ),
-    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
     ExpectedCall::new(
@@ -435,7 +437,6 @@ const UPGRADE_CACHE_GATE_OVERRIDE_CALLS: &[ExpectedCall] = &[
         CACHE_PREFLIGHT_DERIVATION_ARGS,
     ),
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
-    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
     ExpectedCall::new(
@@ -473,7 +474,6 @@ const UPGRADE_SPLIT_REBUILD_CALLS: &[ExpectedCall] = &[
         EXPECTED_CWD_REPO_ROOT,
         CACHE_PREFLIGHT_DEFAULT_DERIVATION_ARGS,
     ),
-    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, &["--get", "HostName"]),
@@ -530,7 +530,6 @@ const UPGRADE_SPLIT_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
         EXPECTED_CWD_REPO_ROOT,
         CACHE_PREFLIGHT_DEFAULT_DERIVATION_ARGS,
     ),
-    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, &["--get", "HostName"]),
@@ -558,7 +557,6 @@ const UPGRADE_SPLIT_REBUILD_RUN_CURRENT_LEGACY_CALLS: &[ExpectedCall] = &[
         EXPECTED_CWD_REPO_ROOT,
         CACHE_PREFLIGHT_DEFAULT_DERIVATION_ARGS,
     ),
-    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
     ExpectedCall::new("scutil", EXPECTED_CWD_REPO_ROOT, &["--get", "HostName"]),
@@ -634,7 +632,6 @@ const UPGRADE_REBUILD_FAILURE_CALLS: &[ExpectedCall] = &[
         EXPECTED_CWD_REPO_ROOT,
         CACHE_PREFLIGHT_DEFAULT_DERIVATION_ARGS,
     ),
-    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
     ExpectedCall::new(
@@ -673,7 +670,6 @@ const UPGRADE_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
         CACHE_PREFLIGHT_DEFAULT_DERIVATION_ARGS,
     ),
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
-    ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
     ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
     ExpectedCall::new(
@@ -1198,8 +1194,14 @@ fn run_case_with_extra_env(
     seed_home_state_if_needed(home_dir.path(), case.mode)?;
     let profile_link = home_dir.path().join("system-profile");
     symlink("/nix/store/current-system", &profile_link)?;
+    let tracing =
+        env::var_os("NX_PERF_DIR").is_none() || env::var("NX_PERF_TRACE").as_deref() != Ok("0");
+    let trace_path = home_dir.path().join("trace.jsonl");
+    let timings_path = home_dir.path().join("timings.jsonl");
     let mut command = Command::new(nx_bin);
     command
+        .env_remove("NX_TRACE_PATH")
+        .env("NX_PROFILE_PATH", &timings_path)
         .args(["--plain", "--minimal"])
         .args(case.cli_args)
         .current_dir(repo_root.path())
@@ -1224,11 +1226,14 @@ fn run_case_with_extra_env(
             stub_dir.join("darwin-rebuild"),
         )
         .env("PATH", prepend_path(&stub_dir));
+    if tracing {
+        command.env("NX_TRACE_PATH", &trace_path);
+    }
     for (key, value) in extra_env {
         command.env(key, value);
     }
 
-    let output = run_command_with_optional_stdin(&mut command, None)?;
+    let (output, elapsed) = run_measured_command(&mut command, None)?;
     let after = snapshot_repo_files(repo_root.path(), &should_ignore_snapshot_path)?;
     let invocations = read_invocations(&log_path)?;
     let exit_code = output.status.code().unwrap_or(-1);
@@ -1241,10 +1246,19 @@ fn run_case_with_extra_env(
         case.id, stdout, stderr
     );
 
-    let expected_calls = [NIX_VERSION_CALL, DETERMINATE_VERSION_CALL]
-        .into_iter()
-        .chain(case.expected_calls.iter().copied())
-        .collect::<Vec<_>>();
+    if tracing {
+        support_trace::assert_trace(&trace_path, case.expected_exit)?;
+    }
+    support_trace::retain(
+        case.id,
+        &trace_path,
+        &timings_path,
+        &log_path,
+        &serde_json::json!({"process_wall_ns":elapsed.as_nanos(),"traced":tracing,"exit_code":exit_code}),
+    )?;
+    assert_upgrade_timing(&timings_path, case.expected_exit)?;
+
+    let expected_calls = expected_upgrade_calls(case);
     assert_invocations(case.id, repo_root.path(), &invocations, &expected_calls);
     for expected in case.stdout_contains {
         assert!(
@@ -1424,4 +1438,52 @@ fn assert_home_state(case: &UpgradeCase, home_dir: &Path, stdout: &str, stderr: 
 
 fn should_ignore_snapshot_path(rel_path: &str) -> bool {
     rel_path == LOG_FILE_NAME || rel_path == STUB_DIR_NAME || rel_path.starts_with(".system-stubs/")
+}
+
+fn assert_upgrade_timing(path: &Path, exit: i32) -> Result<(), Box<dyn Error>> {
+    let timing_records: Vec<serde_json::Value> = fs::read_to_string(path)?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?;
+    assert_eq!(timing_records.len(), 1, "one complete upgrade record");
+    assert_eq!(timing_records[0]["exit_code"], exit);
+    assert_eq!(timing_records[0]["command"], "upgrade");
+    let total_ms = timing_records[0]["total_ms"].as_u64().unwrap();
+    assert!(
+        timing_records[0]["phases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|phase| phase["duration_ms"].as_u64().unwrap() <= total_ms)
+    );
+    Ok(())
+}
+
+fn expected_upgrade_calls(case: &UpgradeCase) -> Vec<ExpectedCall> {
+    [
+        ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
+        NIX_VERSION_CALL,
+        DETERMINATE_VERSION_CALL,
+    ]
+    .into_iter()
+    .chain(case.expected_calls.iter().copied())
+    .collect()
+}
+
+#[test]
+fn trace_never_overwrites_existing_evidence() -> Result<(), Box<dyn Error>> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let binary = resolve_nx_bin(&root)?;
+    let temp = TempDir::new()?;
+    let trace = temp.path().join("existing.jsonl");
+    fs::write(&trace, "previous evidence")?;
+    let output = Command::new(binary)
+        .args(["profile", "--json"])
+        .env("NX_TRACE_PATH", &trace)
+        .env("NX_PROFILE_PATH", temp.path().join("missing"))
+        .output()?;
+    assert!(output.status.success());
+    assert_eq!(fs::read_to_string(trace)?, "previous evidence");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Could not create NX_TRACE_PATH"));
+    Ok(())
 }

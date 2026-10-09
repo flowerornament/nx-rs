@@ -42,7 +42,7 @@ trap 'rm -rf "$scratch"' EXIT
 repo="$scratch/repo"
 home="$scratch/home"
 stubs="$scratch/stubs"
-log="$scratch/invocations.tsv"
+log="$scratch/invocations.jsonl"
 profile="$scratch/system-profile"
 
 action 'Preparing output demo'

@@ -729,3 +729,31 @@ Dry-run behavior:
   - `remove` per-item lookup, edit, and AI failures
 - Historical parity notes from earlier implementations are informative only when preserved by
   the current sections above.
+
+## Performance observation
+
+- Upgrade timing covers the complete command flow, including early failures and
+  upgrades that skip rebuild. Rebuild is a nested phase; one upgrade writes one
+  timing record. Optional phase completion does not certify every child succeeded.
+- Timing records evolve additively. Missing `nx_version` and
+  `flake_lock_hash_after` remain readable; historical upgrade records may describe
+  only the rebuild portion.
+- `NX_TRACE_PATH` opts into a new, exclusively created version-1 JSON Lines file.
+  Records use a process-local monotonic clock, span IDs and explicit parent IDs.
+  Phase context propagates into optional summary workers and Nix stderr readers.
+  Interrupted/error spans retain an absent exit result rather than inventing one.
+- Tracing does not alter selected commands, Nix log formats, or their exit codes.
+  Trace failures warn; existing files are never overwritten. Command labels retain
+  bounded operation names, not arbitrary arguments or environment values.
+- Structured Nix activity records retain IDs, parent IDs, types, and fields under
+  their command. Diagnostics/build output are excluded. Missing activity detail
+  is not proof that no network/build work occurred.
+- System upgrade scenarios independently assert command sequences and validate
+  trace parent/order/completion contracts. `just perf-system` reuses those scenarios
+  with a release binary and retains method/condition metadata and failure artifacts.
+  Each repeat uses a matched traced/untraced pair with alternating order.
+  Source, binary and suite stability are checked around measurement.
+  Wall-time reports count overlapping command intervals once. Residual time is
+  time outside recorded command intervals, not pure Nx CPU time. Performance
+  measurements are observational; CI gates trace/call correctness rather than
+  unstable wall-clock thresholds.

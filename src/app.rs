@@ -29,6 +29,15 @@ use crate::output::style::OutputStyle;
 const NX_REPO_ROOT_ENV: &str = "NX_REPO_ROOT";
 
 pub fn execute(cli: Cli) -> i32 {
+    let trace = crate::infra::run_trace::Run::from_env();
+    let code = execute_inner(cli);
+    if let Some(trace) = trace {
+        trace.finish(code);
+    }
+    code
+}
+
+fn execute_inner(cli: Cli) -> i32 {
     let style = OutputStyle::from_flags(cli.plain(), cli.unicode(), cli.minimal());
     let printer = Printer::new(style);
 

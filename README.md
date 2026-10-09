@@ -560,6 +560,53 @@ Shows recent local rebuild and upgrade timing records.
 - Set `NX_PROFILE_PATH` to read/write a different timing file.
 - Use `--json` for machine-readable records.
 
+Upgrade records cover the version check, flake update, cache admission, summaries,
+Homebrew, rebuild, and commit. Rebuild phases are nested inside the upgrade;
+early failures still produce a record. Records include the Nx version and lock
+hashes before and after the run. Older records can contain only rebuild timings.
+
+For detailed observation during your next normal upgrade, choose a new trace path:
+
+```bash
+NX_TRACE_PATH=/tmp/my-upgrade.jsonl nx upgrade -y
+python3 ~/code/nx-rs/scripts/perf_system.py --trace /tmp/my-upgrade.jsonl
+```
+
+The versioned JSON Lines trace records monotonic phase/command intervals, parent
+relationships, exit results, and available structured Nix activity IDs and targets.
+It does not change command selection or terminal output. Command labels contain
+bounded operation names rather than arbitrary arguments, prompts, or environment
+values. Nix activity fields can contain source URLs and store paths. An existing
+trace file is preserved; trace I/O failure warns without changing the operation's
+exit code. A missing run end or result is incomplete evidence.
+
+For repeatable Nx/strategy measurements using the normal correctness scenarios:
+
+```bash
+cd ~/code/nx-rs
+just perf-system --repeat 3
+python3 scripts/perf_system.py --report .nx/perf/<run-directory>
+```
+
+This builds the release binary and runs the existing upgrade system scenarios,
+retaining traces, phase timings, sanitized command logs, and a manifest containing
+binary/suite digests, the source commit, host conditions, and completion status.
+Each repeat runs a matched traced/untraced pair, alternating their order. The
+report shows process-wall medians/ranges, paired tracing deltas, command
+counts/durations, and time outside the
+union of recorded command intervals. That residual includes Nx work and trace
+cost; it is not a measurement of Nx CPU time. Overlapping command and phase
+values must not be summed into total wall time.
+
+The controlled scenarios use stubs and captured output; their network/cache costs
+are simulated. Real configuration costs come from traces of ordinary operations.
+Structured Nix activities are retained when available; native terminal rendering
+and plain dry-run output do not supply equivalent activity detail. A trace cannot
+prove every network request. Compare only matching inputs, execution mode, cache
+conditions, and suite definitions; loaded-host observations are not regression
+thresholds. The retained artifacts can later be imported by git-evidence.
+
+
 ---
 
 #### `upgrade`

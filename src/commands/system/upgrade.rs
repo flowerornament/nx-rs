@@ -25,15 +25,25 @@ use crate::infra::shell::{
 use crate::output::printer::Printer;
 
 use crate::infra::text::truncate_with_ellipsis;
-use crate::infra::timing::TimingCommand;
+use crate::infra::timing::{TimingCommand, TimingSession, append_timing};
 
 use super::cache_preflight::{CachePreflightMode, CachePreflightOutcome, check_cache_preflight};
 use super::nix_diagnostics::{NixCacheHome, diagnose_nix_failure};
-use super::rebuild::cmd_rebuild_with_command_result;
+use super::rebuild::run_rebuild;
 
 // ─── upgrade ─────────────────────────────────────────────────────────────────
 
 pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
+    let mut timing = TimingSession::new(TimingCommand::Upgrade, &ctx.repo_root);
+    let code = run_upgrade(args, ctx, &mut timing);
+    if let Err(error) = append_timing(&timing.finish(code)) {
+        ctx.printer
+            .warn(&format!("Failed to record upgrade timing: {error:#}"));
+    }
+    code
+}
+
+fn run_upgrade(args: &UpgradeArgs, ctx: &AppContext, timing: &mut TimingSession) -> i32 {
     if args.dry_run() {
         ctx.printer.dry_run_banner();
     }
@@ -50,7 +60,10 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
         return 2;
     }
 
-    check_determinate_version(args, ctx);
+    let _ = timing.measure("determinate-check", || {
+        check_determinate_version(args, ctx);
+        Ok(())
+    });
 
     if upgrade_requires_manifest_system_safety(args)
         && let Err(code) = ctx.require_manifest_system_safe("upgrade")
@@ -59,14 +72,17 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
     }
 
     // Phase 1: Flake update and cache admission
-    let prepared = match prepare_flake_update(args, ctx) {
+    let prepared = match prepare_flake_update(args, ctx, timing) {
         Ok(prepared) => prepared,
         Err(code) => return code,
     };
 
     // Phase 2: Brew, after the candidate system is admitted
     if args.should_run_brew_phase() {
-        run_brew_phase(args, ctx);
+        let _ = timing.measure("homebrew-upgrade", || {
+            run_brew_phase(args, ctx);
+            Ok(())
+        });
     }
 
     if args.dry_run() {
@@ -83,8 +99,14 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
             ..RebuildArgs::default()
         };
         let system_ctx = ctx.system_context();
-        let rebuild_result =
-            cmd_rebuild_with_command_result(&rebuild, &system_ctx, TimingCommand::Upgrade);
+        if let Err(code) = system_ctx.require_manifest_system_safe("rebuild") {
+            return code;
+        }
+        let rebuild_result = timing.nested("rebuild", |timing| {
+            let result = run_rebuild(&rebuild, &system_ctx, timing);
+            let code = result.code;
+            (result, code)
+        });
         if rebuild_result.code != 0 {
             return 1;
         }
@@ -94,12 +116,14 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
     // Phase 4: Commit
     if !args.skip_commit()
         && (prepared.lock_changed || !repaired_paths.is_empty())
-        && let Err(code) = commit_flake_lock(
-            ctx,
-            prepared.lock_changed,
-            &prepared.root_inputs,
-            &repaired_paths,
-        )
+        && let Err(code) = timing.measure("commit", || {
+            commit_flake_lock(
+                ctx,
+                prepared.lock_changed,
+                &prepared.root_inputs,
+                &repaired_paths,
+            )
+        })
     {
         return code;
     }
@@ -214,7 +238,11 @@ struct PreparedFlakeUpdate {
     _lock: Option<UpgradeLock>,
 }
 
-fn prepare_flake_update(args: &UpgradeArgs, ctx: &AppContext) -> Result<PreparedFlakeUpdate, i32> {
+fn prepare_flake_update(
+    args: &UpgradeArgs,
+    ctx: &AppContext,
+    timing: &mut TimingSession,
+) -> Result<PreparedFlakeUpdate, i32> {
     if args.dry_run() {
         let inputs = load_flake_lock(&ctx.repo_root).map_err(|err| {
             ctx.printer
@@ -241,16 +269,20 @@ fn prepare_flake_update(args: &UpgradeArgs, ctx: &AppContext) -> Result<Prepared
             .error(&format!("Could not load flake.lock before update: {err:#}"));
         1
     })?;
-    let candidate = match update_flake_lock(args, ctx, &old_inputs) {
-        Ok(candidate) => candidate,
-        Err(code) => return Err(restore_rejected_lock(transaction, ctx, code)),
-    };
+    let candidate =
+        match timing.measure("flake-update", || update_flake_lock(args, ctx, &old_inputs)) {
+            Ok(candidate) => candidate,
+            Err(code) => return Err(restore_rejected_lock(transaction, ctx, code)),
+        };
     let lock_changed = candidate.bytes != transaction.original;
     transaction.observe_candidate(candidate.bytes);
 
     if args.skip_rebuild() {
         let lock = transaction.admit();
-        report_flake_changes(args, ctx, &candidate.root_inputs);
+        let _ = timing.measure("flake-summary", || {
+            report_flake_changes(args, ctx, &candidate.root_inputs);
+            Ok(())
+        });
         return Ok(PreparedFlakeUpdate {
             lock_changed,
             root_inputs: candidate.root_inputs,
@@ -263,10 +295,21 @@ fn prepare_flake_update(args: &UpgradeArgs, ctx: &AppContext) -> Result<Prepared
         (false, true) => CachePreflightMode::ApproveSourceBuilds,
         (false, false) => CachePreflightMode::RequireApproval,
     };
-    match check_cache_preflight(&ctx.system_context(), mode) {
+    let outcome = timing
+        .measure("cache-preflight", || {
+            match check_cache_preflight(&ctx.system_context(), mode) {
+                CachePreflightOutcome::Failed => Err(1),
+                outcome => Ok(outcome),
+            }
+        })
+        .unwrap_or(CachePreflightOutcome::Failed);
+    match outcome {
         CachePreflightOutcome::Admitted => {
             let lock = transaction.admit();
-            report_flake_changes(args, ctx, &candidate.root_inputs);
+            let _ = timing.measure("flake-summary", || {
+                report_flake_changes(args, ctx, &candidate.root_inputs);
+                Ok(())
+            });
             Ok(PreparedFlakeUpdate {
                 lock_changed,
                 root_inputs: candidate.root_inputs,
@@ -389,7 +432,12 @@ fn enrich_optional<T: Sync, R: Send>(
         let enrich = &enrich;
         let handles: Vec<_> = items
             .iter()
-            .map(|item| (item, scope.spawn(move || enrich(item))))
+            .map(|item| {
+                (
+                    item,
+                    scope.spawn(crate::infra::run_trace::with_parent(move || enrich(item))),
+                )
+            })
             .collect();
         handles
             .into_iter()

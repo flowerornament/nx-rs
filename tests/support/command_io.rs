@@ -26,3 +26,13 @@ pub fn ensure_test_layout(repo_root: &Path) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(repo_root.join("scripts/nx/tests"))?;
     Ok(())
 }
+
+#[allow(dead_code)]
+pub fn run_measured_command(
+    command: &mut Command,
+    stdin: Option<&str>,
+) -> Result<(std::process::Output, std::time::Duration), Box<dyn Error>> {
+    let started = std::time::Instant::now();
+    let output = run_command_with_optional_stdin(command, stdin)?;
+    Ok((output, started.elapsed()))
+}

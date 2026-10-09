@@ -757,3 +757,10 @@ Dry-run behavior:
   time outside recorded command intervals, not pure Nx CPU time. Performance
   measurements are observational; CI gates trace/call correctness rather than
   unstable wall-clock thresholds.
+
+- `just perf-nix --host HOST` measures real pinned evaluation, build planning and
+  flake checking without building checks or allowing lock updates. Optional
+  `--build` realizes the system without linking or activation. It retains input
+  content identity, Nix version, load, raw logs, exit results and timeouts; drift
+  aborts with incomplete evidence. Existing caches are preserved. Observed
+  download and source-copy activity counts do not prove all network requests.

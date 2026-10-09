@@ -606,6 +606,26 @@ prove every network request. Compare only matching inputs, execution mode, cache
 conditions, and suite definitions; loaded-host observations are not regression
 thresholds. The retained artifacts can later be imported by git-evidence.
 
+Measure this machine's real pinned configuration separately:
+
+```bash
+just perf-nix --host Ishikawa --repeat 3
+```
+
+This rotates evaluation, build dry-run, and flake checking (`--no-build`) order,
+retains stdout and structured stderr, and reports successful sample medians and
+ranges. It refuses lock updates and does not activate or build the system. Input
+content hashes, Nix version, exit results, timeouts, and per-sample host load are
+retained in `.nx/perf/real-*/manifest.json`. Existing caches remain in place: the
+first sample is not necessarily cold. A configuration change aborts the run;
+failed samples remain evidence and are excluded from successful timing medians.
+Use `--build` to also measure system realization with `--no-link`, without
+activation. Use `--report .nx/perf/<run-directory>` to inspect retained results.
+The report counts observed download and local source-copy activity separately;
+these are activity counts, not a census of HTTP requests. These component
+measurements do not represent a complete `nx upgrade`. See
+[local measurement results](docs/performance.md) for an example and remaining questions.
+
 
 ---
 

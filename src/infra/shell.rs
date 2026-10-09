@@ -54,6 +54,7 @@ impl CapturedCommand {
 }
 
 pub fn command_path(name: &str) -> Option<String> {
+    let mut trace = crate::infra::run_trace::command("which", &[]);
     let output = Command::new("which")
         .arg(name)
         .stdout(Stdio::piped())
@@ -61,6 +62,9 @@ pub fn command_path(name: &str) -> Option<String> {
         .output()
         .ok()?;
 
+    if let Some(trace) = trace.as_mut() {
+        trace.finish(output.status.code().unwrap_or(1));
+    }
     if !output.status.success() {
         return None;
     }
@@ -107,6 +111,7 @@ struct StreamedLine {
 
 /// Run a command and parse stdout as JSON while suppressing stderr noise.
 pub fn run_json_command_quiet(program: &str, args: &[&str]) -> Option<Value> {
+    let mut trace = crate::infra::run_trace::command(program, args);
     let output = Command::new(program)
         .args(args)
         .stdout(Stdio::piped())
@@ -114,6 +119,9 @@ pub fn run_json_command_quiet(program: &str, args: &[&str]) -> Option<Value> {
         .output()
         .ok()?;
 
+    if let Some(trace) = trace.as_mut() {
+        trace.finish(output.status.code().unwrap_or(1));
+    }
     if !output.status.success() {
         return None;
     }
@@ -142,6 +150,7 @@ pub fn run_captured_command_with_env(
     cwd: Option<&Path>,
     env: Option<CommandEnv<'_>>,
 ) -> anyhow::Result<CapturedCommand> {
+    let mut trace = crate::infra::run_trace::command(program, args);
     let mut command = Command::new(program);
     configure_command(&mut command, args, cwd, env);
 
@@ -149,6 +158,9 @@ pub fn run_captured_command_with_env(
         .output()
         .with_context(|| format!("command execution failed ({program})"))?;
 
+    if let Some(trace) = trace.as_mut() {
+        trace.finish(output.status.code().unwrap_or(1));
+    }
     Ok(CapturedCommand::captured(
         output.status.code().unwrap_or(1),
         String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -163,6 +175,7 @@ pub(crate) fn run_captured_command_observing_stderr(
     args: &[&str],
     observe: impl Fn(&[u8]) + Sync,
 ) -> anyhow::Result<CapturedCommand> {
+    let mut trace = crate::infra::run_trace::command(program, args);
     let mut child = Command::new(program)
         .args(args)
         .stdout(Stdio::piped())
@@ -178,6 +191,9 @@ pub(crate) fn run_captured_command_observing_stderr(
         let stdout = stdout.join().map_err(|_| anyhow!("stdout reader panicked"));
         let stderr = stderr.join().map_err(|_| anyhow!("stderr reader panicked"));
         let status = status.context("waiting for child process")?;
+        if let Some(trace) = trace.as_mut() {
+            trace.finish(status.code().unwrap_or(1));
+        }
         Ok(CapturedCommand::captured(
             status.code().unwrap_or(1),
             String::from_utf8_lossy(&stdout??).into_owned(),
@@ -308,6 +324,7 @@ fn run_native_command_observing_stderr(
     env: Option<CommandEnv<'_>>,
     mode: NativeCommandMode,
 ) -> anyhow::Result<CapturedCommand> {
+    let mut trace = crate::infra::run_trace::command(program, args);
     let terminal = io::stderr();
     let termios = rustix::termios::tcgetattr(&terminal).ok();
     let winsize = rustix::termios::tcgetwinsize(&terminal).ok();
@@ -366,6 +383,9 @@ fn run_native_command_observing_stderr(
     child_done.store(true, Ordering::Release);
     stderr_handle.thread().unpark();
     let status = status.context("waiting for child process")?;
+    if let Some(trace) = trace.as_mut() {
+        trace.finish(status.code().unwrap_or(1));
+    }
     let stdout = stdout_handle
         .map(|handle| join_collector("stdout", handle))
         .transpose()?
@@ -485,6 +505,7 @@ fn run_stdout_collecting_stderr_with_env_profiled(
     cwd: Option<&Path>,
     env: Option<CommandEnv<'_>>,
 ) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)> {
+    let mut trace = crate::infra::run_trace::command(program, args);
     let mut command = Command::new(program);
     configure_command(&mut command, args, cwd, env);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -502,8 +523,13 @@ fn run_stdout_collecting_stderr_with_env_profiled(
         .context("failed to capture child stderr")?;
 
     let stdout_handle = thread::spawn(move || collect_stream("stdout", stdout));
-    let stderr_handle = thread::spawn(move || tee_nix_stderr_stream(stderr));
+    let stderr_handle = thread::spawn(crate::infra::run_trace::with_parent(move || {
+        tee_nix_stderr_stream(stderr)
+    }));
     let status = child.wait().context("waiting for child process")?;
+    if let Some(trace) = trace.as_mut() {
+        trace.finish(status.code().unwrap_or(1));
+    }
     let stdout = String::from_utf8_lossy(&join_collector("stdout", stdout_handle)?).into_owned();
     let stderr = join_stderr_collector(stderr_handle)?;
     let replayed = replay_success_diagnostics(
@@ -551,6 +577,7 @@ fn run_streaming_command_with_env(
     indent: &str,
     collect_output: bool,
 ) -> anyhow::Result<StreamedCommand> {
+    let mut trace = crate::infra::run_trace::command(program, args);
     let mut command = Command::new(program);
     configure_command(&mut command, args, cwd, env);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -593,6 +620,9 @@ fn run_streaming_command_with_env(
     join_reader("stderr", stderr_handle)?;
 
     let status = child.wait().context("waiting for child process")?;
+    if let Some(trace) = trace.as_mut() {
+        trace.finish(status.code().unwrap_or(1));
+    }
     Ok(StreamedCommand {
         code: status.code().unwrap_or(1),
         collected,
@@ -653,12 +683,14 @@ fn tee_nix_stderr_stream(mut stream: impl Read + Send + 'static) -> anyhow::Resu
             break;
         }
         feed_nix_output(&buf[..count], &mut pending, |record| {
+            crate::infra::run_trace::nix_activity(record);
             handle_nix_record(decode_nix_record(record), &mut diagnostics, &mut profiler);
             Ok(())
         })?;
     }
 
     if !pending.is_empty() {
+        crate::infra::run_trace::nix_activity(&pending);
         handle_nix_record(decode_nix_record(&pending), &mut diagnostics, &mut profiler);
     }
     Ok(StderrCapture {

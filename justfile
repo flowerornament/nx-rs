@@ -109,6 +109,16 @@ ci-record:
 demo-output:
     @scripts/demo-output.sh
 
+# Measure existing upgrade scenarios with the release binary; retain traces.
+[group('performance')]
+perf-system *args:
+    @python3 scripts/perf_system.py {{args}}
+
+# Measure real pinned configuration evaluation, cache planning, and checks.
+[group('performance')]
+perf-nix *args:
+    @python3 scripts/perf_nix.py {{args}}
+
 # Update release versions and scaffold changelog.
 [group('release')]
 [arg('version', pattern='[0-9]+\.[0-9]+\.[0-9]+', help='Semver release, for example 1.5.25')]

@@ -26,13 +26,13 @@ pub fn cmd_profile(args: &ProfileArgs) -> i32 {
 
     if records.is_empty() {
         Printer::detail(&format!(
-            "No rebuild timings recorded yet at {}",
+            "No command timings recorded yet at {}",
             timings_path().display()
         ));
         return 0;
     }
 
-    Printer::heading(&format!("Recent Rebuild Timings ({})", records.len()));
+    Printer::heading(&format!("Recent Command Timings ({})", records.len()));
     for record in records.iter().rev() {
         println!();
         Printer::body(&timing_summary_line(record));

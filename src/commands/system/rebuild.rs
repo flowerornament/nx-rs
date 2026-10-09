@@ -110,7 +110,7 @@ pub(super) fn cmd_rebuild_with_command_result(
     result
 }
 
-fn run_rebuild(
+pub(super) fn run_rebuild(
     args: &RebuildArgs,
     ctx: &SystemContext<'_>,
     timing: &mut TimingSession,

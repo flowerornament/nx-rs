@@ -19,3 +19,5 @@ __pycache__/
 .agents/reports/
 .desloppify/
 .nx/gate-times.csv
+
+.nx/perf/

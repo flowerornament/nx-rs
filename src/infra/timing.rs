@@ -38,6 +38,10 @@ pub struct TimingRecord {
     pub exit_code: i32,
     pub repo_head: Option<String>,
     pub flake_lock_hash: Option<String>,
+    #[serde(default)]
+    pub flake_lock_hash_after: Option<String>,
+    #[serde(default)]
+    pub nx_version: Option<String>,
     pub started_at_ms: u128,
     pub total_ms: u128,
     pub phases: Vec<TimingPhase>,
@@ -59,18 +63,22 @@ pub struct TimingSession {
     flake_lock_hash: Option<String>,
     started_at_ms: u128,
     started: std::time::Instant,
+    repo_root: PathBuf,
     phases: Vec<TimingPhase>,
 }
 
 impl TimingSession {
     #[must_use]
     pub fn new(command: TimingCommand, repo_root: &Path) -> Self {
+        let started = std::time::Instant::now();
+        let started_at_ms = now_ms();
         Self {
             command: command.as_str().to_string(),
             repo_head: git_head(repo_root),
             flake_lock_hash: flake_lock_hash(repo_root),
-            started_at_ms: now_ms(),
-            started: std::time::Instant::now(),
+            started_at_ms,
+            started,
+            repo_root: repo_root.to_path_buf(),
             phases: Vec::new(),
         }
     }
@@ -96,6 +104,36 @@ impl TimingSession {
         })
     }
 
+    pub(crate) fn measure<T>(
+        &mut self,
+        name: &str,
+        run: impl FnOnce() -> Result<T, i32>,
+    ) -> Result<T, i32> {
+        self.record_phase(name, || {
+            let result = run();
+            let status = phase_status(result.as_ref().err().copied());
+            (result, status)
+        })
+    }
+
+    pub(crate) fn nested<T>(&mut self, name: &str, run: impl FnOnce(&mut Self) -> (T, i32)) -> T {
+        let mut trace = crate::infra::run_trace::Span::start("phase", name.to_string());
+        let started = std::time::Instant::now();
+        let parents = std::mem::take(&mut self.phases);
+        let (result, code) = run(self);
+        let children = std::mem::replace(&mut self.phases, parents);
+        if let Some(trace) = trace.as_mut() {
+            trace.finish(code);
+        }
+        self.phases.push(TimingPhase {
+            name: name.to_string(),
+            duration_ms: duration_ms(started.elapsed()),
+            status: exit_status(code),
+            children,
+        });
+        result
+    }
+
     fn record_phase<T, F>(&mut self, name: &str, run: F) -> T
     where
         F: FnOnce() -> (T, String),
@@ -110,8 +148,12 @@ impl TimingSession {
     where
         F: FnOnce() -> (T, String, Vec<TimingPhase>),
     {
+        let mut trace = crate::infra::run_trace::Span::start("phase", name.to_string());
         let started = std::time::Instant::now();
         let (result, status, children) = run();
+        if let Some(trace) = trace.as_mut() {
+            trace.finish(i32::from(status != "ok"));
+        }
         self.phases.push(TimingPhase {
             name: name.to_string(),
             duration_ms: duration_ms(started.elapsed()),
@@ -123,14 +165,17 @@ impl TimingSession {
 
     #[must_use]
     pub fn finish(self, exit_code: i32) -> TimingRecord {
+        let total_ms = duration_ms(self.started.elapsed());
         TimingRecord {
             command: self.command,
             status: if exit_code == 0 { "ok" } else { "failed" }.to_string(),
             exit_code,
             repo_head: self.repo_head,
             flake_lock_hash: self.flake_lock_hash,
+            flake_lock_hash_after: flake_lock_hash(&self.repo_root),
+            nx_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             started_at_ms: self.started_at_ms,
-            total_ms: duration_ms(self.started.elapsed()),
+            total_ms,
             phases: self.phases,
         }
     }
@@ -302,6 +347,15 @@ mod tests {
         assert_eq!(record.phases[0].name, "flake-check");
         assert_eq!(record.phases[0].status, "ok");
         assert!(record.phases[0].children.is_empty());
+    }
+
+    #[test]
+    fn legacy_records_remain_readable() {
+        let value = serde_json::json!({"command":"upgrade","status":"ok","exit_code":0,
+            "repo_head":null,"flake_lock_hash":null,"started_at_ms":1,"total_ms":2,"phases":[]});
+        let record: TimingRecord = serde_json::from_value(value).expect("legacy timing record");
+        assert!(record.flake_lock_hash_after.is_none());
+        assert!(record.nx_version.is_none());
     }
 
     #[test]

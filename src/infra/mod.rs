@@ -13,6 +13,7 @@ pub mod nix_runtime;
 pub mod package_query;
 pub mod persistence;
 pub mod query_info;
+pub(crate) mod run_trace;
 pub mod self_refresh;
 pub mod shell;
 pub mod shell_history;

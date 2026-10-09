@@ -1,7 +1,6 @@
 use std::cmp::Reverse;
 use std::error::Error;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
 pub const REPO_ROOT_TOKEN: &str = "<REPO_ROOT>";
@@ -35,7 +34,7 @@ impl ExpectedCall {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Deserialize)]
 pub struct Invocation {
     pub program: String,
     pub cwd: PathBuf,
@@ -117,37 +116,9 @@ pub fn read_invocations(path: &Path) -> Result<Vec<Invocation>, Box<dyn Error>> 
             continue;
         }
 
-        let mut parts = line.split('\t');
-        let program = parts.next().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("missing program in invocation line {}", index + 1),
-            )
-        })?;
-        let cwd = parts.next().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("missing cwd in invocation line {}", index + 1),
-            )
-        })?;
-
-        let mut args = Vec::new();
-        let mut env = Vec::new();
-        for part in parts {
-            if let Some(raw) = part.strip_prefix("ENV:")
-                && let Some((key, value)) = raw.split_once('=')
-            {
-                env.push((key.to_string(), value.to_string()));
-                continue;
-            }
-            args.push(part.to_string());
-        }
-        out.push(Invocation {
-            program: program.to_string(),
-            cwd: PathBuf::from(cwd),
-            args,
-            env,
-        });
+        let invocation = serde_json::from_str(line)
+            .map_err(|error| format!("invalid invocation line {}: {error}", index + 1))?;
+        out.push(invocation);
     }
 
     Ok(out)

@@ -14,6 +14,9 @@ let
     // lib.optionalAttrs (cfg.repoRoot != null) {
       NX_REPO_ROOT = cfg.repoRoot;
     }
+    // lib.optionalAttrs (cfg.timings.path != null) {
+      NX_PROFILE_PATH = cfg.timings.path;
+    }
     // lib.optionalAttrs (!cfg.autoRefresh) {
       NX_RS_AUTO_REFRESH = "0";
     }
@@ -40,6 +43,18 @@ in
         Optional repository root exported as `NX_REPO_ROOT` for nx commands
         that should target a managed config repo outside the current working
         directory.
+      '';
+    };
+
+    timings.path = lib.mkOption {
+      type = lib.types.nullOr (lib.types.addCheck lib.types.str (value: lib.hasPrefix "/" value));
+      default = null;
+      example = "${config.home.homeDirectory}/.local/state/nx/timings.jsonl";
+      description = ''
+        Optional absolute file path exported as `NX_PROFILE_PATH` for automatic
+        rebuild and upgrade stage timings and `nx profile`. When unset, nx uses
+        `$XDG_STATE_HOME/nx/timings.jsonl`, or
+        `~/.local/state/nx/timings.jsonl` if XDG_STATE_HOME is unset or relative.
       '';
     };
 

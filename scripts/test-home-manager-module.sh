@@ -85,6 +85,7 @@ let
         programs.nx.enable = true;
         programs.nx.repoRoot = "/tmp/nix-config";
         programs.nx.autoRefresh = false;
+        programs.nx.timings.path = "/tmp/nx-state/timings.jsonl";
         programs.nx.sops.package = pkgs.sops;
         programs.nx.sops.bin = "/run/current-system/sw/bin/sops";
         programs.nx.cleanCaches.codeRoots = [ "/tmp/code" "/Volumes/work/code" ];
@@ -99,6 +100,11 @@ let
       {
         programs.nx.enable = true;
         programs.nx.package = overridePackage;
+      }
+    else if mode == "invalid-timing-path" then
+      {
+        programs.nx.enable = true;
+        programs.nx.timings.path = "relative/timings.jsonl";
       }
     else if mode == "invalid-sops-bin" then
       {
@@ -134,6 +140,7 @@ let
 in
 {
   packageCount = builtins.length evaluated.config.home.packages;
+  timingPath = evaluated.config.home.sessionVariables.NX_PROFILE_PATH or null;
   hasRepoRoot = evaluated.config.home.sessionVariables ? NX_REPO_ROOT;
   repoRoot = evaluated.config.home.sessionVariables.NX_REPO_ROOT or null;
   hasAutoRefresh = evaluated.config.home.sessionVariables ? NX_RS_AUTO_REFRESH;
@@ -182,6 +189,11 @@ if nix eval --impure --json --expr "import ${eval_module_json} { root = ${root_j
     exit 1
 fi
 
+if nix eval --impure --json --expr "import ${eval_module_json} { root = ${root_json}; mode = \"invalid-timing-path\"; }" >/dev/null 2>&1; then
+    printf 'invalid timings.path case unexpectedly succeeded\n' >&2
+    exit 1
+fi
+
 python3 - <<'PY' "$configured_json" "$bare_json" "$override_json"
 import json
 import pathlib
@@ -190,6 +202,11 @@ import sys
 configured = json.loads(pathlib.Path(sys.argv[1]).read_text())
 bare = json.loads(pathlib.Path(sys.argv[2]).read_text())
 override = json.loads(pathlib.Path(sys.argv[3]).read_text())
+
+if configured["timingPath"] != "/tmp/nx-state/timings.jsonl":
+    raise SystemExit("configured timing path was not exported")
+if bare["timingPath"] is not None:
+    raise SystemExit("bare module overrides the runtime XDG timing default")
 
 if configured["packageCount"] < 1:
     raise SystemExit("configured case did not add nx to home.packages")

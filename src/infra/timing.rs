@@ -237,10 +237,20 @@ fn read_recent_timings_from_path(path: &Path, limit: usize) -> anyhow::Result<Ve
 
 #[must_use]
 pub fn timings_path() -> PathBuf {
-    std::env::var_os(TIMING_PATH_ENV).map_or_else(
-        || dirs_home().join(DEFAULT_TIMING_RELATIVE_PATH),
-        PathBuf::from,
+    resolve_timings_path(
+        std::env::var_os(TIMING_PATH_ENV).map(PathBuf::from),
+        std::env::var_os("XDG_STATE_HOME").map(PathBuf::from),
+        &dirs_home(),
     )
+}
+
+fn resolve_timings_path(explicit: Option<PathBuf>, state: Option<PathBuf>, home: &Path) -> PathBuf {
+    explicit.unwrap_or_else(|| {
+        state.filter(|path| path.is_absolute()).map_or_else(
+            || home.join(DEFAULT_TIMING_RELATIVE_PATH),
+            |path| path.join("nx/timings.jsonl"),
+        )
+    })
 }
 
 #[must_use]
@@ -387,5 +397,37 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].command, "upgrade");
         assert_eq!(records[1].command, "rebuild");
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::resolve_timings_path;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn explicit_path_wins_over_xdg_state() {
+        assert_eq!(
+            resolve_timings_path(
+                Some("/custom/times".into()),
+                Some("/state".into()),
+                Path::new("/home")
+            ),
+            PathBuf::from("/custom/times")
+        );
+    }
+
+    #[test]
+    fn xdg_state_requires_an_absolute_path() {
+        assert_eq!(
+            resolve_timings_path(None, Some("/state".into()), Path::new("/home")),
+            PathBuf::from("/state/nx/timings.jsonl")
+        );
+        for state in [None, Some("".into()), Some("relative".into())] {
+            assert_eq!(
+                resolve_timings_path(None, state, Path::new("/home")),
+                PathBuf::from("/home/.local/state/nx/timings.jsonl")
+            );
+        }
     }
 }

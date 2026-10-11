@@ -764,3 +764,10 @@ Dry-run behavior:
   content identity, Nix version, load, raw logs, exit results and timeouts; drift
   aborts with incomplete evidence. Existing caches are preserved. Observed
   download and source-copy activity counts do not prove all network requests.
+
+- Automatic rebuild/upgrade timing storage resolves `NX_PROFILE_PATH` first, then
+  an absolute `XDG_STATE_HOME` plus `nx/timings.jsonl`, then
+  `~/.local/state/nx/timings.jsonl`. Relative or empty XDG state values are ignored.
+  The Home Manager module exports `NX_PROFILE_PATH` only when the optional absolute
+  `programs.nx.timings.path` is set; the default preserves runtime path resolution.
+  Recording and `nx profile` share the same resolver.

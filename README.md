@@ -137,6 +137,7 @@ Available module options:
 - `programs.nx.package`
 - `programs.nx.repoRoot`
 - `programs.nx.autoRefresh`
+- `programs.nx.timings.path` — optional absolute timing file path; defaults to the runtime XDG state location.
 - `programs.nx.sops.package`
 - `programs.nx.sops.bin`
 - `programs.nx.cleanCaches.codeRoots`
@@ -206,6 +207,7 @@ Requirements:
 - `NX_REPO_ROOT`: target repo override; defaults to walking up from `cwd` until
   `flake.nix`.
 - `NX_PROFILE_PATH`: rebuild/upgrade timing file; defaults to
+  `$XDG_STATE_HOME/nx/timings.jsonl` when XDG_STATE_HOME is absolute, otherwise
   `~/.local/state/nx/timings.jsonl`.
 - `NX_RS_SOPS_BIN`: `sops` executable for `nx secret add`; defaults to `sops`.
 - `NX_RS_AUTO_REFRESH`: auto-refresh local cargo-installed `nx` binaries before
@@ -556,7 +558,10 @@ Runs `darwin-rebuild switch` for the managed repo.
 
 Shows recent local rebuild and upgrade timing records.
 
-- Defaults to `~/.local/state/nx/timings.jsonl`.
+- Records rebuild and upgrade stages automatically.
+- Defaults to `$XDG_STATE_HOME/nx/timings.jsonl`, falling back to
+  `~/.local/state/nx/timings.jsonl` when XDG_STATE_HOME is unset or relative.
+- Home Manager: `programs.nx.timings.path = "/absolute/path/timings.jsonl";`.
 - Set `NX_PROFILE_PATH` to read/write a different timing file.
 - Use `--json` for machine-readable records.
 

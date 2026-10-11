@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v1.5.42 - 2026-10-11
+
+- records complete upgrade stage timings automatically, including failed runs, with Nix configuration lock identity and nx version; `nx profile` reads rebuild and upgrade history
+- configures timing storage through `programs.nx.timings.path` in Home Manager and honors `XDG_STATE_HOME` by default
+- provides optional `NX_TRACE_PATH` phase and subprocess traces without changing normal command output or exit results
+- measures controlled upgrade scenarios with `just perf-system` and pinned real configuration evaluation, planning, checking, and optional system realization with `just perf-nix`, retaining evidence and host conditions
+
 ## v1.5.41 - 2026-10-08
 
 - paces native Nix progress redraws at twice per second, retaining the latest and final frame while preserving permanent messages, prompts, terminal controls, original diagnostics, and activation output

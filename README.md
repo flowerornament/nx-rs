@@ -556,7 +556,10 @@ Runs `darwin-rebuild switch` for the managed repo.
 
 #### `profile`
 
-Shows recent local rebuild and upgrade timing records.
+Shows recent local rebuild and upgrade timing records with UTC dates, readable
+wall durations, repository identity when recorded, and top-level shares of total
+time. Nested or concurrent intervals overlap and must not be added together.
+An already-current system is distinguished from an activation.
 
 - Records rebuild and upgrade stages automatically.
 - Defaults to `$XDG_STATE_HOME/nx/timings.jsonl`, falling back to
@@ -575,6 +578,7 @@ For detailed observation during your next normal upgrade, choose a new trace pat
 ```bash
 NX_TRACE_PATH=/tmp/my-upgrade.jsonl nx upgrade -y
 python3 ~/code/nx-rs/scripts/perf_system.py --trace /tmp/my-upgrade.jsonl
+python3 ~/code/nx-rs/scripts/perf_system.py --timeline /tmp/my-upgrade.jsonl
 ```
 
 The versioned JSON Lines trace records monotonic phase/command intervals, parent
@@ -627,7 +631,9 @@ failed samples remain evidence and are excluded from successful timing medians.
 Use `--build` to also measure system realization with `--no-link`, without
 activation. Use `--report .nx/perf/<run-directory>` to inspect retained results.
 The report counts observed download and local source-copy activity separately;
-these are activity counts, not a census of HTTP requests. These component
+these are activity counts, not a census of HTTP requests. Use `--compare-eval-cache` to also plan with the evaluation cache disabled for
+that command, preserving all existing caches. An evaluation before a plan can
+warm it; rotating order does not manufacture cold-cache samples. These component
 measurements do not represent a complete `nx upgrade`. See
 [local measurement results](docs/performance.md) for an example and remaining questions.
 

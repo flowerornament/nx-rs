@@ -33,6 +33,9 @@ pub fn cmd_profile(args: &ProfileArgs) -> i32 {
     }
 
     Printer::heading(&format!("Recent Command Timings ({})", records.len()));
+    Printer::detail(
+        "Wall-clock intervals; nested or concurrent rows overlap and must not be added together.",
+    );
     for record in records.iter().rev() {
         println!();
         Printer::body(&timing_summary_line(record));

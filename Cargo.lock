@@ -428,6 +428,7 @@ name = "nx-rs"
 version = "1.5.42"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "clap_complete",
  "claude-codes",

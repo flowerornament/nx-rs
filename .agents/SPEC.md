@@ -771,3 +771,13 @@ Dry-run behavior:
   The Home Manager module exports `NX_PROFILE_PATH` only when the optional absolute
   `programs.nx.timings.path` is set; the default preserves runtime path resolution.
   Recording and `nx profile` share the same resolver.
+
+- Human timing reports use UTC dates, readable elapsed durations and top-level
+  wall shares. Nested/concurrent intervals overlap; do not present their sum as
+  total elapsed time. Human activation labels distinguish already-current systems.
+  Optional `repo_root` identifies new records; legacy records remain readable.
+- Trace timeline reports retain phase/command interval boundaries and show peak
+  command concurrency. Summed command work is elapsed interval work, not CPU time.
+- Real-config evaluation-cache comparisons are per-command dry-run controls;
+  preserve existing caches and forbid lock updates. System tests isolate timing
+  and trace paths from inherited user state.

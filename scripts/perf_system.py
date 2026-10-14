@@ -55,6 +55,7 @@ def summarize(path: Path) -> dict:
     commands = {}
     phases = {}
     activities = []
+    spans = []
     for event in events:
         kind = event["event"]
         identifier = event["id"]
@@ -77,6 +78,18 @@ def summarize(path: Path) -> dict:
         ):
             raise ValueError(f"mismatched span: {path}")
         duration = event["offset_ns"] - start["offset_ns"]
+        if kind in ("command-end", "phase-end"):
+            spans.append(
+                {
+                    "id": identifier,
+                    "parent": event["parent"],
+                    "kind": kind.removesuffix("-end"),
+                    "label": event["label"],
+                    "start_ns": start["offset_ns"],
+                    "end_ns": event["offset_ns"],
+                    "code": event["code"],
+                }
+            )
         if kind == "command-end":
             intervals.append((start["offset_ns"], event["offset_ns"]))
             row = commands.setdefault(
@@ -95,7 +108,21 @@ def summarize(path: Path) -> dict:
     covered = covered_ns(intervals)
     # Offsets are measured from the same clock; clip the tiny pre-run-start prefix.
     outside = max(0, total - covered)
+    work = sum(stop - start for start, stop in intervals)
+    active = peak = 0
+    for _, delta in sorted(
+        (point, delta)
+        for start, stop in intervals
+        if stop > start
+        for point, delta in [(start, 1), (stop, -1)]
+    ):
+        active += delta
+        peak = max(peak, active)
     return {
+        "spans": sorted(spans, key=lambda span: span["start_ns"]),
+        "command_work_ns": work,
+        "command_overlap_ns": work - covered,
+        "peak_concurrent_commands": peak,
         "total_ns": total,
         "command_covered_ns": covered,
         "outside_commands_ns": outside,
@@ -104,6 +131,27 @@ def summarize(path: Path) -> dict:
         "phases_ns": phases,
         "nix_activities": activities,
     }
+
+
+def timeline(path: Path) -> None:
+    run = summarize(path)
+    parents = {span["id"]: span["parent"] for span in run["spans"]}
+    print(" Start(s)    End(s)  Elapsed(s)  Span (times relative to run start)")
+    for span in run["spans"]:
+        depth = 0
+        parent = span["parent"]
+        while parent in parents:
+            depth += 1
+            parent = parents[parent]
+        elapsed = span["end_ns"] - span["start_ns"]
+        code = "unknown" if span["code"] is None else str(span["code"])
+        print(
+            f"{span['start_ns'] / 1e9:9.3f} {span['end_ns'] / 1e9:9.3f} {elapsed / 1e9:11.3f}  {'  ' * depth}{span['kind']} {span['label']} [exit {code}]"
+        )
+    print(
+        f"Wall: {run['total_ns'] / 1e9:.3f}s; command union: {run['command_covered_ns'] / 1e9:.3f}s; peak concurrent commands: {run['peak_concurrent_commands']}"
+    )
+    print("Nested rows overlap. Command work sums elapsed intervals, not CPU time.")
 
 
 def report(directory: Path) -> dict:
@@ -237,12 +285,20 @@ def main() -> None:
     parser.add_argument(
         "--trace", type=Path, help="summarize one real or controlled Nx trace"
     )
+    parser.add_argument(
+        "--timeline",
+        type=Path,
+        help="show phase/command intervals and concurrency in one retained trace",
+    )
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--report", type=Path, help="report a retained run without executing commands"
     )
     args = parser.parse_args()
+    if args.timeline:
+        timeline(args.timeline)
+        return
     if args.trace:
         print(json.dumps(summarize(args.trace), indent=2))
         return

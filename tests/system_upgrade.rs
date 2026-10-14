@@ -1152,6 +1152,8 @@ fn upgrade_rejects_nix_owned_commit_passthrough() -> Result<(), Box<dyn Error>> 
         ])
         .current_dir(repo_root.path())
         .env("NX_REPO_ROOT", repo_root.path())
+        .env("NX_PROFILE_PATH", repo_root.path().join("timings.jsonl"))
+        .env_remove("NX_TRACE_PATH")
         .output()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1160,6 +1162,9 @@ fn upgrade_rejects_nix_owned_commit_passthrough() -> Result<(), Box<dyn Error>> 
     assert_eq!(output.status.code(), Some(2));
     assert!(rendered.contains("nx upgrade owns the final git commit"));
     assert!(rendered.contains("nx update -- --commit-lock-file"));
+    let timing: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(repo_root.path().join("timings.jsonl"))?)?;
+    assert_eq!(timing["exit_code"], 2);
     Ok(())
 }
 

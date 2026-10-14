@@ -43,7 +43,9 @@ def activity_summary(path):
     return {"activity_starts": counts, "download_targets": downloads}
 
 
-def record(repo, host, directory, repeat, timeout, build=False):
+def record(
+    repo, host, directory, repeat, timeout, build=False, compare_eval_cache=False
+):
     directory.mkdir(parents=True, exist_ok=False)
     source = identity(repo)
     attr = f"{repo}#darwinConfigurations.{host}.system"
@@ -52,6 +54,16 @@ def record(repo, host, directory, repeat, timeout, build=False):
         "plan": ["nix", "build", "--dry-run", attr],
         "check": ["nix", "flake", "check", "--no-build", str(repo)],
     }
+    if compare_eval_cache:
+        commands["plan-without-eval-cache"] = [
+            "nix",
+            "build",
+            "--dry-run",
+            "--option",
+            "eval-cache",
+            "false",
+            attr,
+        ]
     if build:
         commands["build"] = ["nix", "build", "--no-link", "--print-out-paths", attr]
     manifest = {
@@ -155,6 +167,11 @@ def main():
         action="store_true",
         help="Also realize the system without linking or activation",
     )
+    parser.add_argument(
+        "--compare-eval-cache",
+        action="store_true",
+        help="Compare planning with the per-command evaluation cache disabled; preserve all existing caches",
+    )
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--output", type=Path)
@@ -174,6 +191,7 @@ def main():
         args.repeat,
         args.timeout,
         args.build,
+        args.compare_eval_cache,
     )
 
 

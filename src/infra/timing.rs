@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::app::dirs_home;
@@ -37,6 +38,8 @@ pub struct TimingRecord {
     pub status: String,
     pub exit_code: i32,
     pub repo_head: Option<String>,
+    #[serde(default)]
+    pub repo_root: Option<PathBuf>,
     pub flake_lock_hash: Option<String>,
     #[serde(default)]
     pub flake_lock_hash_after: Option<String>,
@@ -171,6 +174,7 @@ impl TimingSession {
             status: if exit_code == 0 { "ok" } else { "failed" }.to_string(),
             exit_code,
             repo_head: self.repo_head,
+            repo_root: Some(self.repo_root.clone()),
             flake_lock_hash: self.flake_lock_hash,
             flake_lock_hash_after: flake_lock_hash(&self.repo_root),
             nx_version: Some(env!("CARGO_PKG_VERSION").to_string()),
@@ -255,15 +259,33 @@ fn resolve_timings_path(explicit: Option<PathBuf>, state: Option<PathBuf>, home:
 
 #[must_use]
 pub fn timing_summary_line(record: &TimingRecord) -> String {
+    let timestamp = i64::try_from(record.started_at_ms)
+        .ok()
+        .and_then(DateTime::<Utc>::from_timestamp_millis)
+        .map_or_else(
+            || "unknown date".to_string(),
+            |date| date.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        );
     format!(
-        "{} {}ms ({})",
-        record.command, record.total_ms, record.status
+        "{timestamp} · {} {} ({})",
+        record.command,
+        readable_duration(record.total_ms),
+        record.status
     )
 }
 
 #[must_use]
 pub fn timing_detail_lines(record: &TimingRecord) -> Vec<String> {
     let mut lines = Vec::new();
+    if let Some(root) = &record.repo_root {
+        lines.push(format!("repo: {}", root.display()));
+    }
+    if let Some(version) = &record.nx_version {
+        lines.push(format!("nx: {version}"));
+    }
+    if record.exit_code != 0 {
+        lines.push(format!("exit: {}", record.exit_code));
+    }
     if let Some(head) = &record.repo_head {
         lines.push(format!("git: {}", short_hash(head)));
     }
@@ -271,19 +293,53 @@ pub fn timing_detail_lines(record: &TimingRecord) -> Vec<String> {
         lines.push(format!("flake.lock: {hash}"));
     }
     for phase in &record.phases {
-        push_phase_detail(&mut lines, phase, 0);
+        push_phase_detail(&mut lines, phase, 0, record.total_ms);
     }
     lines
 }
 
-fn push_phase_detail(lines: &mut Vec<String>, phase: &TimingPhase, depth: usize) {
+fn push_phase_detail(lines: &mut Vec<String>, phase: &TimingPhase, depth: usize, total_ms: u128) {
     let prefix = "  ".repeat(depth);
+    let share = if depth == 0 && total_ms > 0 {
+        let tenths = phase.duration_ms.saturating_mul(1000) / total_ms;
+        format!(" · {}.{}% of total", tenths / 10, tenths % 10)
+    } else {
+        String::new()
+    };
+    let label = if phase.name == "activation" {
+        if phase
+            .children
+            .iter()
+            .any(|child| child.name == "already-current")
+        {
+            "system (already current)"
+        } else {
+            "system build/activation"
+        }
+    } else {
+        &phase.name
+    };
     lines.push(format!(
-        "{prefix}{}: {}ms ({})",
-        phase.name, phase.duration_ms, phase.status
+        "{prefix}{label}: {} ({}){share}",
+        readable_duration(phase.duration_ms),
+        phase.status
     ));
     for child in &phase.children {
-        push_phase_detail(lines, child, depth + 1);
+        push_phase_detail(lines, child, depth + 1, total_ms);
+    }
+}
+
+fn readable_duration(ms: u128) -> String {
+    match ms {
+        0..1000 => format!("{ms}ms"),
+        1000..60_000 => format!("{}.{:01}s", ms / 1000, (ms % 1000) / 100),
+        60_000..3_600_000 => format!("{}m {:02}s", ms / 60_000, (ms / 1000) % 60),
+        _ => format!(
+            "{}h {:02}m {:02}s",
+            ms / 3_600_000,
+            (ms / 60_000) % 60,
+            (ms / 1000) % 60
+        ),
     }
 }
 
@@ -366,6 +422,7 @@ mod tests {
         let record: TimingRecord = serde_json::from_value(value).expect("legacy timing record");
         assert!(record.flake_lock_hash_after.is_none());
         assert!(record.nx_version.is_none());
+        assert!(record.repo_root.is_none());
     }
 
     #[test]
@@ -404,6 +461,61 @@ mod tests {
 mod path_tests {
     use super::resolve_timings_path;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn durations_are_readable_across_scales() {
+        for (ms, expected) in [
+            (0, "0ms"),
+            (999, "999ms"),
+            (18_106, "18.1s"),
+            (107_434, "1m 47s"),
+            (3_675_239, "1h 01m 15s"),
+        ] {
+            assert_eq!(super::readable_duration(ms), expected);
+        }
+    }
+
+    #[test]
+    fn report_keeps_nested_intervals_out_of_top_level_shares() {
+        let mut record =
+            super::TimingSession::new(super::TimingCommand::Upgrade, Path::new("/missing"))
+                .finish(0);
+        record.started_at_ms = 0;
+        record.total_ms = 1000;
+        record.phases = vec![super::TimingPhase {
+            name: "rebuild".into(),
+            duration_ms: 800,
+            status: "ok".into(),
+            children: vec![super::TimingPhase {
+                name: "activation".into(),
+                duration_ms: 700,
+                status: "ok".into(),
+                children: vec![super::TimingPhase {
+                    name: "already-current".into(),
+                    duration_ms: 0,
+                    status: "ok".into(),
+                    children: vec![],
+                }],
+            }],
+        }];
+        assert!(super::timing_summary_line(&record).contains("1970-01-01 00:00:00 UTC"));
+        let lines = super::timing_detail_lines(&record);
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("% of total"))
+                .count(),
+            1
+        );
+        assert!(lines.iter().any(|line| line.contains("80.0% of total")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("system (already current)"))
+        );
+        record.started_at_ms = u128::MAX;
+        assert!(super::timing_summary_line(&record).contains("unknown date"));
+    }
 
     #[test]
     fn explicit_path_wins_over_xdg_state() {

@@ -52,6 +52,31 @@ class RealMeasurementTests(unittest.TestCase):
                 self.assertIn("--no-update-lock-file", call.args[0])
                 self.assertNotIn("switch", call.args[0])
 
+    def test_evaluation_cache_control_is_per_command(self):
+        with tempfile.TemporaryDirectory() as root:
+            with (
+                patch.object(perf_nix, "identity", return_value="pin"),
+                patch.object(subprocess, "check_output", return_value="nix test"),
+                patch.object(
+                    subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess("nix", 0),
+                ) as run,
+            ):
+                perf_nix.record(
+                    Path(root),
+                    "host",
+                    Path(root) / "evidence",
+                    1,
+                    1,
+                    compare_eval_cache=True,
+                )
+            calls = [call.args[0] for call in run.call_args_list]
+            controls = [args for args in calls if "--option" in args]
+            self.assertEqual(len(controls), 1)
+            self.assertIn("--dry-run", controls[0])
+            self.assertEqual(controls[0][4:6], ["eval-cache", "false"])
+
     def test_input_drift_leaves_incomplete_evidence(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root) / "evidence"

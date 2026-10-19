@@ -1,5 +1,7 @@
 #[path = "support/bin.rs"]
 mod support_bin;
+#[path = "support/command_io.rs"]
+mod support_command_io;
 #[path = "support/stubs.rs"]
 mod support_stubs;
 #[path = "support/tree.rs"]
@@ -72,18 +74,20 @@ fn run_nx_minimal(args: &[&str]) -> Result<std::process::Output, Box<dyn Error>>
     write_stale_manifest(tmp.path());
 
     let home_dir = TempDir::new()?;
-    let output = Command::new(nx_bin)
-        .args(["--plain", "--minimal"])
-        .args(args)
-        .current_dir(tmp.path())
-        .env("NX_REPO_ROOT", tmp.path())
-        .env("HOME", home_dir.path())
-        .env("NO_COLOR", "1")
-        .env("TERM", "dumb")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()?;
+    let output = support_command_io::run_command_with_optional_stdin(
+        Command::new(nx_bin)
+            .args(["--plain", "--minimal"])
+            .args(args)
+            .current_dir(tmp.path())
+            .env("NX_REPO_ROOT", tmp.path())
+            .env("HOME", home_dir.path())
+            .env("NO_COLOR", "1")
+            .env("TERM", "dumb")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+        None,
+    )?;
 
     Ok(output)
 }
@@ -129,20 +133,22 @@ fn run_nx_repo_base_with_stale_manifest(
     let log_path = tmp.path().join(LOG_FILE_NAME);
 
     write_install_cache(home_dir.path());
-    let output = Command::new(nx_bin)
-        .args(["--plain", "--minimal"])
-        .args(args)
-        .current_dir(tmp.path())
-        .env("NX_REPO_ROOT", tmp.path())
-        .env("HOME", home_dir.path())
-        .env("NO_COLOR", "1")
-        .env("TERM", "dumb")
-        .env("NX_SYSTEM_IT_LOG", &log_path)
-        .env("PATH", prepend_path(&stub_dir))
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()?;
+    let output = support_command_io::run_command_with_optional_stdin(
+        Command::new(nx_bin)
+            .args(["--plain", "--minimal"])
+            .args(args)
+            .current_dir(tmp.path())
+            .env("NX_REPO_ROOT", tmp.path())
+            .env("HOME", home_dir.path())
+            .env("NO_COLOR", "1")
+            .env("TERM", "dumb")
+            .env("NX_SYSTEM_IT_LOG", &log_path)
+            .env("PATH", prepend_path(&stub_dir))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+        None,
+    )?;
 
     Ok((tmp, output))
 }
@@ -223,17 +229,19 @@ fn rebuild_blocks_when_manifest_is_invalid() -> Result<(), Box<dyn Error>> {
     write_invalid_manifest(tmp.path());
 
     let home_dir = TempDir::new()?;
-    let output = Command::new(nx_bin)
-        .args(["--plain", "--minimal", "rebuild"])
-        .current_dir(tmp.path())
-        .env("NX_REPO_ROOT", tmp.path())
-        .env("HOME", home_dir.path())
-        .env("NO_COLOR", "1")
-        .env("TERM", "dumb")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()?;
+    let output = support_command_io::run_command_with_optional_stdin(
+        Command::new(nx_bin)
+            .args(["--plain", "--minimal", "rebuild"])
+            .current_dir(tmp.path())
+            .env("NX_REPO_ROOT", tmp.path())
+            .env("HOME", home_dir.path())
+            .env("NO_COLOR", "1")
+            .env("TERM", "dumb")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+        None,
+    )?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -261,23 +269,25 @@ fn upgrade_dry_run_skip_brew_works_when_manifest_is_invalid() -> Result<(), Box<
     write_invalid_manifest(tmp.path());
 
     let home_dir = TempDir::new()?;
-    let output = Command::new(nx_bin)
-        .args([
-            "--plain",
-            "--minimal",
-            "upgrade",
-            "--dry-run",
-            "--skip-brew",
-        ])
-        .current_dir(tmp.path())
-        .env("NX_REPO_ROOT", tmp.path())
-        .env("HOME", home_dir.path())
-        .env("NO_COLOR", "1")
-        .env("TERM", "dumb")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()?;
+    let output = support_command_io::run_command_with_optional_stdin(
+        Command::new(nx_bin)
+            .args([
+                "--plain",
+                "--minimal",
+                "upgrade",
+                "--dry-run",
+                "--skip-brew",
+            ])
+            .current_dir(tmp.path())
+            .env("NX_REPO_ROOT", tmp.path())
+            .env("HOME", home_dir.path())
+            .env("NO_COLOR", "1")
+            .env("TERM", "dumb")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+        None,
+    )?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);

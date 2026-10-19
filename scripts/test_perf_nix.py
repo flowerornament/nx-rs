@@ -31,6 +31,15 @@ class RealMeasurementTests(unittest.TestCase):
             self.assertEqual(result["download_targets"], [["https://cache/source"]])
             self.assertEqual(result["activity_starts"]["CopySourcePath"], 1)
 
+    def test_download_details_are_bounded_but_counts_remain_complete(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "stderr"
+            path.write_text("".join(json.dumps({"action":"start", "type":101, "fields":[str(index)]}) + "\n" for index in range(200)))
+            activity = perf_nix.activity_summary(path)
+            self.assertEqual(activity["download_activity_count"], 200)
+            self.assertEqual(len(activity["download_targets"]), 128)
+            self.assertTrue(activity["download_targets_truncated"])
+
     def test_timeout_is_retained_and_lock_updates_are_forbidden(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root) / "evidence"

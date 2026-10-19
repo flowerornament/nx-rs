@@ -33,19 +33,25 @@ def source_head(repo):
 def activity_summary(path):
     counts = {}
     downloads = []
-    for line in path.read_text(errors="replace").splitlines():
-        try:
-            row = json.loads(line.removeprefix("@nix "))
-        except ValueError:
-            continue
-        if row.get("action") != "start":
-            continue
-        label = row.get("name") or f"type:{row.get('type', 'unknown')}"
-        counts[label] = counts.get(label, 0) + 1
-        # Observed Nix download activity, not a count of all HTTP requests.
-        if row.get("type") == 101:
-            downloads.append(row.get("fields", []))
-    return {"activity_starts": counts, "download_targets": downloads}
+    download_count = 0
+    with path.open(errors="replace") as lines:
+        for line in lines:
+            try:
+                row = json.loads(line.removeprefix("@nix "))
+            except ValueError:
+                continue
+            if row.get("action") != "start":
+                continue
+            label = row.get("name") or f"type:{row.get('type', 'unknown')}"
+            counts[label] = counts.get(label, 0) + 1
+            # Raw logs retain all events; keep a bounded target sample here.
+            if row.get("type") == 101:
+                download_count += 1
+                if len(downloads) < 128:
+                    downloads.append(row.get("fields", []))
+    return {"activity_starts": counts, "download_targets": downloads,
+            "download_activity_count": download_count,
+            "download_targets_truncated": download_count > len(downloads)}
 
 
 def record(
@@ -180,7 +186,7 @@ def report(directory):
             directory / f"{stem}.stderr.jsonl"
         )
         print(
-            f"{sample['operation']}: {len(activity['download_targets'])} download activities, "
+            f"{sample['operation']}: {activity.get('download_activity_count', len(activity['download_targets']))} download activities, "
             f"{activity['activity_starts'].get('CopySourcePath', 0)} local source-copy activities"
         )
     print(f"Artifacts: {directory}")

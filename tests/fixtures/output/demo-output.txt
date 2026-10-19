@@ -86,8 +86,6 @@ error: flake evaluation failed
 x Flake check failed
 
   $ nx upgrade
-> Recording installed package state
-
 > Checking Determinate Nix
 + Determinate Nix 3.21.8 is current
 
@@ -101,6 +99,8 @@ x Flake check failed
   terminal-notifier-2.0.0
   1 paths will be fetched from the binary cache
 + All flake inputs up to date
+
+> Recording installed package state
 
 > Checking Homebrew updates
   Includes versioned self-updating casks; latest-version casks require --greedy.
@@ -137,6 +137,6 @@ x Flake check failed
   Inputs: unchanged; Homebrew: completed; rebuild: completed; activation: completed; commit: not needed
   System profile change unknown
   Homebrew: no observed package changes
-  Nix environment references: unknown (system profile unavailable)
+  Nix system-profile references: unknown (system profile unavailable)
 
 + Output demo complete

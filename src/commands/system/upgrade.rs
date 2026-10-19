@@ -44,12 +44,7 @@ pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
             .passthrough
             .iter()
             .any(|arg| arg == "--commit-lock-file");
-    let before = observe.then(|| observe_packages(args, ctx, &mut timing, "observe-before"));
     let code = run_upgrade(args, ctx, &mut timing, &mut receipt);
-    if let Some(before) = before {
-        let after = observe_packages(args, ctx, &mut timing, "observe-after");
-        super::receipt::finish(&mut receipt, &before, &after);
-    }
     let mut record = timing.finish(code);
     if observe {
         receipt.activation = super::receipt::activation_outcome(&record.phases, receipt.rebuild);
@@ -142,6 +137,22 @@ fn run_upgrade(
         };
     }
 
+    let before = (!args.dry_run()).then(|| observe_packages(args, ctx, timing, "observe-before"));
+    let code = apply_upgrade(args, ctx, timing, receipt, &prepared);
+    if let Some(before) = before {
+        let after = observe_packages(args, ctx, timing, "observe-after");
+        super::receipt::finish(receipt, &before, &after);
+    }
+    code
+}
+
+fn apply_upgrade(
+    args: &UpgradeArgs,
+    ctx: &AppContext,
+    timing: &mut TimingSession,
+    receipt: &mut crate::domain::upgrade_receipt::UpgradeReceipt,
+    prepared: &PreparedFlakeUpdate,
+) -> i32 {
     // Phase 2: Brew, after the candidate system is admitted
     if args.should_run_brew_phase() {
         let result = timing.measure("homebrew-upgrade", || run_brew_phase(args, ctx));
@@ -190,6 +201,9 @@ fn run_upgrade(
         return code;
     }
 
+    if !args.skip_commit() && !prepared.lock_changed && repaired_paths.is_empty() {
+        receipt.commit = UpgradeStep::NotNeeded;
+    }
     0
 }
 
@@ -532,6 +546,8 @@ fn update_flake_lock(
     })
 }
 
+const SUMMARY_WORKERS: usize = 4;
+
 fn enrich_optional<T: Sync, R: Send>(
     items: &[T],
     enrich: impl Fn(&T) -> R + Sync,
@@ -539,17 +555,42 @@ fn enrich_optional<T: Sync, R: Send>(
     std::thread::scope(|scope| {
         let enrich = &enrich;
         let handles: Vec<_> = items
-            .iter()
-            .map(|item| {
+            .chunks(items.len().div_ceil(SUMMARY_WORKERS).max(1))
+            .map(|chunk| {
                 (
-                    item,
-                    scope.spawn(crate::infra::run_trace::with_parent(move || enrich(item))),
+                    chunk,
+                    scope.spawn(crate::infra::run_trace::with_parent(move || {
+                        chunk
+                            .iter()
+                            .map(|item| {
+                                (
+                                    item,
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        enrich(item)
+                                    })),
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })),
                 )
             })
             .collect();
         handles
             .into_iter()
-            .map(|(item, handle)| (item, handle.join()))
+            .flat_map(|(chunk, handle)| {
+                handle.join().unwrap_or_else(|_| {
+                    chunk
+                        .iter()
+                        .map(|item| {
+                            (
+                                item,
+                                Err(Box::new("optional summary worker failed")
+                                    as Box<dyn std::any::Any + Send>),
+                            )
+                        })
+                        .collect()
+                })
+            })
             .collect()
     })
 }
@@ -1533,6 +1574,29 @@ fn format_repaired_paths(repaired_paths: &[PathBuf]) -> Option<String> {
 #[cfg(test)]
 mod enrichment_tests {
     use super::enrich_optional;
+
+    #[test]
+    fn enrichment_bounds_concurrency_and_preserves_later_rows_after_panic() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let active = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+        let items: Vec<_> = (0..40).collect();
+        let rows = enrich_optional(&items, |item| {
+            assert_ne!(*item, 0, "injected summary failure");
+            let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+            peak.fetch_max(current, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            active.fetch_sub(1, Ordering::SeqCst);
+            item * 2
+        });
+        assert!(peak.load(Ordering::SeqCst) <= super::SUMMARY_WORKERS);
+        assert_eq!(rows.len(), 40);
+        assert!(rows[0].1.is_err());
+        for (index, (item, result)) in rows.into_iter().enumerate().skip(1) {
+            assert_eq!(*item, index);
+            assert_eq!(result.unwrap(), index * 2);
+        }
+    }
 
     #[test]
     fn flake_enrichment_preserves_rows_and_other_workers_after_panic() {

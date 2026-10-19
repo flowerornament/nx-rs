@@ -15,6 +15,16 @@ pub struct ExpectedCall {
 }
 
 impl ExpectedCall {
+    #[allow(dead_code)]
+    pub fn is(&self, program: &str, first_arg: &str) -> bool {
+        let operation = if self.program == "git" && self.args.first() == Some(&"-C") {
+            self.args.get(2)
+        } else {
+            self.args.first()
+        };
+        self.program == program && operation == Some(&first_arg)
+    }
+
     pub const fn new(
         program: &'static str,
         cwd: &'static str,

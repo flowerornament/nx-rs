@@ -876,6 +876,17 @@ const UPGRADE_INVALID_LOCK_CASES: &[UpgradeCase] = &[
 
 const UPGRADE_CASES: &[UpgradeCase] = &[
     UpgradeCase {
+        id: "upgrade_lock_refusal_does_not_observe_other_operation",
+        cli_args: UPGRADE_BREW_ARGS,
+        mode: "upgrade_lock_held",
+        expected_exit: 1,
+        expected_calls: &[],
+        stdout_contains: &[
+            "Could not start flake.lock transaction",
+            "package changes not reached",
+        ],
+    },
+    UpgradeCase {
         id: "upgrade_brew_only_rebuilds_current_pin",
         cli_args: &["upgrade", "--brew-only", "--no-ai"],
         mode: "success",
@@ -1368,19 +1379,21 @@ fn upgrade_rejects_nix_owned_commit_passthrough() -> Result<(), Box<dyn Error>> 
     let repo_root = TempDir::new()?;
     copy_tree(&repo_base, repo_root.path())?;
 
-    let output = Command::new(nx_bin)
-        .args([
-            "--plain",
-            "--minimal",
-            "upgrade",
-            "--",
-            "--commit-lock-file",
-        ])
-        .current_dir(repo_root.path())
-        .env("NX_REPO_ROOT", repo_root.path())
-        .env("NX_PROFILE_PATH", repo_root.path().join("timings.jsonl"))
-        .env_remove("NX_TRACE_PATH")
-        .output()?;
+    let output = support_command_io::run_command_with_optional_stdin(
+        Command::new(nx_bin)
+            .args([
+                "--plain",
+                "--minimal",
+                "upgrade",
+                "--",
+                "--commit-lock-file",
+            ])
+            .current_dir(repo_root.path())
+            .env("NX_REPO_ROOT", repo_root.path())
+            .env("NX_PROFILE_PATH", repo_root.path().join("timings.jsonl"))
+            .env_remove("NX_TRACE_PATH"),
+        None,
+    )?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let rendered = format!("{stdout}{stderr}");
@@ -1444,6 +1457,7 @@ fn run_case_with_extra_env(
         .env("NX_SYSTEM_PROFILE_PATH", &profile_link)
         .env("NX_SYSTEM_IT_LOG", &log_path)
         .env("NX_SYSTEM_IT_MODE", case.mode)
+        .env("NX_SYSTEM_IT_ASSERT_UPGRADE_LOCK", "1")
         .env(
             "NX_SYSTEM_IT_UPGRADE_NEW_LOCK",
             if case.mode == "upgrade_transitive_lock_changed" {
@@ -1464,6 +1478,7 @@ fn run_case_with_extra_env(
         command.env(key, value);
     }
 
+    let _held_lock = hold_upgrade_lock(repo_root.path(), case)?;
     let (output, elapsed) = run_measured_command(&mut command, None)?;
     let after = snapshot_repo_files(repo_root.path(), &should_ignore_snapshot_path)?;
     let invocations = read_invocations(&log_path)?;
@@ -1492,6 +1507,19 @@ fn run_case_with_extra_env(
 
     let expected_calls = expected_upgrade_calls(case);
     assert_invocations(case.id, repo_root.path(), &invocations, &expected_calls);
+    assert_rendered_upgrade(case, &stdout, &stderr);
+
+    assert_repo_state(case, &before, &after, &stdout, &stderr);
+    assert_home_state(case, home_dir.path(), &stdout, &stderr);
+    assert_no_anonymous_boundaries(case.id, &stdout, &stderr);
+
+    Ok(CaseOutput {
+        stdout: stdout.into_owned(),
+        stderr: stderr.into_owned(),
+    })
+}
+
+fn assert_rendered_upgrade(case: &UpgradeCase, stdout: &str, stderr: &str) {
     for expected in case.stdout_contains {
         assert!(
             stdout.contains(expected) || stderr.contains(expected),
@@ -1509,15 +1537,6 @@ fn run_case_with_extra_env(
         stdout,
         stderr
     );
-
-    assert_repo_state(case, &before, &after, &stdout, &stderr);
-    assert_home_state(case, home_dir.path(), &stdout, &stderr);
-    assert_no_anonymous_boundaries(case.id, &stdout, &stderr);
-
-    Ok(CaseOutput {
-        stdout: stdout.into_owned(),
-        stderr: stderr.into_owned(),
-    })
 }
 
 fn assert_structured_split_build_output(stdout: &str, stderr: &str) {
@@ -1672,8 +1691,45 @@ fn should_ignore_snapshot_path(rel_path: &str) -> bool {
     rel_path == LOG_FILE_NAME || rel_path == STUB_DIR_NAME || rel_path.starts_with(".system-stubs/")
 }
 
+fn hold_upgrade_lock(repo: &Path, case: &UpgradeCase) -> Result<Option<fs::File>, Box<dyn Error>> {
+    if case.mode != "upgrade_lock_held" {
+        return Ok(None);
+    }
+    let file = fs::File::open(repo)?;
+    rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive)?;
+    Ok(Some(file))
+}
+
 fn assert_receipt(timings_path: &Path, case: &UpgradeCase) -> Result<(), Box<dyn Error>> {
     let timing: serde_json::Value = serde_json::from_str(&fs::read_to_string(timings_path)?)?;
+    if case.id == "upgrade_legacy_failure_retains_attempt" {
+        let rebuild = timing["phases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|phase| phase["name"] == "rebuild")
+            .unwrap();
+        let activation = rebuild["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|phase| phase["name"] == "activation")
+            .unwrap();
+        let children = activation["children"].as_array().unwrap();
+        assert_eq!(
+            children
+                .iter()
+                .map(|phase| phase["name"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "build",
+                "profile-compare",
+                "homebrew-validation",
+                "legacy-switch"
+            ]
+        );
+        assert_eq!(children[3]["status"], "failed:1");
+    }
     if case.cli_args.contains(&"--dry-run") {
         assert!(timing.get("upgrade_receipt").is_none());
     } else {
@@ -1731,17 +1787,79 @@ fn expected_upgrade_calls(case: &UpgradeCase) -> Vec<ExpectedCall> {
         EXPECTED_CWD_REPO_ROOT,
         &["info", "--json=v2", "--installed"],
     );
-    if observe {
-        calls.push(inventory);
-    }
     if !case.cli_args.contains(&"--brew-only") {
         calls.extend([NIX_VERSION_CALL, DETERMINATE_VERSION_CALL]);
     }
-    calls.extend(case.expected_calls.iter().copied());
-    if observe {
+    let observation_index = case.expected_calls.iter().position(|call| {
+        call.is("brew", "outdated") || call.is("git", "ls-files") || call.is("git", "commit")
+    });
+    for (index, call) in case.expected_calls.iter().enumerate() {
+        if observe && observation_index == Some(index) {
+            calls.push(inventory);
+        }
+        calls.push(*call);
+    }
+    if observe && observation_index.is_some() {
         calls.push(inventory);
     }
     calls
+}
+
+#[test]
+fn failed_legacy_fallback_retains_attempt_and_reports_failed_activation()
+-> Result<(), Box<dyn Error>> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let binary = resolve_nx_bin(&root)?;
+    let case = UpgradeCase {
+        id: "upgrade_legacy_failure_retains_attempt",
+        cli_args: UPGRADE_REBUILD_ARGS,
+        mode: "split_sudo_prompt_run_current_legacy_available",
+        expected_exit: 1,
+        expected_calls: UPGRADE_SPLIT_REBUILD_RUN_CURRENT_LEGACY_CALLS,
+        stdout_contains: &[
+            "Running darwin-rebuild switch",
+            "Rebuild failed",
+            "activation: failed",
+        ],
+    };
+    run_case_with_extra_env(
+        &binary,
+        &root.join("tests/fixtures/system/repo_base"),
+        &case,
+        &[("NX_SPLIT_DARWIN", "1"), ("NX_SYSTEM_IT_DARWIN_FAIL", "1")],
+    )?;
+    Ok(())
+}
+
+#[test]
+fn admitted_input_changes_remain_uncommitted_after_brew_failure() -> Result<(), Box<dyn Error>> {
+    const EXPECTED: &[ExpectedCall] = &[
+        ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
+        ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
+        ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_NIXPKGS_COMPARE_ARGS),
+        ExpectedCall::new(
+            "brew",
+            EXPECTED_CWD_REPO_ROOT,
+            &["outdated", "--json", "--greedy-auto-updates"],
+        ),
+    ];
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let binary = resolve_nx_bin(&root)?;
+    let case = UpgradeCase {
+        id: "upgrade_admitted_changes_not_committed_after_brew_failure",
+        cli_args: &["upgrade", "--skip-rebuild", "--no-ai"],
+        mode: "upgrade_flake_changed",
+        expected_exit: 1,
+        expected_calls: EXPECTED,
+        stdout_contains: &["Inputs: lock changed", "commit: not run"],
+    };
+    run_case_with_extra_env(
+        &binary,
+        &root.join("tests/fixtures/system/repo_base"),
+        &case,
+        &[("NX_SYSTEM_IT_BREW_QUERY_FAIL", "1")],
+    )?;
+    Ok(())
 }
 
 #[test]
@@ -1779,11 +1897,13 @@ fn trace_never_overwrites_existing_evidence() -> Result<(), Box<dyn Error>> {
     let temp = TempDir::new()?;
     let trace = temp.path().join("existing.jsonl");
     fs::write(&trace, "previous evidence")?;
-    let output = Command::new(binary)
-        .args(["profile", "--json"])
-        .env("NX_TRACE_PATH", &trace)
-        .env("NX_PROFILE_PATH", temp.path().join("missing"))
-        .output()?;
+    let output = support_command_io::run_command_with_optional_stdin(
+        Command::new(binary)
+            .args(["profile", "--json"])
+            .env("NX_TRACE_PATH", &trace)
+            .env("NX_PROFILE_PATH", temp.path().join("missing")),
+        None,
+    )?;
     assert!(output.status.success());
     assert_eq!(fs::read_to_string(trace)?, "previous evidence");
     assert!(String::from_utf8_lossy(&output.stderr).contains("Could not create NX_TRACE_PATH"));

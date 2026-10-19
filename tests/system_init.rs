@@ -1,5 +1,7 @@
 #[path = "support/bin.rs"]
 mod support_bin;
+#[path = "support/command_io.rs"]
+mod support_command_io;
 #[path = "support/tree.rs"]
 mod support_tree;
 
@@ -20,20 +22,22 @@ fn run_nx(
     home_dir: &std::path::Path,
     args: &[&str],
 ) -> std::process::Output {
-    Command::new(nx_bin)
-        .args(["--plain", "--minimal"])
-        .args(args)
-        .current_dir(repo_root)
-        .env("NX_REPO_ROOT", repo_root)
-        .env("HOME", home_dir)
-        .env("NO_COLOR", "1")
-        .env("TERM", "dumb")
-        .env("PYTHONDONTWRITEBYTECODE", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("failed to execute nx binary")
+    support_command_io::run_command_with_optional_stdin(
+        Command::new(nx_bin)
+            .args(["--plain", "--minimal"])
+            .args(args)
+            .current_dir(repo_root)
+            .env("NX_REPO_ROOT", repo_root)
+            .env("HOME", home_dir)
+            .env("NO_COLOR", "1")
+            .env("TERM", "dumb")
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+        None,
+    )
+    .expect("failed to execute nx binary")
 }
 
 #[test]

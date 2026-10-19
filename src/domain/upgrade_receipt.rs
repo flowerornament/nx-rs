@@ -106,7 +106,11 @@ impl ObservedChanges {
             .filter_map(|name| {
                 let old = before.get(name).cloned().unwrap_or_default();
                 let new = after.get(name).cloned().unwrap_or_default();
-                (old != new).then(|| PackageChange {
+                let same = old.len() == new.len()
+                    && old.iter().zip(&new).all(|(old, new)| {
+                        old.version == new.version && old.identity == new.identity
+                    });
+                (!same).then(|| PackageChange {
                     name: name.clone(),
                     before: old,
                     after: new,

@@ -37,6 +37,7 @@ pub fn run_command_with_optional_stdin(
     Ok(command.output()?)
 }
 
+#[allow(dead_code)]
 pub fn ensure_test_layout(repo_root: &Path) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(repo_root.join("scripts/nx/tests"))?;
     Ok(())

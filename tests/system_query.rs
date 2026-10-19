@@ -1,5 +1,7 @@
 #[path = "support/bin.rs"]
 mod support_bin;
+#[path = "support/command_io.rs"]
+mod support_command_io;
 #[path = "support/stubs.rs"]
 mod support_stubs;
 #[path = "support/tree.rs"]
@@ -94,22 +96,24 @@ where
         format!(": {now_epoch_secs}:1;rg nx\n: 100:1;fd Cargo\n"),
     )?;
 
-    let output = Command::new(nx_bin)
-        .args(["--plain", "--minimal"])
-        .args(args)
-        .current_dir(tmp.path())
-        .env("NX_REPO_ROOT", tmp.path())
-        .env("HOME", home_dir.path())
-        .env("NO_COLOR", "1")
-        .env("TERM", "dumb")
-        .env("PYTHONDONTWRITEBYTECODE", "1")
-        .env("NX_SYSTEM_IT_LOG", &log_path)
-        .env("PATH", prepend_path(&stub_dir))
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("failed to execute nx binary");
+    let output = support_command_io::run_command_with_optional_stdin(
+        Command::new(nx_bin)
+            .args(["--plain", "--minimal"])
+            .args(args)
+            .current_dir(tmp.path())
+            .env("NX_REPO_ROOT", tmp.path())
+            .env("HOME", home_dir.path())
+            .env("NO_COLOR", "1")
+            .env("TERM", "dumb")
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .env("NX_SYSTEM_IT_LOG", &log_path)
+            .env("PATH", prepend_path(&stub_dir))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+        None,
+    )
+    .expect("failed to execute nx binary");
 
     Ok(QueryRun {
         output,

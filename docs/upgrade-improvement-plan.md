@@ -90,3 +90,11 @@ inspection concurrently under the same five-second budget; they never evaluate
 flakes or mutate state. Their actual wall time remains visible in timing history.
 Store query arguments resolve environment symlinks first: passing a subpath
 inside a store object would query the enclosing object instead.
+
+Review repairs keep both package snapshots inside the admitted upgrade's lock
+lifetime. Lock rejection remains unobserved; commit starts as not run and is
+marked not needed only when ownership is resolved. Tests make installed-inventory
+stubs require the held upgrade lock. Optional enrichment uses at most four
+workers with per-item panic isolation. Nix user-directory errors remain unknown;
+only NotFound is empty. Large measurement logs stream and retain bounded target
+samples alongside complete event counts and raw logs.

@@ -594,10 +594,13 @@ commits an unchanged/preexisting lock edit; existing rebuild hash-repair rules
 still apply to paths repaired by this invocation.
 
 Real upgrades print an observed result receipt even after failure. Read-only
-before/after observations have a five-second budget each and are attributed as
+before/after package observations run after admission and while the upgrade lock
+is held, have a five-second budget each, and are attributed as
 `observe-before` and `observe-after` phases. They compare installed Homebrew
 formula/cask versions and direct Nix environment references (system `sw` and
-Darwin per-user Home Manager paths), rather than the full dependency closure.
+Darwin per-user Home Manager paths), rather than the full dependency closure. Nix deltas describe selected system-profile
+references, which can differ from active paths after activation failure; new
+references are not claimed to be activated installations.
 Unavailable/failed observations are unknown, never an empty successful diff.
 The receipt distinguishes input, Homebrew, rebuild, activation and owned commit
 outcomes; records system profile targets; and checks changed Homebrew commands
@@ -621,6 +624,7 @@ High-level phases:
   - non-dry-run with positional inputs: stream `nix flake update <input...>`, preserving CLI order
   - load the new lock and derive one root-input change set through the lock's `root.inputs` mapping; transitive node churn remains part of `flake.lock` but is not reported as a user-managed input
   - fetch change info and summaries
+  - optional enrichment runs with at most four workers, preserving row order and per-row panic/failure isolation
   - optional comparison/AI batches share one absolute deadline (10 seconds by default; `NX_SUMMARY_TIMEOUT_SECONDS=1..300` overrides); provider fallback never resets it
   - optional commands run in owned process groups with nonblocking bounded output; deadline cancellation kills their group and reaps the leader, including when inherited pipes outlive the leader; oversized output is rejected
   - the shared printer shows enrichment activity and its time budget; summary failure/timeout remains advisory and preserves every input/package row

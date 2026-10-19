@@ -340,7 +340,7 @@ case "$program" in
     ;;
   brew)
     if [ "${1:-}" = "outdated" ] && [ "${2:-}" = "--json" ]; then
-      if [ "$mode" = "upgrade_brew_query_failure" ]; then
+      if [ "$mode" = "upgrade_brew_query_failure" ] || [ "${NX_SYSTEM_IT_BREW_QUERY_FAIL:-0}" = "1" ]; then
         echo 'Homebrew query unavailable' >&2
         exit 1
       fi
@@ -364,6 +364,18 @@ case "$program" in
 
     if [ "${1:-}" = "info" ] && [ "${2:-}" = "--json=v2" ]; then
       if [ "${3:-}" = "--installed" ]; then
+        if [ "${NX_SYSTEM_IT_ASSERT_UPGRADE_LOCK:-0}" = "1" ]; then
+          python3 - "$PWD" <<'PYLOCK'
+import fcntl, os, sys
+fd = os.open(sys.argv[1], os.O_RDONLY)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    pass
+else:
+    sys.exit("receipt inventory ran outside upgrade lock")
+PYLOCK
+        fi
         version=1.0
         if [ -f "$HOME/.brew-upgraded" ]; then version=2.0; fi
         if [ "$mode" = "upgrade_brew_casks" ] || [ "$mode" = "upgrade_brew_failure" ] || [ "$mode" = "upgrade_brew_pinned" ]; then
@@ -659,7 +671,7 @@ case "$program" in
         exit 1
       fi
     fi
-    if [ "$mode" = "darwin_rebuild_fail" ]; then
+    if [ "$mode" = "darwin_rebuild_fail" ] || [ "${NX_SYSTEM_IT_DARWIN_FAIL:-0}" = "1" ]; then
       echo "stub darwin-rebuild failed" >&2
       exit 1
     fi

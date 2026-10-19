@@ -87,6 +87,10 @@ fn size_limited_trace_warns_without_changing_upgrade_result() -> Result<(), Box<
         .current_dir(repo.path())
         .env("HOME", home.path())
         .env("NX_REPO_ROOT", repo.path())
+        .env(
+            "NX_SYSTEM_PROFILE_PATH",
+            home.path().join("absent-system-profile"),
+        )
         .env("NX_TRACE_DIR", traces.path())
         .env("NX_TRACE_MAX_BYTES", "4096")
         .env(

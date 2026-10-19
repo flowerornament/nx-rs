@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::cli::UpgradeArgs;
+use crate::cli::{UpgradeArgs, UpgradeScope};
 use crate::domain::upgrade_receipt::{
     Inventory, ObservationStatus, ObservedChanges, PackageState, UpgradeReceipt, UpgradeStep,
 };
@@ -21,18 +21,11 @@ pub(super) struct Snapshot {
     nix: Result<Inventory, String>,
 }
 
-fn profile_path() -> PathBuf {
-    std::env::var_os("NX_SYSTEM_PROFILE_PATH").map_or_else(
-        || PathBuf::from("/nix/var/nix/profiles/system"),
-        PathBuf::from,
-    )
-}
-
 impl Snapshot {
     pub(super) fn observe(args: &UpgradeArgs) -> Self {
         // One budget covers the complete observation, including all pipe drains.
         let deadline = Instant::now() + Duration::from_secs(5);
-        let profile = fs::canonicalize(profile_path()).ok();
+        let profile = fs::canonicalize(super::rebuild::system_profile_path()).ok();
         let (brew, nix) = std::thread::scope(|scope| {
             let brew = scope.spawn(crate::infra::run_trace::with_parent(|| {
                 if args.should_run_brew_phase() || !args.skip_rebuild() {
@@ -75,12 +68,10 @@ fn query(program: &str, args: &[&str], deadline: Instant) -> Result<String, Stri
 
 pub(super) fn start(args: &UpgradeArgs) -> UpgradeReceipt {
     UpgradeReceipt {
-        scope: if args.brew_only() {
-            "homebrew"
-        } else if args.has_targets() {
-            "inputs"
-        } else {
-            "full"
+        scope: match args.scope() {
+            UpgradeScope::Homebrew => "homebrew",
+            UpgradeScope::Inputs => "inputs",
+            UpgradeScope::Full => "full",
         }
         .into(),
         changed_inputs: vec![],
@@ -107,11 +98,22 @@ pub(super) fn start(args: &UpgradeArgs) -> UpgradeReceipt {
         commit: if args.skip_commit() {
             UpgradeStep::Skipped
         } else {
-            UpgradeStep::NotNeeded
+            UpgradeStep::NotRun
         },
         system_before: None,
         system_after: None,
-        packages: vec![],
+        packages: vec![
+            ObservedChanges::between(
+                "Homebrew",
+                &Err("package changes not reached".into()),
+                &Err("package changes not reached".into()),
+            ),
+            ObservedChanges::between(
+                "Nix system-profile references",
+                &Err("package changes not reached".into()),
+                &Err("package changes not reached".into()),
+            ),
+        ],
         shadowed_commands: vec![],
     }
 }
@@ -121,7 +123,7 @@ pub(super) fn finish(receipt: &mut UpgradeReceipt, before: &Snapshot, after: &Sn
     receipt.system_after.clone_from(&after.system);
     receipt.packages = vec![
         ObservedChanges::between("Homebrew", &before.brew, &after.brew),
-        ObservedChanges::between("Nix environment references", &before.nix, &after.nix),
+        ObservedChanges::between("Nix system-profile references", &before.nix, &after.nix),
     ];
     if receipt.rebuild == UpgradeStep::Skipped {
         receipt.packages[1].status = ObservationStatus::Skipped;
@@ -179,11 +181,27 @@ pub(super) fn print(receipt: &UpgradeReceipt, code: i32) {
                 let old = versions(&change.before);
                 let new = versions(&change.after);
                 Printer::sub_detail(&if change.before.is_empty() {
-                    format!("{}: installed {new}", change.name)
+                    format!(
+                        "{}: {} {new}",
+                        change.name,
+                        if observed.scope == "Homebrew" {
+                            "installed"
+                        } else {
+                            "added reference"
+                        }
+                    )
                 } else if change.after.is_empty() {
-                    format!("{}: removed {old}", change.name)
+                    format!(
+                        "{}: {} {old}",
+                        change.name,
+                        if observed.scope == "Homebrew" {
+                            "removed"
+                        } else {
+                            "removed reference"
+                        }
+                    )
                 } else if old == new {
-                    format!("{}: {new} (rebuilt)", change.name)
+                    format!("{}: {new} (output changed)", change.name)
                 } else {
                     format!("{}: {old} → {new}", change.name)
                 });
@@ -286,27 +304,37 @@ fn references(path: &Path, deadline: Instant) -> Result<Vec<String>, String> {
     let output = query("nix-store", &["--query", "--references", path], deadline)?;
     let paths: Vec<_> = output.lines().map(str::to_owned).collect();
     if paths.iter().any(|path| !path.starts_with("/nix/store/")) {
-        return Err("invalid Nix environment references".into());
+        return Err("invalid Nix system-profile references".into());
     }
     Ok(paths)
 }
 
 fn nix_inventory(profile: &Path, deadline: Instant) -> Result<Inventory, String> {
     let mut paths = references(&profile.join("sw"), deadline)?;
-    let users = profile.join("etc/profiles/per-user");
-    if users.exists() {
-        for user in fs::read_dir(users).map_err(|error| error.to_string())? {
-            let user = user.map_err(|error| error.to_string())?;
-            for environment in references(&user.path(), deadline)? {
-                if environment.ends_with("-home-manager-path") {
-                    paths.extend(references(Path::new(&environment), deadline)?);
-                } else {
-                    paths.push(environment);
-                }
+    for user in user_environments(&profile.join("etc/profiles/per-user"))? {
+        for environment in references(&user, deadline)? {
+            if environment.ends_with("-home-manager-path") {
+                paths.extend(references(Path::new(&environment), deadline)?);
+            } else {
+                paths.push(environment);
             }
         }
     }
     nix_packages(paths)
+}
+
+fn user_environments(directory: &Path) -> Result<Vec<PathBuf>, String> {
+    match fs::read_dir(directory) {
+        Ok(users) => users
+            .map(|entry| {
+                entry
+                    .map(|entry| entry.path())
+                    .map_err(|error| error.to_string())
+            })
+            .collect(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 fn nix_packages(mut paths: Vec<String>) -> Result<Inventory, String> {
@@ -433,6 +461,19 @@ fn shadowed_in(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_users_is_empty_but_unreadable_directory_is_not_a_successful_inventory() {
+        let temp = tempfile::TempDir::new().unwrap();
+        assert!(
+            user_environments(&temp.path().join("missing"))
+                .unwrap()
+                .is_empty()
+        );
+        let path = temp.path().join("not-a-directory");
+        fs::write(&path, "").unwrap();
+        assert!(user_environments(&path).is_err());
+    }
 
     #[test]
     fn reference_inventory_keeps_output_identity_for_same_version_rebuilds() {

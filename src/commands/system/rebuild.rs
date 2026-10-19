@@ -1017,11 +1017,13 @@ pub(super) fn darwin_host(ctx: &SystemContext<'_>) -> Option<String> {
         })
 }
 
+pub(super) fn system_profile_path() -> PathBuf {
+    std::env::var_os(SYSTEM_PROFILE_PATH_ENV)
+        .map_or_else(|| PathBuf::from(SYSTEM_PROFILE), PathBuf::from)
+}
+
 fn current_system_profile_target() -> Option<String> {
-    let profile_path = std::env::var_os(SYSTEM_PROFILE_PATH_ENV).map_or_else(
-        || std::path::PathBuf::from(SYSTEM_PROFILE),
-        std::path::PathBuf::from,
-    );
+    let profile_path = system_profile_path();
     fs::canonicalize(&profile_path)
         .ok()
         .map(|path| path.display().to_string())

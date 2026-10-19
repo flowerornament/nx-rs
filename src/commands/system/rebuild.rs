@@ -566,10 +566,22 @@ fn do_rebuild_once(
     if should_use_split_darwin(args, manifest) {
         match do_split_darwin_rebuild(ctx, repo, use_sudo, output_mode, args.force_activation) {
             SplitDarwinResult::Handled(result) => return result,
-            SplitDarwinResult::Fallback(rebuild_command_override) => {
+            SplitDarwinResult::Fallback {
+                command,
+                mut phases,
+            } => {
                 ctx.printer.action("Running darwin-rebuild switch");
-                let (output, phases) =
-                    run_darwin_rebuild(args, ctx, rebuild_command_override.as_deref())?;
+                let mut trace =
+                    crate::infra::run_trace::Span::start("phase", "legacy-switch".into());
+                let ((output, children), mut legacy) = timed_phase("legacy-switch", || {
+                    run_darwin_rebuild(args, ctx, command.as_deref())
+                })?;
+                if let Some(trace) = trace.as_mut() {
+                    trace.finish(output.code);
+                }
+                legacy.status = exit_status(output.code);
+                legacy.children = children;
+                phases.push(legacy);
                 return Ok((output, phases, RebuildOutcome::Rebuilt));
             }
         }
@@ -659,7 +671,10 @@ fn do_split_darwin_rebuild(
     let Some(host) = darwin_host(ctx) else {
         ctx.printer
             .warn("Split darwin rebuild could not determine host; falling back");
-        return SplitDarwinResult::Fallback(None);
+        return SplitDarwinResult::Fallback {
+            command: None,
+            phases: Vec::new(),
+        };
     };
 
     let attr = format!("{repo}#darwinConfigurations.{host}.system");
@@ -676,7 +691,10 @@ fn do_split_darwin_rebuild(
     let Some(system_config) = parse_system_config_path(&build.output.stdout) else {
         ctx.printer
             .warn("Split darwin rebuild could not parse nix build output; falling back");
-        return SplitDarwinResult::Fallback(None);
+        return SplitDarwinResult::Fallback {
+            command: None,
+            phases,
+        };
     };
     ctx.printer.success("System configuration built");
 
@@ -696,12 +714,33 @@ fn do_split_darwin_rebuild(
         )));
     }
 
+    let (validation, mut phase) = timed_phase("homebrew-validation", || {
+        Ok(super::homebrew_validation::validate_candidate(
+            Path::new(&system_config),
+            ctx.printer,
+        ))
+    })
+    .expect("validation result is captured");
+    if let Err(error) = validation {
+        phase.status = "failed:1".to_string();
+        phases.push(phase);
+        return SplitDarwinResult::Handled(Ok((
+            CapturedCommand::captured(1, String::new(), format!("{error:#}")),
+            phases,
+            RebuildOutcome::Rebuilt,
+        )));
+    }
+    phases.push(phase);
+
     let split_activation_needs_auth = split_activation_would_prompt(use_sudo);
     if split_activation_needs_auth
         && let Some(rebuild_command) = legacy_darwin_rebuild_sudo_command(ctx.repo_root)
     {
         Printer::detail("activation: using passwordless darwin-rebuild");
-        return SplitDarwinResult::Fallback(Some(rebuild_command.to_string()));
+        return SplitDarwinResult::Fallback {
+            command: Some(rebuild_command.to_string()),
+            phases,
+        };
     }
 
     let sudo_auth = match authorize_split_sudo(ctx, split_activation_needs_auth) {
@@ -787,7 +826,10 @@ pub(super) fn split_nix_build_command_with_log_format(
 
 enum SplitDarwinResult {
     Handled(anyhow::Result<(CapturedCommand, Vec<TimingPhase>, RebuildOutcome)>),
-    Fallback(Option<String>),
+    Fallback {
+        command: Option<String>,
+        phases: Vec<TimingPhase>,
+    },
 }
 
 fn set_system_profile(

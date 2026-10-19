@@ -551,6 +551,16 @@ Experimental split Darwin rebuild:
 - Interactive user-facing Nix commands inherit stdin and receive a pseudoterminal-backed stderr initialized from nx's terminal settings. Nx retains the original bytes in a bounded diagnostic tail. For display, complete single-line replacement frames (`CR` through `ESC[K`) are coalesced to the latest at a 500 ms cadence; the final frame is flushed on exit. Permanent messages, clear-line controls and activation output are preserved unchanged. Unmatched partial frames/prompts flush within 100 ms, and partial-frame buffering is limited to 16 KiB. Nx may capture stdout when it is command data, such as the split build's resulting store path, but it never interprets progress content, prefixes, indents, or re-renders native Nix output.
 - Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get HostName`, `scutil --get LocalHostName`, then `hostname -s`; an explicit hostname takes precedence over a Bonjour name with a collision suffix.
 - If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation unless `--force-activation` is passed. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
+- Before changing a split-built candidate's profile, read its generated Brewfile
+  from the activation script and validate core formula/cask definitions in two
+  batched Homebrew metadata queries, with auto-update disabled for those reads.
+  Valid uninstalled packages and aliases remain valid. New tapped declarations
+  are deferred to Homebrew's activation resolver. Missing definitions, failed
+  metadata queries and malformed metadata stop before sudo/profile mutation.
+  Candidates without a discoverable generated Brewfile retain their existing
+  activation path; custom/legacy commands remain owned by their platform runner.
+- Legacy fallback retains the attempted split build/profile comparison phases
+  and records the legacy command as a separate `legacy-switch` timing child.
 - Otherwise reports successful build and profile-update phase completion, then runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
 - If direct split activation would require an interactive sudo prompt but the legacy `sudo darwin-rebuild` path is available non-interactively, falls back to legacy `darwin-rebuild` to preserve passwordless sudoers setups.
 - In interactive terminals, profile updates use Nix's native `bar` format; `--verbose` selects `bar-with-logs`. Direct activation inherits stdin and stdout and receives the same pseudoterminal-backed stderr, so the activation script and nested tools retain terminal-aware behavior. Captured activation retains raw diagnostics but cannot impose a log format on nested commands. Non-interactive `darwin-rebuild` fallback uses `internal-json`. Nx owns the log format for Nix commands it invokes directly and removes conflicting passthrough selections.

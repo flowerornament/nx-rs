@@ -947,6 +947,72 @@ fn split_darwin_rebuild_can_reapply_current_system() -> Result<(), Box<dyn Error
 }
 
 #[test]
+fn migrated_brew_definition_fails_before_profile_update() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo = TempDir::new()?;
+    copy_tree(
+        &workspace_root.join("tests/fixtures/system/repo_base"),
+        repo.path(),
+    )?;
+    ensure_test_layout(repo.path())?;
+    let stubs = repo.path().join(STUB_DIR_NAME);
+    fs::create_dir_all(&stubs)?;
+    install_stubs(&stubs)?;
+    let candidate = repo.path().join("candidate");
+    fs::create_dir(&candidate)?;
+    let brewfile = candidate.join("Brewfile");
+    fs::write(&brewfile, "brew \"vercel-cli\"\n")?;
+    fs::write(
+        candidate.join("activate"),
+        format!("brew bundle --file='{}'\n", brewfile.display()),
+    )?;
+    let home = TempDir::new()?;
+    let profile = home.path().join("system-profile");
+    symlink("/nix/store/current-system", &profile)?;
+    let log = repo.path().join(LOG_FILE_NAME);
+    let output_path = serde_json::json!([{ "outputs": { "out": candidate } }]).to_string();
+    let mut command = Command::new(resolve_nx_bin(&workspace_root)?);
+    command
+        .args(["--plain", "--minimal", "rebuild"])
+        .current_dir(repo.path())
+        .env("HOME", home.path())
+        .env("NX_REPO_ROOT", repo.path())
+        .env("NX_SPLIT_DARWIN", "1")
+        .env("NX_SYSTEM_PROFILE_PATH", &profile)
+        .env("NX_SYSTEM_IT_DARWIN_BUILD_OUTPUT", output_path)
+        .env("NX_SYSTEM_IT_LOG", &log)
+        .env("NX_SYSTEM_IT_MODE", "brew_validation_missing")
+        .env("PATH", prepend_path(&stubs));
+    let output = run_command_with_optional_stdin(&mut command, None)?;
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("migrations")
+            || String::from_utf8_lossy(&output.stdout).contains("migrations"),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let calls = read_invocations(&log)?;
+    assert!(calls.iter().any(|call| call.program == "brew"
+        && call.args == ["info", "--json=v2", "--formula", "vercel-cli"]));
+    assert!(
+        !calls
+            .iter()
+            .any(|call| matches!(call.program.as_str(), "sudo" | "nix-env" | "darwin-rebuild"))
+    );
+    assert_eq!(
+        fs::read_link(&profile)?,
+        Path::new("/nix/store/current-system")
+    );
+    assert_timing_children(
+        home.path(),
+        "invalid-brew",
+        &["build", "homebrew-validation"],
+    )?;
+    Ok(())
+}
+
+#[test]
 fn split_darwin_rebuild_authorizes_sudo_when_prompt_is_needed() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
@@ -985,7 +1051,11 @@ fn split_darwin_rebuild_preserves_passwordless_legacy_sudo() -> Result<(), Box<d
     let nx_bin = resolve_nx_bin(&workspace_root)?;
     let expected_calls = split_rebuild_legacy_fallback_calls();
 
-    let RunResult { stdout, stderr, .. } = run_split_rebuild(
+    let RunResult {
+        home_dir,
+        stdout,
+        stderr,
+    } = run_split_rebuild(
         &nx_bin,
         &repo_base,
         "split_rebuild_passwordless_legacy_sudo",
@@ -1007,6 +1077,11 @@ fn split_darwin_rebuild_preserves_passwordless_legacy_sudo() -> Result<(), Box<d
         "stdout missing rebuild success\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert_structured_split_build_output(&stdout, &stderr);
+    assert_timing_children(
+        home_dir.path(),
+        "split_rebuild_passwordless_legacy_sudo",
+        &["build", "profile-compare", "legacy-switch"],
+    )?;
 
     Ok(())
 }

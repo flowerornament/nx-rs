@@ -1,5 +1,6 @@
 mod cache_preflight;
 mod fixed_output_hash;
+mod homebrew_validation;
 mod lint;
 mod nix_diagnostics;
 mod rebuild;

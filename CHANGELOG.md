@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- validates generated Homebrew core declarations before split profile changes and preserves split-build timings when legacy activation is required
+
 ## v1.5.43 - 2026-10-18
 
 - preserves tap-qualified Homebrew identities and explains direct cask installation, configuration application, and removal

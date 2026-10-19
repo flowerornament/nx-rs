@@ -524,6 +524,12 @@ Runs repo quality checks. This validates the managed Nix config repo itself.
 Use `nx rebuild --force-activation` to reapply activation and Homebrew declarations
 even when the Nix system path is already current.
 
+Before split activation, nx checks core formula/cask definitions in the candidate
+system's generated Brewfile. Missing or migrated definitions fail before the
+system profile changes; valid new installations are accepted. New taps are
+resolved by Homebrew during activation. Timing reports retain split attempts
+when activation falls back to passwordless `darwin-rebuild`.
+
 Runs `darwin-rebuild switch` for the managed repo.
 
 - Split builds and upgrade cache checks select the Darwin host from

@@ -358,6 +358,10 @@ case "$program" in
     fi
 
     if [ "${1:-}" = "info" ] && [ "${2:-}" = "--json=v2" ]; then
+      if [ "$mode" = "brew_validation_missing" ]; then
+        echo 'vercel-cli was migrated to homebrew/cask/vercel' >&2
+        exit 1
+      fi
       if [ "${3:-}" = "--cask" ]; then
         if [ "$mode" = "upgrade_brew_casks" ] || [ "$mode" = "upgrade_brew_failure" ] || [ "$mode" = "upgrade_brew_pinned" ]; then
           echo '{"casks":[{"token":"hex","full_token":"anomalyco/tap/hex","homepage":"https://example.invalid/hex","desc":"GUI app"}]}'

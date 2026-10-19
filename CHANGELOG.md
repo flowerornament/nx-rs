@@ -2,12 +2,14 @@
 
 ## Unreleased
 
-- bounds optional comparison and AI work with shared deadlines, visible progress, descendant cleanup and output limits
-- prints and persists observed upgrade receipts, including partial package changes, activation/commit outcomes, unknown observations and command shadowing
-- qualifies real measurements with Git identity, optional host-load refusal and planning-only controls
+## v1.5.44 - 2026-10-19
 
-- validates generated Homebrew core declarations before split profile changes and preserves split-build timings when legacy activation is required
-- supports `nx upgrade --brew-only` for Homebrew updates with a current-pin rebuild, plus opt-in bounded routine traces and workload context in timing history
+- prints and persists observed upgrade receipts with package changes, profile targets, activation/commit outcomes, partial failures, unknown observations and command shadowing
+- validates generated Homebrew core declarations before split profile changes while preserving new tap installation
+- supports `nx upgrade --brew-only` for Homebrew updates with a rebuild using current Nix inputs
+- bounds optional comparison and AI summaries with a shared time budget, at most four workers, visible progress, descendant cleanup and output limits
+- preserves split-build and legacy-switch timing on success and failure, and supports private bounded routine traces, workload context and Home Manager trace settings
+- qualifies measurements with Git identity, optional host-load refusal, planning-only controls and bounded activity summaries; keeps test writes out of user timing and trace history
 
 ## v1.5.43 - 2026-10-18
 

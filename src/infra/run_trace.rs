@@ -169,11 +169,8 @@ impl Drop for Run {
                 eprintln!("Nx trace write failed or size limit reached; trace is incomplete");
             }
             let retention = sink.retention.take();
-            drop(sink);
-            if let Some(retention) = retention
-                && let Err(error) = retention.prune()
-            {
-                eprintln!("Could not prune nx traces: {error:#}");
+            if let Err(error) = storage::complete(sink.file, retention) {
+                eprintln!("Could not finalize nx trace retention: {error:#}");
             }
         }
     }

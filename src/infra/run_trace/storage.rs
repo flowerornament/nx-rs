@@ -18,6 +18,17 @@ pub(super) struct Retention {
     pub max_files: usize,
 }
 
+pub(super) fn complete(file: File, retention: Option<Retention>) -> anyhow::Result<()> {
+    // Other threads may fork while the writer is open. Closing only our
+    // descriptor can leave its lock alive in the child until that child execs.
+    flock(&file, FlockOperation::Unlock)?;
+    drop(file);
+    if let Some(retention) = retention {
+        retention.prune()?;
+    }
+    Ok(())
+}
+
 impl Retention {
     pub fn prune(&self) -> anyhow::Result<()> {
         let directory = File::open(&self.directory)?;
@@ -155,6 +166,7 @@ mod tests {
         for _ in 0..4 {
             let mut finished = create_managed(directory.path(), 2, 4096).unwrap();
             writeln!(finished.file, "{{\"data\":{{\"managed\":true}}}}").unwrap();
+            complete(finished.file, None).unwrap();
         }
         active.retention.as_ref().unwrap().prune().unwrap();
         assert!(active.path.exists());
@@ -165,6 +177,19 @@ mod tests {
             active.file.metadata().unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+
+    #[test]
+    fn completion_releases_lock_even_when_a_duplicate_descriptor_survives() {
+        let directory = tempfile::tempdir().unwrap();
+        let finished = create_managed(directory.path(), 1, 4096).unwrap();
+        // A fork can retain this same open file description until exec.
+        let inherited = finished.file.try_clone().unwrap();
+        let path = finished.path.clone();
+        complete(finished.file, None).unwrap();
+        let probe = File::open(path).unwrap();
+        assert!(flock(&probe, FlockOperation::NonBlockingLockExclusive).is_ok());
+        drop(inherited);
     }
 
     #[test]

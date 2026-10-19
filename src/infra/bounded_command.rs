@@ -127,12 +127,15 @@ pub(crate) fn run(program: &str, args: &[&str], deadline: Instant) -> Result<Cap
 mod tests {
     use super::*;
 
+    // Output/status controls need scheduling room on loaded build hosts.
+    const COMPLETION_BUDGET: Duration = Duration::from_secs(60);
+
     #[test]
     fn preserves_output_and_failure_status() {
         let output = run(
             "sh",
             &["-c", "printf hello; printf problem >&2; exit 7"],
-            Instant::now() + Duration::from_secs(2),
+            Instant::now() + COMPLETION_BUDGET,
         )
         .unwrap();
         assert_eq!(
@@ -168,7 +171,7 @@ mod tests {
         let output = run(
             "sh",
             &["-c", "yes flooding"],
-            Instant::now() + Duration::from_secs(5),
+            Instant::now() + COMPLETION_BUDGET,
         )
         .unwrap();
         assert_eq!(output.code, 125);

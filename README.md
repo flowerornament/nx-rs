@@ -184,7 +184,7 @@ export NX_REPO_ROOT=/path/to/your/config-repo
 Some flows can call local AI CLIs when helpful:
 
 - `install`:
-  - `--engine codex|claude` selects the engine (`codex` default).
+  - `--engine claude-code|codex|claude` selects the engine (`claude-code` default).
   - `--model <name>` selects the model for the chosen engine.
   - `--explain` prints extra decision details during install resolution.
 - `remove`:
@@ -192,6 +192,9 @@ Some flows can call local AI CLIs when helpful:
 - `upgrade`:
   - Prints optional AI-generated change summaries for flake/homebrew updates.
   - `--no-ai` disables AI summaries entirely.
+
+AI commands use the installed CLI's configured model by default; explicit
+`--model` selections on install/remove override that default.
 
 Requirements:
 
@@ -650,6 +653,11 @@ thresholds. The retained artifacts can later be imported by git-evidence.
 Optional upgrade comparisons and AI summaries share a 10-second budget per
 batch. `NX_SUMMARY_TIMEOUT_SECONDS` accepts 1–300 seconds; `--no-ai` skips AI
 summaries. Provider failures keep the underlying input and version lists.
+Summaries wrap to the terminal width without clipping sentences. Flake entries
+show commit counts and labeled AI prose; `--verbose` also shows up to three
+commit titles as separate bullets. Those titles are the fallback with `--no-ai`
+or when AI is unavailable. AI descriptions are based on a sample of up to 30
+commit titles, rather than a review of the full update.
 
 Every real upgrade ends with an observed result: installed/upgraded/removed
 Homebrew versions, changes to direct Nix environment references, system profile,

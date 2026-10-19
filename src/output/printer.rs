@@ -92,6 +92,16 @@ impl Printer {
         println!("{}{text}", LineLayout::SubDetail.indent());
     }
 
+    /// Wrap prose and hanging bullets while preserving the shared detail indent.
+    pub fn sub_paragraph(text: &str) {
+        let width = rustix::termios::tcgetwinsize(rustix::stdio::stdout())
+            .ok()
+            .map_or(80, |size| usize::from(size.ws_col));
+        for line in paragraph_lines(text, width) {
+            println!("{line}");
+        }
+    }
+
     pub fn dry_run_banner(&self) {
         println!("{}", self.dry_run_line());
     }
@@ -419,6 +429,29 @@ fn wrapped_segments(line: &str, max_content: usize) -> Vec<&str> {
     out
 }
 
+fn paragraph_lines(text: &str, width: usize) -> Vec<String> {
+    let indent = LineLayout::SubDetail.indent();
+    let (marker, content) = text
+        .strip_prefix("- ")
+        .map_or(("", text), |text| ("- ", text));
+    let width = if width == 0 { 80 } else { width.min(100) };
+    let content_width = width.saturating_sub(indent.len() + marker.len()).max(1);
+    wrapped_segments(content, content_width)
+        .into_iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let prefix = if index == 0 {
+                marker
+            } else if marker.is_empty() {
+                ""
+            } else {
+                "  "
+            };
+            format!("{indent}{prefix}{line}")
+        })
+        .collect()
+}
+
 fn nth_char_boundary(input: &str, n: usize) -> usize {
     if input.chars().count() <= n {
         return input.len();
@@ -433,7 +466,7 @@ fn nth_char_boundary(input: &str, n: usize) -> usize {
 mod tests {
     use super::{
         LineLayout, Printer, layout_line, loading_enabled, loading_frames, loading_line,
-        parse_confirm_response, wrapped_segments,
+        paragraph_lines, parse_confirm_response, wrapped_segments,
     };
     use crate::output::style::{IconSet, OutputStyle};
 
@@ -441,6 +474,27 @@ mod tests {
     fn wrapped_segments_preserves_long_word_chunks() {
         let segments = wrapped_segments("alpha beta gamma delta", 8);
         assert_eq!(segments, vec!["alpha", "beta", "gamma", "delta"]);
+    }
+
+    #[test]
+    fn paragraphs_wrap_without_losing_text_or_bullet_indentation() {
+        assert_eq!(
+            paragraph_lines("- alpha beta gamma delta", 18),
+            ["    - alpha beta", "      gamma delta"]
+        );
+        let text = "AI summary: A complete sentence with Unicode → and no clipped ending.";
+        for width in [20, 40, 80, 100] {
+            let lines = paragraph_lines(text, width);
+            assert!(lines.iter().all(|line| line.chars().count() <= width));
+            assert_eq!(
+                lines
+                    .iter()
+                    .map(|line| line.trim())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                text
+            );
+        }
     }
 
     #[test]

@@ -1863,6 +1863,60 @@ fn admitted_input_changes_remain_uncommitted_after_brew_failure() -> Result<(), 
 }
 
 #[test]
+fn optional_commit_titles_are_readable_without_ai() -> Result<(), Box<dyn Error>> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let binary = resolve_nx_bin(&root)?;
+    let case = UPGRADE_CASES
+        .iter()
+        .find(|case| case.id == "upgrade_flake_changed_skip_commit_gate")
+        .unwrap();
+    let output = run_case_with_extra_env(
+        &binary,
+        &root.join("tests/fixtures/system/repo_base"),
+        case,
+        &[(
+            "NX_SYSTEM_IT_COMPARE_JSON",
+            r#"{"total_commits":12,"commits":[
+            {"commit":{"message":"fix: restore the pinned target after a failed push so the local bookmark matches the published state"}},
+            {"commit":{"message":"refactor: share interned text ownership"}},
+            {"commit":{"message":"test: make workspace layout explicit"}},
+            {"commit":{"message":"docs: explain publication"}}
+        ]}"#,
+        )],
+    )?;
+    assert!(
+        output
+            .stdout
+            .contains(" · 12 commits\n    Commit titles (3 of 12):\n")
+    );
+    assert!(
+        output
+            .stdout
+            .contains("    - refactor: share interned text ownership\n")
+    );
+    assert!(!output.stdout.contains(" | "));
+    assert!(!output.stdout.contains("- docs: explain publication"));
+    let entry = output
+        .stdout
+        .split("Commit titles (3 of 12):\n")
+        .nth(1)
+        .unwrap()
+        .split("\n\n")
+        .next()
+        .unwrap();
+    assert!(entry.lines().all(|line| line.chars().count() <= 80));
+    insta::assert_snapshot!("upgrade_commit_titles", entry);
+    assert!(
+        entry
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains("local bookmark matches the published state")
+    );
+    Ok(())
+}
+
+#[test]
 fn optional_summary_deadline_preserves_changed_input_and_upgrade_success()
 -> Result<(), Box<dyn Error>> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- wraps upgrade summaries without clipped sentences, labels AI prose, and moves commit titles into readable verbose/fallback bullets
+- uses configured AI CLI model defaults instead of pinning an aging Codex model; summarizes a larger, explicitly labeled sample of commit titles
+- replaces the retired Codex `--full-auto` flag with explicit sandbox selection, using read-only access for upgrade summaries
+
 ## v1.5.44 - 2026-10-19
 
 - prints and persists observed upgrade receipts with package changes, profile targets, activation/commit outcomes, partial failures, unknown observations and command shadowing

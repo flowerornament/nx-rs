@@ -2,10 +2,14 @@
 
 ## Unreleased
 
+## v1.5.43 - 2026-10-18
+
 - preserves tap-qualified Homebrew identities and explains direct cask installation, configuration application, and removal
 - includes versioned self-updating casks in upgrades, supports `--greedy` for latest-version casks, respects pins, and reports Homebrew query or upgrade failures
 - propagates requested install rebuild failures and reapplies activation to restore missing apps even when the Nix system path is unchanged; `nx rebuild --force-activation` exposes this repair directly
 - describes install source lookups and shows elapsed time in loading indicators
+- makes timing reports readable with UTC dates, repository identity, phase shares and explicit overlap guidance; trace timelines show command concurrency
+- provides per-command evaluation-cache comparisons and isolates system-test timing records from user state
 
 ## v1.5.42 - 2026-10-11
 

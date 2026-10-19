@@ -1,5 +1,8 @@
 # Local Nix performance evidence
 
+Current ranked recommendations and new measurements:
+[Upgrade performance recommendations, 2026-10-19](performance-recommendations.md).
+
 ## Ishikawa, 2026-10-09
 
 Command: `just perf-nix --host Ishikawa --repeat 3`, followed by the same

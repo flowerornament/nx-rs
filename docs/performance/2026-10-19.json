@@ -1,0 +1,509 @@
+{
+  "version": 1,
+  "purpose": "Ranked performance investigation; observational, not a regression threshold",
+  "source_release": "c785f0fe0e9669f841059162ac9f44451ecbac0f",
+  "nx_version": "1.5.43",
+  "artifact_directory": "/Users/morgan/code/nx-rs/.nx/perf/ranked-20261019",
+  "cpu_count": 18,
+  "controlled": {
+    "upgrade_brew_invalid_json_is_not_up_to_date": {
+      "samples": 3,
+      "median_ms": 173.61175,
+      "min_ms": 146.175709,
+      "max_ms": 197.412542,
+      "median_trace_delta_ms": -105.146416,
+      "median_outside_commands_ms": 4.503499
+    },
+    "upgrade_brew_no_updates_short_circuit": {
+      "samples": 3,
+      "median_ms": 175.157875,
+      "min_ms": 150.70775,
+      "max_ms": 179.42675,
+      "median_trace_delta_ms": -92.9855,
+      "median_outside_commands_ms": 3.621334
+    },
+    "upgrade_brew_query_failure_is_not_up_to_date": {
+      "samples": 3,
+      "median_ms": 165.827875,
+      "min_ms": 151.244458,
+      "max_ms": 166.892334,
+      "median_trace_delta_ms": -72.0205,
+      "median_outside_commands_ms": 3.434209
+    },
+    "upgrade_brew_respects_cask_pins": {
+      "samples": 3,
+      "median_ms": 214.311833,
+      "min_ms": 169.788083,
+      "max_ms": 241.86625,
+      "median_trace_delta_ms": -78.364792,
+      "median_outside_commands_ms": 4.761459
+    },
+    "upgrade_brew_with_updates_dry_run_skips_upgrade": {
+      "samples": 3,
+      "median_ms": 143.122959,
+      "min_ms": 125.59975,
+      "max_ms": 248.087042,
+      "median_trace_delta_ms": -3.27375,
+      "median_outside_commands_ms": 3.209833
+    },
+    "upgrade_brew_with_updates_runs_upgrade": {
+      "samples": 3,
+      "median_ms": 222.218959,
+      "min_ms": 192.710333,
+      "max_ms": 313.876625,
+      "median_trace_delta_ms": -108.806333,
+      "median_outside_commands_ms": 4.036711
+    },
+    "upgrade_cache_gate_admits_nix_local_glue_without_approval": {
+      "samples": 3,
+      "median_ms": 575.4435,
+      "min_ms": 323.691792,
+      "max_ms": 594.013333,
+      "median_trace_delta_ms": 200.502333,
+      "median_outside_commands_ms": 5.959458
+    },
+    "upgrade_cache_gate_explicit_override_reaches_rebuild": {
+      "samples": 3,
+      "median_ms": 594.512875,
+      "min_ms": 346.972417,
+      "max_ms": 637.399667,
+      "median_trace_delta_ms": 135.434459,
+      "median_outside_commands_ms": 6.407208
+    },
+    "upgrade_cache_gate_preapproval_does_not_bypass_failed_planning": {
+      "samples": 3,
+      "median_ms": 322.685917,
+      "min_ms": 203.32175,
+      "max_ms": 330.575,
+      "median_trace_delta_ms": 23.952375,
+      "median_outside_commands_ms": 14.817875
+    },
+    "upgrade_cache_gate_preapproval_reaches_rebuild": {
+      "samples": 3,
+      "median_ms": 570.047708,
+      "min_ms": 343.116167,
+      "max_ms": 591.577667,
+      "median_trace_delta_ms": 37.374666,
+      "median_outside_commands_ms": 6.814125
+    },
+    "upgrade_cache_gate_rejects_noninteractive_source_builds": {
+      "samples": 3,
+      "median_ms": 363.52975,
+      "min_ms": 207.647292,
+      "max_ms": 436.484625,
+      "median_trace_delta_ms": 83.101291,
+      "median_outside_commands_ms": 13.826416
+    },
+    "upgrade_cache_gate_reports_rollback_failure": {
+      "samples": 3,
+      "median_ms": 375.36,
+      "min_ms": 217.062208,
+      "max_ms": 381.049167,
+      "median_trace_delta_ms": 21.418042,
+      "median_outside_commands_ms": 3.931709
+    },
+    "upgrade_cache_gate_restores_lock_when_preflight_fails": {
+      "samples": 3,
+      "median_ms": 326.307333,
+      "min_ms": 183.580667,
+      "max_ms": 336.3695,
+      "median_trace_delta_ms": 41.252792,
+      "median_outside_commands_ms": 10.537084
+    },
+    "upgrade_cask_dry_run_never_installs": {
+      "samples": 3,
+      "median_ms": 133.654417,
+      "min_ms": 121.18625,
+      "max_ms": 156.010125,
+      "median_trace_delta_ms": -59.815666,
+      "median_outside_commands_ms": 2.9215
+    },
+    "upgrade_cask_failure_is_not_success": {
+      "samples": 3,
+      "median_ms": 222.7475,
+      "min_ms": 202.79725,
+      "max_ms": 224.963834,
+      "median_trace_delta_ms": -128.808833,
+      "median_outside_commands_ms": 4.633042
+    },
+    "upgrade_cask_greedy_is_explicit": {
+      "samples": 3,
+      "median_ms": 226.997917,
+      "min_ms": 200.549625,
+      "max_ms": 251.735417,
+      "median_trace_delta_ms": -101.932749,
+      "median_outside_commands_ms": 4.028126
+    },
+    "upgrade_dry_run_skip_brew_short_circuit": {
+      "samples": 3,
+      "median_ms": 103.148916,
+      "min_ms": 79.465125,
+      "max_ms": 144.416667,
+      "median_trace_delta_ms": 27.753791,
+      "median_outside_commands_ms": 2.412375
+    },
+    "upgrade_flake_changed_commits_lockfile": {
+      "samples": 3,
+      "median_ms": 257.970125,
+      "min_ms": 170.208666,
+      "max_ms": 315.33125,
+      "median_trace_delta_ms": -12.044666,
+      "median_outside_commands_ms": 4.544041
+    },
+    "upgrade_flake_changed_skip_commit_gate": {
+      "samples": 3,
+      "median_ms": 175.486083,
+      "min_ms": 146.653209,
+      "max_ms": 226.614208,
+      "median_trace_delta_ms": -19.095625,
+      "median_outside_commands_ms": 3.939209
+    },
+    "upgrade_flake_failure_short_circuit": {
+      "samples": 3,
+      "median_ms": 178.730083,
+      "min_ms": 147.131,
+      "max_ms": 249.327167,
+      "median_trace_delta_ms": 53.556208,
+      "median_outside_commands_ms": 3.707376
+    },
+    "upgrade_flake_update_cache_corruption_is_diagnostic_only": {
+      "samples": 3,
+      "median_ms": 175.107417,
+      "min_ms": 146.781166,
+      "max_ms": 177.462542,
+      "median_trace_delta_ms": -115.791,
+      "median_outside_commands_ms": 3.149126
+    },
+    "upgrade_flake_update_injects_access_token_option": {
+      "samples": 3,
+      "median_ms": 141.997292,
+      "min_ms": 123.418875,
+      "max_ms": 143.604125,
+      "median_trace_delta_ms": -23.634542,
+      "median_outside_commands_ms": 3.258418
+    },
+    "upgrade_includes_modern_tapped_casks": {
+      "samples": 3,
+      "median_ms": 213.381,
+      "min_ms": 191.7075,
+      "max_ms": 250.80175,
+      "median_trace_delta_ms": -46.734583,
+      "median_outside_commands_ms": 4.012042
+    },
+    "upgrade_no_flake_changes_skips_commit": {
+      "samples": 3,
+      "median_ms": 153.322334,
+      "min_ms": 130.201459,
+      "max_ms": 170.851333,
+      "median_trace_delta_ms": -18.302126,
+      "median_outside_commands_ms": 3.330249
+    },
+    "upgrade_passthrough_flake_update_args": {
+      "samples": 3,
+      "median_ms": 140.766708,
+      "min_ms": 122.974417,
+      "max_ms": 157.439375,
+      "median_trace_delta_ms": -9.504542,
+      "median_outside_commands_ms": 3.469373
+    },
+    "upgrade_rebuild_failure_exits_nonzero": {
+      "samples": 3,
+      "median_ms": 533.999959,
+      "min_ms": 339.152667,
+      "max_ms": 564.085542,
+      "median_trace_delta_ms": 45.263834,
+      "median_outside_commands_ms": 6.465001
+    },
+    "upgrade_rebuild_hash_mismatch_repairs_and_retries": {
+      "samples": 3,
+      "median_ms": 859.356167,
+      "min_ms": 492.842583,
+      "max_ms": 866.034916,
+      "median_trace_delta_ms": 41.639876,
+      "median_outside_commands_ms": 17.061124
+    },
+    "upgrade_runs_rebuild_when_not_skipped": {
+      "samples": 3,
+      "median_ms": 390.774958,
+      "min_ms": 301.998083,
+      "max_ms": 540.088834,
+      "median_trace_delta_ms": 101.042625,
+      "median_outside_commands_ms": 6.38775
+    },
+    "upgrade_stale_determinate_is_advisory": {
+      "samples": 3,
+      "median_ms": 147.360333,
+      "min_ms": 126.862291,
+      "max_ms": 151.545083,
+      "median_trace_delta_ms": -11.912917,
+      "median_outside_commands_ms": 3.409459
+    },
+    "upgrade_targeted_inputs_skip_brew_by_default": {
+      "samples": 3,
+      "median_ms": 144.268875,
+      "min_ms": 123.892791,
+      "max_ms": 156.861458,
+      "median_trace_delta_ms": -26.832792,
+      "median_outside_commands_ms": 3.353833
+    },
+    "upgrade_transitive_lock_change_commits_lockfile": {
+      "samples": 3,
+      "median_ms": 181.319375,
+      "min_ms": 147.336,
+      "max_ms": 282.1825,
+      "median_trace_delta_ms": 2.429708,
+      "median_outside_commands_ms": 4.047582
+    }
+  },
+  "real_config": {
+    "complete": true,
+    "tracked_content_sha256": "376d44292dc8eddf3fc5f84fa2fcc0a8a9a50201be66a235dc38b2c697ade397",
+    "nix_version": "nix (Determinate Nix 3.23.3) 2.35.3",
+    "operations": {
+      "evaluate": {
+        "samples_seconds": [
+          12.768240292,
+          13.756334167,
+          17.550183209
+        ],
+        "median_seconds": 13.756334167,
+        "observed_download_starts": 0
+      },
+      "plan": {
+        "samples_seconds": [
+          0.141422875,
+          0.289918209,
+          0.343093042
+        ],
+        "median_seconds": 0.289918209,
+        "observed_download_starts": 0
+      },
+      "check": {
+        "samples_seconds": [
+          0.1316915,
+          0.12915375,
+          0.128164083
+        ],
+        "median_seconds": 0.12915375,
+        "observed_download_starts": 0
+      },
+      "plan-without-eval-cache": {
+        "samples_seconds": [
+          11.281746042,
+          11.1415435,
+          13.808022917
+        ],
+        "median_seconds": 11.281746042,
+        "observed_download_starts": 0
+      }
+    }
+  },
+  "refresh": [
+    {
+      "wall_seconds": 10.01823325,
+      "code": 0,
+      "lock_before": "f4a5a24ea3a24634",
+      "lock_after": "f4a5a24ea3a24634",
+      "phases": [
+        {
+          "name": "determinate-check",
+          "duration_ms": 1136,
+          "status": "ok"
+        },
+        {
+          "name": "flake-update",
+          "duration_ms": 8759,
+          "status": "ok"
+        },
+        {
+          "name": "flake-summary",
+          "duration_ms": 3,
+          "status": "ok"
+        }
+      ]
+    },
+    {
+      "wall_seconds": 9.454502958,
+      "code": 0,
+      "lock_before": "f4a5a24ea3a24634",
+      "lock_after": "f4a5a24ea3a24634",
+      "phases": [
+        {
+          "name": "determinate-check",
+          "duration_ms": 729,
+          "status": "ok"
+        },
+        {
+          "name": "flake-update",
+          "duration_ms": 8557,
+          "status": "ok"
+        },
+        {
+          "name": "flake-summary",
+          "duration_ms": 0,
+          "status": "ok"
+        }
+      ]
+    },
+    {
+      "wall_seconds": 13.087829459,
+      "code": 0,
+      "lock_before": "f4a5a24ea3a24634",
+      "lock_after": "f4a5a24ea3a24634",
+      "phases": [
+        {
+          "name": "determinate-check",
+          "duration_ms": 795,
+          "status": "ok"
+        },
+        {
+          "name": "flake-update",
+          "duration_ms": 11893,
+          "status": "ok"
+        },
+        {
+          "name": "flake-summary",
+          "duration_ms": 0,
+          "status": "ok"
+        }
+      ]
+    }
+  ],
+  "brew_inspection_seconds": [
+    1.824847875,
+    1.038113375,
+    0.992845417
+  ],
+  "user_failed_upgrade": {
+    "command": "upgrade",
+    "status": "failed",
+    "exit_code": 1,
+    "repo_head": "07c3bda072ff35b5be72eee6f2013376e45a5337",
+    "repo_root": null,
+    "flake_lock_hash": "fe59b1b4d58e9379",
+    "flake_lock_hash_after": "f4a5a24ea3a24634",
+    "nx_version": "1.5.42",
+    "started_at_ms": 1792388774678,
+    "total_ms": 191463,
+    "phases": [
+      {
+        "name": "determinate-check",
+        "duration_ms": 5968,
+        "status": "ok"
+      },
+      {
+        "name": "flake-update",
+        "duration_ms": 15548,
+        "status": "ok"
+      },
+      {
+        "name": "cache-preflight",
+        "duration_ms": 94113,
+        "status": "ok"
+      },
+      {
+        "name": "flake-summary",
+        "duration_ms": 8082,
+        "status": "ok"
+      },
+      {
+        "name": "homebrew-upgrade",
+        "duration_ms": 9540,
+        "status": "ok"
+      },
+      {
+        "name": "rebuild",
+        "duration_ms": 58194,
+        "status": "failed",
+        "children": [
+          {
+            "name": "git-preflight",
+            "duration_ms": 11,
+            "status": "ok"
+          },
+          {
+            "name": "flake-check",
+            "duration_ms": 1294,
+            "status": "ok"
+          },
+          {
+            "name": "activation",
+            "duration_ms": 56887,
+            "status": "failed"
+          }
+        ]
+      }
+    ]
+  },
+  "user_successful_retry": {
+    "command": "upgrade",
+    "status": "ok",
+    "exit_code": 0,
+    "repo_head": "07c3bda072ff35b5be72eee6f2013376e45a5337",
+    "repo_root": "/Users/morgan/.nix-config",
+    "flake_lock_hash": "f4a5a24ea3a24634",
+    "flake_lock_hash_after": "f4a5a24ea3a24634",
+    "nx_version": "1.5.43",
+    "started_at_ms": 1792389057054,
+    "total_ms": 63422,
+    "phases": [
+      {
+        "name": "determinate-check",
+        "duration_ms": 651,
+        "status": "ok"
+      },
+      {
+        "name": "flake-update",
+        "duration_ms": 9996,
+        "status": "ok"
+      },
+      {
+        "name": "cache-preflight",
+        "duration_ms": 20523,
+        "status": "ok"
+      },
+      {
+        "name": "flake-summary",
+        "duration_ms": 0,
+        "status": "ok"
+      },
+      {
+        "name": "homebrew-upgrade",
+        "duration_ms": 14754,
+        "status": "ok"
+      },
+      {
+        "name": "rebuild",
+        "duration_ms": 17484,
+        "status": "ok",
+        "children": [
+          {
+            "name": "git-preflight",
+            "duration_ms": 8,
+            "status": "ok"
+          },
+          {
+            "name": "flake-check",
+            "duration_ms": 74,
+            "status": "ok"
+          },
+          {
+            "name": "activation",
+            "duration_ms": 17401,
+            "status": "ok"
+          }
+        ]
+      }
+    ]
+  },
+  "minimal_bundle_check": {
+    "obsolete": {
+      "code": 1,
+      "seconds": 1.587684000027366
+    },
+    "fixed": {
+      "code": 0,
+      "seconds": 0.8805598340695724
+    }
+  }
+}

@@ -22,11 +22,13 @@ conditions; their totals are not an A/B comparison.
 | 7 | Produce the final observed-change receipt (`nx-rs-7q2c`) and distinguish partial activation from complete success. | The failed run installed the new nx profile before Brewfile activation failed. The retry really upgraded four casks and completed activation, although the lockfile did not change. A Git commit summary alone cannot describe either outcome. Reuse observed versions/profile deltas; avoid more remote enrichment. | Medium; user-visible correctness need verified, not a speed optimization. |
 
 The Vercel declaration repair is complete in the active working tree and was
-adopted by the user's successful retry. Its isolated two-file commit is
-`de8d624`, published in [nix-config PR #1](https://github.com/flowerornament/nix-config/pull/1).
-The PR excludes the configuration's preexisting unpublished commits and unrelated
-working changes. It remains a draft; canonical config integration is separate
-from the observed successful activation.
+adopted by the user's successful retry. An isolated two-file commit,
+`de8d624`, was published in [nix-config PR #1](https://github.com/flowerornament/nix-config/pull/1),
+excluding the configuration's preexisting unpublished commits and unrelated
+working changes. During this investigation the config's other active writer
+independently committed the same repair as `7220cd7` and published it on `main`.
+The duplicate PR was then closed. Both local and remote config `main` were
+verified at `dd6cdbc637541401afccf6a5f12bbbb1cf69a577`, containing that repair.
 
 ## What to leave alone for now
 

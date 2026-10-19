@@ -591,6 +591,15 @@ An already-current system is distinguished from an activation.
 - Set `NX_PROFILE_PATH` to read/write a different timing file.
 - Use `--json` for machine-readable records.
 
+For routine traces, set `programs.nx.tracing.directory` in Home Manager, or
+`NX_TRACE_DIR` to an absolute directory. Each command gets a unique private file.
+Managed traces retain the newest 20 files, with an 8 MiB limit per file; configure
+`tracing.maxFiles`/`tracing.maxBytes` or `NX_TRACE_KEEP`/`NX_TRACE_MAX_BYTES`.
+Active files and explicitly named traces are preserved. Limits warn and mark a
+trace incomplete without changing the command's result. `NX_TRACE_PATH` takes
+precedence and retains its exclusive-file behavior. Timing records link to their
+trace and include start/end load averages and available CPU count.
+
 Upgrade records cover the version check, flake update, cache admission, summaries,
 Homebrew, rebuild, and commit. Rebuild phases are nested inside the upgrade;
 early failures still produce a record. Records include the Nx version and lock
@@ -675,6 +684,10 @@ Runs the upgrade flow for either the whole repo or named flake inputs.
 - `nx upgrade` with no positional inputs runs the full repo-wide flow: flake
   update, binary cache admission, Homebrew update/upgrade, rebuild, and git
   commit.
+- `nx upgrade --brew-only` upgrades Homebrew and rebuilds with current Nix inputs,
+  avoiding flake refresh, admission and input summaries. Add `--skip-rebuild` for
+  Homebrew alone. It cannot be combined with input names, Nix passthrough,
+  `--skip-brew` or `--allow-source-builds`.
 - Homebrew upgrades include formulae and versioned self-updating casks. Use
   `--greedy` to also check casks whose version is `latest`; these can be reinstalled
   when Homebrew cannot compare installed and current versions. Pins are respected.

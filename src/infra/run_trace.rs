@@ -2,7 +2,7 @@
 //! Phase context is explicitly propagated to workers, never inferred from timing.
 
 use std::cell::Cell;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
+
+mod storage;
 
 static SINK: Mutex<Option<Sink>> = Mutex::new(None);
 static ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -20,6 +22,10 @@ struct Sink {
     started: Instant,
     next_id: u64,
     failed: bool,
+    path: std::path::PathBuf,
+    max_bytes: Option<usize>,
+    written: usize,
+    retention: Option<storage::Retention>,
 }
 
 #[derive(Serialize)]
@@ -61,11 +67,25 @@ fn emit_data(
             code,
             data,
         };
-        if serde_json::to_writer(&mut sink.file, &row).is_err()
-            || sink.file.write_all(b"\n").is_err()
-        {
+        let Ok(mut bytes) = serde_json::to_vec(&row) else {
+            sink.failed = true;
+            return;
+        };
+        bytes.push(b'\n');
+        let reserve = if event == "run-end" { 0 } else { 1024 };
+        if sink.max_bytes.is_some_and(|limit| {
+            sink.written
+                .saturating_add(bytes.len())
+                .saturating_add(reserve)
+                > limit
+        }) {
+            sink.failed = true;
+            return;
+        }
+        if sink.file.write_all(&bytes).is_err() {
             sink.failed = true;
         }
+        sink.written = sink.written.saturating_add(bytes.len());
     }
 }
 
@@ -75,21 +95,26 @@ pub(crate) struct Run {
 
 impl Run {
     pub(crate) fn from_env() -> Option<Self> {
-        let path = std::env::var_os("NX_TRACE_PATH")?;
-        let file = match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(file) => file,
+        let output = match storage::from_env() {
+            Ok(Some(output)) => output,
+            Ok(None) => return None,
             Err(error) => {
-                eprintln!("Could not create NX_TRACE_PATH: {error}");
+                eprintln!("Could not create NX_TRACE_PATH or NX_TRACE_DIR trace: {error:#}");
                 return None;
             }
         };
+        let managed = output.retention.is_some();
         *SINK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Sink {
-            file,
+            file: output.file,
             started: Instant::now(),
             next_id: 1,
             failed: false,
+            path: output.path,
+            max_bytes: output.max_bytes,
+            written: 0,
+            retention: output.retention,
         });
         PARENT.set(Some(0));
         ACTIVE.store(true, Ordering::Relaxed);
@@ -104,7 +129,7 @@ impl Run {
             &format!("nx {} epoch_ms={epoch}", env!("CARGO_PKG_VERSION")),
             None,
             Some(
-                serde_json::json!({ "binary_path": std::env::current_exe().ok(), "terminal_available": crate::infra::shell::terminal_stdio_available() }),
+                serde_json::json!({ "binary_path": std::env::current_exe().ok(), "terminal_available": crate::infra::shell::terminal_stdio_available(), "managed": managed }),
             ),
         );
         Some(Self { finished: false })
@@ -139,12 +164,23 @@ impl Drop for Run {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
-        if let Some(mut sink) = sink
-            && (sink.file.flush().is_err() || sink.failed)
-        {
-            eprintln!("NX_TRACE_PATH write failed; trace is incomplete");
+        if let Some(mut sink) = sink {
+            if sink.file.flush().is_err() || sink.failed {
+                eprintln!("Nx trace write failed or size limit reached; trace is incomplete");
+            }
+            let retention = sink.retention.take();
+            drop(sink);
+            if let Some(retention) = retention
+                && let Err(error) = retention.prune()
+            {
+                eprintln!("Could not prune nx traces: {error:#}");
+            }
         }
     }
+}
+
+pub(crate) fn path() -> Option<std::path::PathBuf> {
+    SINK.lock().ok()?.as_ref().map(|sink| sink.path.clone())
 }
 
 pub(crate) struct Span {

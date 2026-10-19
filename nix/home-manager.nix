@@ -17,6 +17,11 @@ let
     // lib.optionalAttrs (cfg.timings.path != null) {
       NX_PROFILE_PATH = cfg.timings.path;
     }
+    // lib.optionalAttrs (cfg.tracing.directory != null) {
+      NX_TRACE_DIR = cfg.tracing.directory;
+      NX_TRACE_KEEP = toString cfg.tracing.maxFiles;
+      NX_TRACE_MAX_BYTES = toString cfg.tracing.maxBytes;
+    }
     // lib.optionalAttrs (!cfg.autoRefresh) {
       NX_RS_AUTO_REFRESH = "0";
     }
@@ -56,6 +61,25 @@ in
         `$XDG_STATE_HOME/nx/timings.jsonl`, or
         `~/.local/state/nx/timings.jsonl` if XDG_STATE_HOME is unset or relative.
       '';
+    };
+
+    tracing = {
+      directory = lib.mkOption {
+        type = lib.types.nullOr (lib.types.addCheck lib.types.str (value: lib.hasPrefix "/" value));
+        default = null;
+        example = "${config.home.homeDirectory}/.local/state/nx/traces";
+        description = "Optional directory for unique, private per-command traces. Explicit NX_TRACE_PATH takes precedence.";
+      };
+      maxFiles = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 20;
+        description = "Maximum managed traces retained after completed runs; active and explicitly named files are preserved.";
+      };
+      maxBytes = lib.mkOption {
+        type = lib.types.addCheck lib.types.ints.positive (value: value >= 4096);
+        default = 8 * 1024 * 1024;
+        description = "Maximum bytes per managed trace. Size-limited traces are marked incomplete and warn without changing command results.";
+      };
     };
 
     autoRefresh = lib.mkOption {

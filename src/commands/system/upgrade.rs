@@ -61,10 +61,12 @@ fn run_upgrade(args: &UpgradeArgs, ctx: &AppContext, timing: &mut TimingSession)
         return 2;
     }
 
-    let _ = timing.measure("determinate-check", || {
-        check_determinate_version(args, ctx);
-        Ok(())
-    });
+    if !args.brew_only() {
+        let _ = timing.measure("determinate-check", || {
+            check_determinate_version(args, ctx);
+            Ok(())
+        });
+    }
 
     if upgrade_requires_manifest_system_safety(args)
         && let Err(code) = ctx.require_manifest_system_safe("upgrade")
@@ -243,6 +245,23 @@ fn prepare_flake_update(
     ctx: &AppContext,
     timing: &mut TimingSession,
 ) -> Result<PreparedFlakeUpdate, i32> {
+    if args.brew_only() {
+        let lock = if args.dry_run() {
+            None
+        } else {
+            Some(UpgradeLock::acquire(&ctx.repo_root).map_err(|error| {
+                ctx.printer
+                    .error(&format!("Could not lock upgrade: {error:#}"));
+                1
+            })?)
+        };
+        Printer::detail("Homebrew-only upgrade; keeping current Nix inputs");
+        return Ok(PreparedFlakeUpdate {
+            lock_changed: false,
+            root_inputs: RootInputChanges::default(),
+            _lock: lock,
+        });
+    }
     if args.dry_run() {
         let inputs = load_flake_lock(&ctx.repo_root).map_err(|err| {
             ctx.printer

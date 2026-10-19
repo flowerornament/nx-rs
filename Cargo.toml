@@ -25,8 +25,9 @@ claude-codes = { version = "2.1.52", default-features = false, features = ["type
 uuid = { version = "1", features = ["v4"] }
 clap_complete = "4.6.0"
 rustix-openpty = "0.2.0"
-rustix = { version = "1.1.4", features = ["fs", "std", "stdio", "termios"] }
+rustix = { version = "1.1.4", features = ["fs", "process", "std", "stdio", "termios"] }
 tempfile = "3.27.0"
+sysinfo = { version = "0.38.4", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 insta = { version = "1.46.3", features = ["json"] }

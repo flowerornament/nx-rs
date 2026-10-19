@@ -820,6 +820,13 @@ pub struct UpgradeArgs {
     pub passthrough: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpgradeScope {
+    Full,
+    Inputs,
+    Homebrew,
+}
+
 impl UpgradeArgs {
     #[must_use]
     pub const fn dry_run(&self) -> bool {
@@ -855,10 +862,29 @@ impl UpgradeArgs {
     pub fn should_run_brew_phase(&self) -> bool {
         !self.skip_brew() && !self.has_targets()
     }
+
+    #[must_use]
+    pub fn brew_only(&self) -> bool {
+        self.scope() == UpgradeScope::Homebrew
+    }
+
+    #[must_use]
+    pub fn scope(&self) -> UpgradeScope {
+        if self.flow.brew_only {
+            UpgradeScope::Homebrew
+        } else if self.has_targets() {
+            UpgradeScope::Inputs
+        } else {
+            UpgradeScope::Full
+        }
+    }
 }
 
 #[derive(Debug, Clone, Args, Default)]
+#[allow(clippy::struct_excessive_bools)] // Independent command-line switches.
 pub struct UpgradeFlowArgs {
+    #[arg(long, conflicts_with_all = ["targets", "passthrough", "skip_brew", "allow_source_builds"], help = "Upgrade Homebrew and rebuild with current Nix inputs")]
+    pub brew_only: bool,
     #[arg(
         long,
         short = 'n',
@@ -1715,6 +1741,7 @@ mod tests {
             "yes",
             "allow-source-builds",
             "greedy",
+            "brew-only",
         ]
         .into_iter()
         .map(str::to_owned)
@@ -1728,6 +1755,24 @@ mod tests {
         assert_eq!(
             declared_short_flags_for_subcommand("upgrade"),
             expected_shorts
+        );
+    }
+
+    #[test]
+    fn brew_only_rejects_ambiguous_update_scopes() {
+        for extra in [
+            vec!["nx-rs"],
+            vec!["--skip-brew"],
+            vec!["--", "--refresh"],
+            vec!["--allow-source-builds"],
+        ] {
+            let mut args = vec!["nx", "upgrade", "--brew-only"];
+            args.extend(extra);
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+        assert!(
+            Cli::try_parse_from(["nx", "upgrade", "--brew-only", "--skip-rebuild", "--greedy"])
+                .is_ok()
         );
     }
 

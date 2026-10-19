@@ -86,6 +86,7 @@ let
         programs.nx.repoRoot = "/tmp/nix-config";
         programs.nx.autoRefresh = false;
         programs.nx.timings.path = "/tmp/nx-state/timings.jsonl";
+        programs.nx.tracing = { directory = "/tmp/nx-state/traces"; maxFiles = 3; maxBytes = 4096; };
         programs.nx.sops.package = pkgs.sops;
         programs.nx.sops.bin = "/run/current-system/sw/bin/sops";
         programs.nx.cleanCaches.codeRoots = [ "/tmp/code" "/Volumes/work/code" ];
@@ -141,6 +142,9 @@ in
 {
   packageCount = builtins.length evaluated.config.home.packages;
   timingPath = evaluated.config.home.sessionVariables.NX_PROFILE_PATH or null;
+  traceDirectory = evaluated.config.home.sessionVariables.NX_TRACE_DIR or null;
+  traceKeep = evaluated.config.home.sessionVariables.NX_TRACE_KEEP or null;
+  traceBytes = evaluated.config.home.sessionVariables.NX_TRACE_MAX_BYTES or null;
   hasRepoRoot = evaluated.config.home.sessionVariables ? NX_REPO_ROOT;
   repoRoot = evaluated.config.home.sessionVariables.NX_REPO_ROOT or null;
   hasAutoRefresh = evaluated.config.home.sessionVariables ? NX_RS_AUTO_REFRESH;
@@ -207,6 +211,10 @@ if configured["timingPath"] != "/tmp/nx-state/timings.jsonl":
     raise SystemExit("configured timing path was not exported")
 if bare["timingPath"] is not None:
     raise SystemExit("bare module overrides the runtime XDG timing default")
+if (configured["traceDirectory"], configured["traceKeep"], configured["traceBytes"]) != ("/tmp/nx-state/traces", "3", "4096"):
+    raise SystemExit("configured trace storage was not exported")
+if bare["traceDirectory"] is not None:
+    raise SystemExit("bare module enables traces without opt-in")
 
 if configured["packageCount"] < 1:
     raise SystemExit("configured case did not add nx to home.packages")

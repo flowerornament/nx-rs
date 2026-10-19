@@ -10,7 +10,14 @@ pub fn run_command_with_optional_stdin(
 ) -> Result<std::process::Output, Box<dyn Error>> {
     // Test commands must opt in explicitly to external timing/trace locations.
     // Preserve overrides supplied by a test; remove inherited user configuration.
-    for key in ["NX_PROFILE_PATH", "NX_TRACE_PATH", "XDG_STATE_HOME"] {
+    for key in [
+        "NX_PROFILE_PATH",
+        "NX_TRACE_PATH",
+        "NX_TRACE_DIR",
+        "NX_TRACE_KEEP",
+        "NX_TRACE_MAX_BYTES",
+        "XDG_STATE_HOME",
+    ] {
         if !command.get_envs().any(|(name, _)| name == key) {
             command.env_remove(key);
         }

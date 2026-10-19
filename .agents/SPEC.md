@@ -125,7 +125,7 @@ Defined at root callback:
   - passthrough args accepted
 - `upgrade`
   - args: `[inputs...]`
-  - options: `--dry-run/-n`, `--verbose/-v`, `--yes/-y`, `--skip-rebuild`, `--skip-commit`, `--skip-brew`, `--no-ai`, `--allow-source-builds`, `--greedy`
+  - options: `--dry-run/-n`, `--verbose/-v`, `--yes/-y`, `--skip-rebuild`, `--skip-commit`, `--skip-brew`, `--no-ai`, `--allow-source-builds`, `--greedy`, `--brew-only`
   - passthrough args accepted
 - `generations`
   - subcommands: `status`, `plan`, `prune`
@@ -585,6 +585,14 @@ Runs the routing lint rules without invoking git, nix, or rebuild commands.
 
 ## 10.5 `upgrade`
 
+`--brew-only` upgrades Homebrew and rebuilds the current Nix inputs. It skips
+Determinate checks, input updates, admission and input summaries. It conflicts
+with input targets, Nix passthrough, `--skip-brew` and `--allow-source-builds`.
+Dry runs only inspect Homebrew; `--skip-rebuild` omits the current-pin rebuild.
+The existing upgrade lock still serializes real operations. It never owns or
+commits an unchanged/preexisting lock edit; existing rebuild hash-repair rules
+still apply to paths repaired by this invocation.
+
 High-level phases:
 
 1. Determinate substrate phase:
@@ -756,6 +764,17 @@ Dry-run behavior:
   the current sections above.
 
 ## Performance observation
+
+- `NX_TRACE_DIR` opts into unique private managed version-1 trace files.
+  `NX_TRACE_PATH` takes precedence and remains exclusive. `NX_TRACE_KEEP`
+  defaults to 20; `NX_TRACE_MAX_BYTES` defaults to 8 MiB and must be at least
+  4096 bytes. Size-limited traces end with `complete: false` and warn, without
+  changing command status. Retention only removes recognized managed regular
+  files, preserves explicit files and active file locks, and prunes on completion.
+  Active concurrent runs can temporarily exceed the retained file count.
+- Additive timing fields `trace_path`, `workload_start` and `workload_end`
+  retain the trace location, load averages and available logical CPU count.
+  Legacy readers ignore these fields and missing historical fields remain valid.
 
 - Upgrade timing covers the complete command flow, including early failures and
   upgrades that skip rebuild. Rebuild is a nested phase; one upgrade writes one

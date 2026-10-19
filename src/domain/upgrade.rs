@@ -28,7 +28,7 @@ pub struct InputChange {
 }
 
 /// Root input changes between two `flake.lock` states.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RootInputChanges {
     pub changed: Vec<InputChange>,
     pub added: Vec<String>,

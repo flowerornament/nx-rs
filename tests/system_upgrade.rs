@@ -876,6 +876,72 @@ const UPGRADE_INVALID_LOCK_CASES: &[UpgradeCase] = &[
 
 const UPGRADE_CASES: &[UpgradeCase] = &[
     UpgradeCase {
+        id: "upgrade_brew_only_rebuilds_current_pin",
+        cli_args: &["upgrade", "--brew-only", "--no-ai"],
+        mode: "success",
+        expected_exit: 0,
+        expected_calls: &[
+            ExpectedCall::new(
+                "brew",
+                EXPECTED_CWD_REPO_ROOT,
+                &["outdated", "--json", "--greedy-auto-updates"],
+            ),
+            ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_PREFLIGHT_ARGS),
+            ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, REBUILD_FLAKE_ARGS),
+            ExpectedCall::new(
+                "sudo",
+                EXPECTED_CWD_REPO_ROOT,
+                &[
+                    DARWIN_REBUILD_CMD,
+                    "switch",
+                    "--flake",
+                    REPO_ROOT_TOKEN,
+                    "--log-format",
+                    "internal-json",
+                ],
+            ),
+            ExpectedCall::new(
+                "darwin-rebuild",
+                EXPECTED_CWD_REPO_ROOT,
+                &[
+                    "switch",
+                    "--flake",
+                    REPO_ROOT_TOKEN,
+                    "--log-format",
+                    "internal-json",
+                ],
+            ),
+        ],
+        stdout_contains: &[
+            "Homebrew-only upgrade; keeping current Nix inputs",
+            "System rebuilt",
+        ],
+    },
+    UpgradeCase {
+        id: "upgrade_brew_only_skips_input_refresh",
+        cli_args: &["upgrade", "--brew-only", "--skip-rebuild", "--no-ai"],
+        mode: "success",
+        expected_exit: 0,
+        expected_calls: &[ExpectedCall::new(
+            "brew",
+            EXPECTED_CWD_REPO_ROOT,
+            &["outdated", "--json", "--greedy-auto-updates"],
+        )],
+        stdout_contains: &["Homebrew-only upgrade; keeping current Nix inputs"],
+    },
+    UpgradeCase {
+        id: "upgrade_brew_only_dry_run_keeps_lock",
+        cli_args: &["upgrade", "--brew-only", "--dry-run", "--no-ai"],
+        mode: "success",
+        expected_exit: 0,
+        expected_calls: &[ExpectedCall::new(
+            "brew",
+            EXPECTED_CWD_REPO_ROOT,
+            &["outdated", "--json", "--greedy-auto-updates"],
+        )],
+        stdout_contains: &["Dry run complete"],
+    },
+    UpgradeCase {
         id: "upgrade_flake_failure_short_circuit",
         cli_args: UPGRADE_FAILURE_ARGS,
         mode: "update_fail",
@@ -1625,6 +1691,15 @@ fn assert_upgrade_timing(path: &Path, exit: i32) -> Result<(), Box<dyn Error>> {
 }
 
 fn expected_upgrade_calls(case: &UpgradeCase) -> Vec<ExpectedCall> {
+    if case.cli_args.contains(&"--brew-only") {
+        return std::iter::once(ExpectedCall::new(
+            "git",
+            EXPECTED_CWD_REPO_ROOT,
+            REBUILD_TIMING_HEAD_ARGS,
+        ))
+        .chain(case.expected_calls.iter().copied())
+        .collect();
+    }
     [
         ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
         NIX_VERSION_CALL,

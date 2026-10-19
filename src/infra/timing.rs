@@ -32,7 +32,7 @@ impl TimingCommand {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TimingRecord {
     pub command: String,
     pub status: String,
@@ -47,7 +47,31 @@ pub struct TimingRecord {
     pub nx_version: Option<String>,
     pub started_at_ms: u128,
     pub total_ms: u128,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workload_start: Option<Workload>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workload_end: Option<Workload>,
     pub phases: Vec<TimingPhase>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Workload {
+    pub logical_cpus: Option<usize>,
+    pub load_average: [f64; 3],
+}
+
+impl Workload {
+    fn observe() -> Self {
+        let load = sysinfo::System::load_average();
+        Self {
+            logical_cpus: std::thread::available_parallelism()
+                .ok()
+                .map(std::num::NonZeroUsize::get),
+            load_average: [load.one, load.five, load.fifteen],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -68,6 +92,7 @@ pub struct TimingSession {
     started: std::time::Instant,
     repo_root: PathBuf,
     phases: Vec<TimingPhase>,
+    workload_start: Workload,
 }
 
 impl TimingSession {
@@ -83,6 +108,7 @@ impl TimingSession {
             started,
             repo_root: repo_root.to_path_buf(),
             phases: Vec::new(),
+            workload_start: Workload::observe(),
         }
     }
 
@@ -180,6 +206,9 @@ impl TimingSession {
             nx_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             started_at_ms: self.started_at_ms,
             total_ms,
+            trace_path: crate::infra::run_trace::path(),
+            workload_start: Some(self.workload_start),
+            workload_end: Some(Workload::observe()),
             phases: self.phases,
         }
     }
@@ -282,6 +311,20 @@ pub fn timing_detail_lines(record: &TimingRecord) -> Vec<String> {
     }
     if let Some(version) = &record.nx_version {
         lines.push(format!("nx: {version}"));
+    }
+    if let Some(workload) = &record.workload_start {
+        let cpus = workload
+            .logical_cpus
+            .map_or_else(|| "unknown".to_string(), |n| n.to_string());
+        let end = record.workload_end.as_ref().map(|w| w.load_average[0]);
+        lines.push(format!(
+            "load (1m): {:.2} → {}; logical CPUs: {cpus}",
+            workload.load_average[0],
+            end.map_or_else(|| "unknown".into(), |load| format!("{load:.2}"))
+        ));
+    }
+    if let Some(path) = &record.trace_path {
+        lines.push(format!("trace: {}", path.display()));
     }
     if record.exit_code != 0 {
         lines.push(format!("exit: {}", record.exit_code));

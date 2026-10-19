@@ -3,6 +3,7 @@
 ## Unreleased
 
 - validates generated Homebrew core declarations before split profile changes and preserves split-build timings when legacy activation is required
+- supports `nx upgrade --brew-only` for Homebrew updates with a current-pin rebuild, plus opt-in bounded routine traces and workload context in timing history
 
 ## v1.5.43 - 2026-10-18
 

@@ -4,6 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 fn sample_upgrade_args() -> UpgradeArgs {
     UpgradeArgs {
         flow: UpgradeFlowArgs {
+            brew_only: false,
             dry_run: false,
             verbose: false,
             no_ai: true,

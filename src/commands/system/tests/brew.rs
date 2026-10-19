@@ -18,7 +18,7 @@ fn brew_parse_extracts_formulae() {
             "casks": []
         }"#;
 
-    let result = parse_brew_outdated_json(json);
+    let result = parse_brew_outdated_json(json).expect("valid Homebrew outdated JSON");
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].name, "git");
     assert_eq!(result[0].installed_version, "2.43.0");
@@ -43,7 +43,7 @@ fn brew_parse_extracts_casks() {
             ]
         }"#;
 
-    let result = parse_brew_outdated_json(json);
+    let result = parse_brew_outdated_json(json).expect("valid Homebrew outdated JSON");
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].name, "firefox");
     assert_eq!(result[0].installed_version, "120.0");
@@ -70,7 +70,7 @@ fn brew_parse_mixed_formulae_and_casks_sorted() {
             ]
         }"#;
 
-    let result = parse_brew_outdated_json(json);
+    let result = parse_brew_outdated_json(json).expect("valid Homebrew outdated JSON");
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].name, "alacritty");
     assert!(result[0].is_cask);
@@ -79,7 +79,7 @@ fn brew_parse_mixed_formulae_and_casks_sorted() {
 }
 
 #[test]
-fn brew_parse_skips_incomplete_entries() {
+fn brew_parse_rejects_incomplete_entries() {
     let json = r#"{
             "formulae": [
                 {
@@ -96,27 +96,25 @@ fn brew_parse_skips_incomplete_entries() {
             "casks": []
         }"#;
 
-    let result = parse_brew_outdated_json(json);
-    assert_eq!(result.len(), 1);
-    assert_eq!(result[0].name, "valid");
+    assert!(parse_brew_outdated_json(json).is_err());
 }
 
 #[test]
-fn brew_parse_invalid_json_returns_empty() {
+fn brew_parse_invalid_json_is_error() {
     let result = parse_brew_outdated_json("not json at all");
-    assert!(result.is_empty());
+    assert!(result.is_err());
 }
 
 #[test]
-fn brew_parse_empty_json_returns_empty() {
+fn brew_parse_missing_lists_is_error() {
     let result = parse_brew_outdated_json("{}");
-    assert!(result.is_empty());
+    assert!(result.is_err());
 }
 
 #[test]
 fn brew_parse_empty_arrays_returns_empty() {
     let json = r#"{"formulae": [], "casks": []}"#;
-    let result = parse_brew_outdated_json(json);
+    let result = parse_brew_outdated_json(json).expect("valid Homebrew outdated JSON");
     assert!(result.is_empty());
 }
 
@@ -190,4 +188,25 @@ fn brew_compare_url_for_github_homepage() {
 fn brew_compare_url_non_github_returns_none() {
     let url = brew_compare_url(Some("https://example.com/project"), "1.0.0", "1.1.0");
     assert!(url.is_none());
+}
+
+#[test]
+fn brew_modern_cask_arrays_and_pins_are_retained() {
+    let rows = parse_brew_outdated_json(r#"{"formulae":[],"casks":[{"name":"hex","installed_versions":["1.0","1.1"],"current_version":"2.0","pinned":true}]}"#).unwrap();
+    assert_eq!(rows[0].installed_version, "1.0, 1.1");
+    assert!(rows[0].pinned);
+    assert!(rows[0].is_cask);
+}
+
+#[test]
+fn observed_homebrew_cask_output_is_not_silently_dropped() {
+    let rows = parse_brew_outdated_json(include_str!(
+        "../../../../tests/fixtures/system/brew-outdated-casks.json"
+    ))
+    .unwrap();
+    assert_eq!(rows.len(), 4);
+    assert!(rows.iter().all(|row| row.is_cask));
+    assert!(rows.iter().any(|row| row.name == "ghostty"
+        && row.installed_version == "1.2.3"
+        && row.current_version == "1.3.1"));
 }

@@ -335,6 +335,20 @@ case "$program" in
     ;;
   brew)
     if [ "${1:-}" = "outdated" ] && [ "${2:-}" = "--json" ]; then
+      if [ "$mode" = "upgrade_brew_query_failure" ]; then
+        echo 'Homebrew query unavailable' >&2
+        exit 1
+      fi
+      if [ "$mode" = "upgrade_brew_invalid_json" ]; then
+        echo 'not JSON'
+        exit 0
+      fi
+      if [ "$mode" = "upgrade_brew_casks" ] || [ "$mode" = "upgrade_brew_failure" ] || [ "$mode" = "upgrade_brew_pinned" ]; then
+        pinned=false
+        if [ "$mode" = "upgrade_brew_pinned" ]; then pinned=true; fi
+        echo "{\"formulae\":[],\"casks\":[{\"name\":\"hex\",\"installed_versions\":[\"1.0\"],\"current_version\":\"2.0\",\"pinned\":$pinned}]}"
+        exit 0
+      fi
       if [ "$mode" = "upgrade_brew_outdated" ]; then
         echo '{"formulae":[{"name":"ripgrep","installed_versions":["14.1.0"],"current_version":"14.1.1"}],"casks":[]}'
         exit 0
@@ -345,6 +359,10 @@ case "$program" in
 
     if [ "${1:-}" = "info" ] && [ "${2:-}" = "--json=v2" ]; then
       if [ "${3:-}" = "--cask" ]; then
+        if [ "$mode" = "upgrade_brew_casks" ] || [ "$mode" = "upgrade_brew_failure" ] || [ "$mode" = "upgrade_brew_pinned" ]; then
+          echo '{"casks":[{"token":"hex","full_token":"anomalyco/tap/hex","homepage":"https://example.invalid/hex","desc":"GUI app"}]}'
+          exit 0
+        fi
         echo '{"casks":[]}'
         exit 0
       fi
@@ -357,6 +375,10 @@ case "$program" in
     fi
 
     if [ "${1:-}" = "upgrade" ]; then
+      if [ "$mode" = "upgrade_brew_failure" ]; then
+        echo 'Cask upgrade failed' >&2
+        exit 1
+      fi
       echo "stub brew upgrade ok"
       exit 0
     fi

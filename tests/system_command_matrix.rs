@@ -98,3 +98,47 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &MatrixCase) -> Result<(), Bo
 
     Ok(())
 }
+
+#[test]
+fn tapped_cask_declaration_lifecycle() -> Result<(), Box<dyn Error>> {
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let binary = resolve_nx_bin(&workspace)?;
+    let repo = TempDir::new()?;
+    let home = TempDir::new()?;
+    copy_tree(
+        &workspace.join("tests/fixtures/system/repo_base"),
+        repo.path(),
+    )?;
+    ensure_test_layout(repo.path())?;
+    let casks = repo.path().join("packages/homebrew/casks.nix");
+    let original = fs::read_to_string(&casks)?;
+    let run = |args: &[&str]| -> Result<std::process::Output, Box<dyn Error>> {
+        let mut command = Command::new(&binary);
+        command
+            .args(["--plain", "--minimal"])
+            .args(args)
+            .current_dir(repo.path())
+            .env("NX_REPO_ROOT", repo.path())
+            .env("HOME", home.path())
+            .env("NX_RS_AUTO_REFRESH", "0");
+        let output = run_command_with_optional_stdin(&mut command, None)?;
+        assert!(
+            output.status.success(),
+            "stdout: {} stderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(output)
+    };
+    run(&["install", "--cask", "anomalyco/tap/hex", "--dry-run"])?;
+    assert_eq!(fs::read_to_string(&casks)?, original);
+    run(&["install", "--cask", "anomalyco/tap/hex", "--yes"])?;
+    let installed = fs::read_to_string(&casks)?;
+    assert!(installed.contains("\"anomalyco/tap/hex\""));
+    run(&["install", "--cask", "anomalyco/tap/hex", "--yes"])?;
+    assert_eq!(fs::read_to_string(&casks)?, installed);
+    run(&["installed", "anomalyco/tap/hex"])?;
+    run(&["remove", "anomalyco/tap/hex", "--yes"])?;
+    assert_eq!(fs::read_to_string(&casks)?, original);
+    Ok(())
+}

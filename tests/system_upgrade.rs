@@ -367,7 +367,11 @@ const UPGRADE_NO_CHANGE_NO_COMMIT_CALLS: &[ExpectedCall] = &[
 const UPGRADE_BREW_NO_UPDATES_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
-    ExpectedCall::new("brew", EXPECTED_CWD_REPO_ROOT, &["outdated", "--json"]),
+    ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &["outdated", "--json", "--greedy-auto-updates"],
+    ),
 ];
 
 const UPGRADE_REBUILD_CALLS: &[ExpectedCall] = &[
@@ -742,21 +746,112 @@ const UPGRADE_HASH_REPAIR_CALLS: &[ExpectedCall] = &[
 const UPGRADE_BREW_WITH_UPDATES_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
     ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
-    ExpectedCall::new("brew", EXPECTED_CWD_REPO_ROOT, &["outdated", "--json"]),
+    ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &["outdated", "--json", "--greedy-auto-updates"],
+    ),
     ExpectedCall::new(
         "brew",
         EXPECTED_CWD_REPO_ROOT,
         &["info", "--json=v2", "ripgrep"],
     ),
-    ExpectedCall::new("brew", EXPECTED_CWD_REPO_ROOT, &["upgrade", "ripgrep"]),
+    ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &["upgrade", "--formula", "ripgrep"],
+    ),
 ];
 
 const UPGRADE_DRY_RUN_BREW_WITH_UPDATES_CALLS: &[ExpectedCall] = &[
-    ExpectedCall::new("brew", EXPECTED_CWD_REPO_ROOT, &["outdated", "--json"]),
+    ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &["outdated", "--json", "--greedy-auto-updates"],
+    ),
     ExpectedCall::new(
         "brew",
         EXPECTED_CWD_REPO_ROOT,
         &["info", "--json=v2", "ripgrep"],
+    ),
+];
+
+const UPGRADE_CASK_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
+    ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &["outdated", "--json", "--greedy-auto-updates"],
+    ),
+    ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &["info", "--json=v2", "--cask", "hex"],
+    ),
+    ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &[
+            "upgrade",
+            "--cask",
+            "--greedy-auto-updates",
+            "anomalyco/tap/hex",
+        ],
+    ),
+];
+const UPGRADE_BREW_QUERY_FAILURE_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
+    ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &["outdated", "--json", "--greedy-auto-updates"],
+    ),
+];
+const UPGRADE_CASK_GREEDY_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
+    ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &["outdated", "--json", "--greedy"],
+    ),
+    ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &["info", "--json=v2", "--cask", "hex"],
+    ),
+    ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &["upgrade", "--cask", "--greedy", "anomalyco/tap/hex"],
+    ),
+];
+const UPGRADE_CASK_DRY_RUN_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &["outdated", "--json", "--greedy-auto-updates"],
+    ),
+    ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &["info", "--json=v2", "--cask", "hex"],
+    ),
+];
+const UPGRADE_CASK_PINNED_CALLS: &[ExpectedCall] = &[
+    ExpectedCall::new("gh", EXPECTED_CWD_REPO_ROOT, GH_AUTH_TOKEN_ARGS),
+    ExpectedCall::new("nix", EXPECTED_CWD_REPO_ROOT, FLAKE_UPDATE_ARGS),
+    ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &["outdated", "--json", "--greedy-auto-updates"],
+    ),
+    ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &["info", "--json=v2", "--cask", "hex"],
     ),
 ];
 
@@ -995,7 +1090,72 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
         mode: "success",
         expected_exit: 0,
         expected_calls: UPGRADE_BREW_NO_UPDATES_CALLS,
-        stdout_contains: &["All Homebrew packages up to date"],
+        stdout_contains: &["No eligible Homebrew updates found"],
+    },
+    UpgradeCase {
+        id: "upgrade_cask_greedy_is_explicit",
+        cli_args: &[
+            "upgrade",
+            "--skip-rebuild",
+            "--skip-commit",
+            "--no-ai",
+            "--greedy",
+        ],
+        mode: "upgrade_brew_casks",
+        expected_exit: 0,
+        expected_calls: UPGRADE_CASK_GREEDY_CALLS,
+        stdout_contains: &["latest-version casks", "Homebrew packages upgraded"],
+    },
+    UpgradeCase {
+        id: "upgrade_cask_dry_run_never_installs",
+        cli_args: UPGRADE_DRY_RUN_BREW_ARGS,
+        mode: "upgrade_brew_casks",
+        expected_exit: 0,
+        expected_calls: UPGRADE_CASK_DRY_RUN_CALLS,
+        stdout_contains: &["anomalyco/tap/hex"],
+    },
+    UpgradeCase {
+        id: "upgrade_includes_modern_tapped_casks",
+        cli_args: UPGRADE_BREW_ARGS,
+        mode: "upgrade_brew_casks",
+        expected_exit: 0,
+        expected_calls: UPGRADE_CASK_CALLS,
+        stdout_contains: &["anomalyco/tap/hex", "Homebrew packages upgraded"],
+    },
+    UpgradeCase {
+        id: "upgrade_cask_failure_is_not_success",
+        cli_args: UPGRADE_BREW_ARGS,
+        mode: "upgrade_brew_failure",
+        expected_exit: 1,
+        expected_calls: UPGRADE_CASK_CALLS,
+        stdout_contains: &["Some Homebrew upgrades failed"],
+    },
+    UpgradeCase {
+        id: "upgrade_brew_query_failure_is_not_up_to_date",
+        cli_args: UPGRADE_BREW_ARGS,
+        mode: "upgrade_brew_query_failure",
+        expected_exit: 1,
+        expected_calls: UPGRADE_BREW_QUERY_FAILURE_CALLS,
+        stdout_contains: &["Could not check Homebrew updates"],
+    },
+    UpgradeCase {
+        id: "upgrade_brew_invalid_json_is_not_up_to_date",
+        cli_args: UPGRADE_BREW_ARGS,
+        mode: "upgrade_brew_invalid_json",
+        expected_exit: 1,
+        expected_calls: UPGRADE_BREW_QUERY_FAILURE_CALLS,
+        stdout_contains: &["Could not check Homebrew updates"],
+    },
+    UpgradeCase {
+        id: "upgrade_brew_respects_cask_pins",
+        cli_args: UPGRADE_BREW_ARGS,
+        mode: "upgrade_brew_pinned",
+        expected_exit: 0,
+        expected_calls: UPGRADE_CASK_PINNED_CALLS,
+        stdout_contains: &[
+            "Pinned; left unchanged",
+            "All outdated Homebrew packages are pinned",
+        ],
     },
     UpgradeCase {
         id: "upgrade_brew_with_updates_runs_upgrade",
@@ -1267,8 +1427,8 @@ fn run_case_with_extra_env(
     assert_invocations(case.id, repo_root.path(), &invocations, &expected_calls);
     for expected in case.stdout_contains {
         assert!(
-            stdout.contains(expected),
-            "case {}: stdout missing expected fragment '{}'\nstdout:\n{}\nstderr:\n{}",
+            stdout.contains(expected) || stderr.contains(expected),
+            "case {}: output missing expected fragment '{}'\nstdout:\n{}\nstderr:\n{}",
             case.id,
             expected,
             stdout,

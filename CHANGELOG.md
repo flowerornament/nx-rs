@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- preserves tap-qualified Homebrew identities and explains direct cask installation, configuration application, and removal
+- includes versioned self-updating casks in upgrades, supports `--greedy` for latest-version casks, respects pins, and reports Homebrew query or upgrade failures
+- propagates requested install rebuild failures and reapplies activation to restore missing apps even when the Nix system path is unchanged; `nx rebuild --force-activation` exposes this repair directly
+- describes install source lookups and shows elapsed time in loading indicators
+
 ## v1.5.42 - 2026-10-11
 
 - records complete upgrade stage timings automatically, including failed runs, with Nix configuration lock identity and nx version; `nx profile` reads rebuild and upgrade history

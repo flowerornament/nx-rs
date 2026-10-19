@@ -184,6 +184,15 @@ fn report_success(package: &str, file_path: &Path, ctx: &AppContext) {
     println!();
     ctx.printer
         .removal(&format!("{package} removed from {file_name}"));
+    if let (Ok(file), Ok(casks)) = (
+        fs::canonicalize(file_path),
+        fs::canonicalize(ctx.config_files.homebrew_casks()),
+    ) && file == casks
+    {
+        Printer::detail(
+            "Run nx rebuild to apply your Homebrew cleanup policy; removing a declaration does not itself uninstall the app.",
+        );
+    }
 }
 
 fn remove_line_directly(file_path: &Path, line_num: usize) -> anyhow::Result<()> {

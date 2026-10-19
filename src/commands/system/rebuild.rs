@@ -564,7 +564,7 @@ fn do_rebuild_once(
     output_mode: RebuildOutputMode,
 ) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>, RebuildOutcome)> {
     if should_use_split_darwin(args, manifest) {
-        match do_split_darwin_rebuild(ctx, repo, use_sudo, output_mode) {
+        match do_split_darwin_rebuild(ctx, repo, use_sudo, output_mode, args.force_activation) {
             SplitDarwinResult::Handled(result) => return result,
             SplitDarwinResult::Fallback(rebuild_command_override) => {
                 ctx.printer.action("Running darwin-rebuild switch");
@@ -654,6 +654,7 @@ fn do_split_darwin_rebuild(
     repo: &str,
     use_sudo: bool,
     output_mode: RebuildOutputMode,
+    force_activation: bool,
 ) -> SplitDarwinResult {
     let Some(host) = darwin_host(ctx) else {
         ctx.printer
@@ -686,7 +687,7 @@ fn do_split_darwin_rebuild(
         };
     phases.push(compare_phase);
 
-    if current_system.as_deref() == Some(system_config.as_str()) {
+    if !force_activation && current_system.as_deref() == Some(system_config.as_str()) {
         phases.push(ok_phase("already-current", 0));
         return SplitDarwinResult::Handled(Ok((
             CapturedCommand::captured(0, String::new(), String::new()),

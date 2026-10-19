@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Result, bail};
 
 use super::config::ConfigFiles;
-use super::source::{PackageSource, SourceResult, detect_language_package};
+use super::source::{PackageSource, SourceResult, detect_language_package, is_tap_qualified};
 
 // --- Types
 
@@ -179,6 +179,11 @@ pub fn is_mcp_tool(name: &str) -> bool {
 ///
 /// Prefers `attr` (the resolved nix attribute) over the search `name`.
 fn install_name(sr: &SourceResult) -> String {
+    if matches!(sr.source, PackageSource::Homebrew | PackageSource::Cask)
+        && is_tap_qualified(&sr.name)
+    {
+        return sr.name.clone();
+    }
     sr.attr.clone().unwrap_or_else(|| sr.name.clone())
 }
 
@@ -485,5 +490,19 @@ mod tests {
                 .any(|p| p.ends_with("packages/nix/languages.nix"))
         );
         assert!(candidates.iter().all(|p| p.extension().unwrap() == "nix"));
+    }
+}
+
+#[cfg(test)]
+mod tapped_tests {
+    use super::*;
+
+    #[test]
+    fn cached_short_names_do_not_override_explicit_taps() {
+        for source in [PackageSource::Cask, PackageSource::Homebrew] {
+            let mut result = SourceResult::new("anomalyco/tap/hex", source);
+            result.attr = Some("hex".into());
+            assert_eq!(install_name(&result), "anomalyco/tap/hex");
+        }
     }
 }

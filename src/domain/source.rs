@@ -65,6 +65,34 @@ impl PackageSource {
     }
 }
 
+/// A Homebrew tap-qualified package is owner/repository/package.
+pub fn is_tap_qualified(name: &str) -> bool {
+    !name.contains(':')
+        && name.split('/').count() == 3
+        && name.split('/').all(|part| !part.is_empty())
+}
+
+/// Preserve an explicit tap; otherwise prefer Homebrew's canonical full identity.
+pub fn homebrew_package_name<'a>(requested: &'a str, entry: &'a Value, is_cask: bool) -> &'a str {
+    if is_tap_qualified(requested) {
+        return requested;
+    }
+    let (full, short) = if is_cask {
+        ("full_token", "token")
+    } else {
+        ("full_name", "name")
+    };
+    [full, short]
+        .into_iter()
+        .find_map(|key| {
+            entry
+                .get(key)
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+        })
+        .unwrap_or(requested)
+}
+
 /// Result from searching a package source.
 #[derive(Debug, Clone)]
 pub struct SourceResult {

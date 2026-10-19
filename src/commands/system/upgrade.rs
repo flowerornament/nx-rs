@@ -8,6 +8,7 @@ use rustix::fs::{FlockOperation, flock};
 
 use crate::cli::{RebuildArgs, UpgradeArgs};
 use crate::commands::context::AppContext;
+use crate::domain::source::homebrew_package_name;
 use crate::domain::upgrade::{
     FlakeLockInput, InputChange, RootInputChanges, build_flake_update_args, diff_root_inputs,
     github_owner_repo, load_flake_lock, parse_flake_lock_content, short_rev,
@@ -78,11 +79,10 @@ fn run_upgrade(args: &UpgradeArgs, ctx: &AppContext, timing: &mut TimingSession)
     };
 
     // Phase 2: Brew, after the candidate system is admitted
-    if args.should_run_brew_phase() {
-        let _ = timing.measure("homebrew-upgrade", || {
-            run_brew_phase(args, ctx);
-            Ok(())
-        });
+    if args.should_run_brew_phase()
+        && let Err(code) = timing.measure("homebrew-upgrade", || run_brew_phase(args, ctx))
+    {
+        return code;
     }
 
     if args.dry_run() {
@@ -805,18 +805,28 @@ fn brew_compare_endpoint(package: &BrewOutdatedPackage) -> Option<String> {
 }
 
 /// Brew phase: check outdated packages, display, and upgrade.
-fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
+fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<(), i32> {
     ctx.printer.action("Checking Homebrew updates");
 
     let outdated = ctx
         .printer
         .with_loading("Querying Homebrew outdated packages", |_| {
-            enrich_brew_outdated(brew_outdated())
+            brew_outdated(args.greedy).map(enrich_brew_outdated)
         });
+    let outdated = outdated.map_err(|error| {
+        ctx.printer
+            .error(&format!("Could not check Homebrew updates: {error}"));
+        1
+    })?;
+    Printer::detail(if args.greedy {
+        "Includes self-updating and latest-version casks; pinned packages are left unchanged."
+    } else {
+        "Includes versioned self-updating casks; latest-version casks require --greedy."
+    });
 
     if outdated.is_empty() {
-        ctx.printer.success("All Homebrew packages up to date");
-        return;
+        ctx.printer.success("No eligible Homebrew updates found");
+        return Ok(());
     }
 
     Printer::heading(&format!("Homebrew Outdated ({})", outdated.len()));
@@ -833,6 +843,9 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
     for (package, enrichment) in &enriched {
         println!();
         Printer::body(&package.name);
+        if package.pinned {
+            Printer::sub_detail("Pinned; left unchanged");
+        }
         Printer::sub_detail(&format!(
             "{} \u{2192} {}",
             package.installed_version, package.current_version
@@ -854,38 +867,71 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) {
     }
 
     if args.dry_run() {
-        return;
+        return Ok(());
     }
 
+    let upgrade_count = outdated.iter().filter(|package| !package.pinned).count();
+    if upgrade_count == 0 {
+        ctx.printer
+            .success("All outdated Homebrew packages are pinned; left unchanged");
+        return Ok(());
+    }
     ctx.printer
-        .action(&format!("Upgrading {} Homebrew packages", outdated.len()));
+        .action(&format!("Upgrading {upgrade_count} Homebrew packages"));
     println!();
 
-    let mut upgrade_args = vec!["upgrade"];
-    upgrade_args.extend(outdated.iter().map(|package| package.name.as_str()));
-    let code = match run_indented_command("brew", &upgrade_args, None, &ctx.printer, "  ") {
-        Ok(code) => code,
-        Err(err) => {
-            ctx.printer.error(&format!("{err:#}"));
-            return;
+    let mut failed = false;
+    for is_cask in [false, true] {
+        let names = outdated
+            .iter()
+            .filter(|package| package.is_cask == is_cask && !package.pinned)
+            .map(|package| package.name.as_str())
+            .collect::<Vec<_>>();
+        if names.is_empty() {
+            continue;
         }
-    };
-
+        let mut upgrade_args = vec!["upgrade", if is_cask { "--cask" } else { "--formula" }];
+        if is_cask {
+            upgrade_args.push(if args.greedy {
+                "--greedy"
+            } else {
+                "--greedy-auto-updates"
+            });
+        }
+        upgrade_args.extend(names);
+        match run_indented_command("brew", &upgrade_args, None, &ctx.printer, "  ") {
+            Ok(0) => {}
+            Ok(_) => failed = true,
+            Err(error) => {
+                ctx.printer
+                    .error(&format!("Homebrew upgrade failed: {error:#}"));
+                failed = true;
+            }
+        }
+    }
     println!();
-    if code == 0 {
-        ctx.printer.success("Homebrew packages upgraded");
+    if failed {
+        ctx.printer.error("Some Homebrew upgrades failed");
+        Err(1)
     } else {
-        ctx.printer.warn("Some Homebrew upgrades may have failed");
+        ctx.printer.success("Homebrew packages upgraded");
+        Ok(())
     }
 }
 
-/// Fetch outdated brew packages via `brew outdated --json`.
-fn brew_outdated() -> Vec<BrewOutdatedPackage> {
-    let output = match run_captured_command("brew", &["outdated", "--json"], None) {
-        Ok(cmd) if cmd.code == 0 => cmd.stdout,
-        _ => return Vec::new(),
+/// Include versioned self-updating casks, without reinstalling latest-version apps by default.
+fn brew_outdated(greedy: bool) -> Result<Vec<BrewOutdatedPackage>, String> {
+    let policy = if greedy {
+        "--greedy"
+    } else {
+        "--greedy-auto-updates"
     };
-    parse_brew_outdated_json(&output)
+    let output = run_captured_command("brew", &["outdated", "--json", policy], None)
+        .map_err(|error| error.to_string())?;
+    if output.code != 0 {
+        return Err(first_nonempty_output(&output).to_string());
+    }
+    parse_brew_outdated_json(&output.stdout)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -894,6 +940,7 @@ pub(super) struct BrewOutdatedPackage {
     pub(super) installed_version: String,
     pub(super) current_version: String,
     pub(super) is_cask: bool,
+    pub(super) pinned: bool,
     pub(super) homepage: Option<String>,
     pub(super) description: Option<String>,
     pub(super) changelog_url: Option<String>,
@@ -901,81 +948,69 @@ pub(super) struct BrewOutdatedPackage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct BrewPackageMetadata {
+    pub(super) install_name: String,
     pub(super) homepage: Option<String>,
     pub(super) description: Option<String>,
 }
 
 /// Parse brew outdated JSON into package version tuples with source kind.
-pub(super) fn parse_brew_outdated_json(json_str: &str) -> Vec<BrewOutdatedPackage> {
-    let data: serde_json::Value = match serde_json::from_str(json_str) {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-
+pub(super) fn parse_brew_outdated_json(json_str: &str) -> Result<Vec<BrewOutdatedPackage>, String> {
+    let data: serde_json::Value =
+        serde_json::from_str(json_str).map_err(|error| error.to_string())?;
     let mut results = Vec::new();
-
-    // Formulae
-    if let Some(formulae) = data.get("formulae").and_then(|v| v.as_array()) {
-        for formula in formulae {
-            let name = formula
+    for (key, is_cask) in [("formulae", false), ("casks", true)] {
+        let entries = data
+            .get(key)
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("Missing Homebrew {key} list"))?;
+        for entry in entries {
+            let name = entry
                 .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            let installed = formula
+                .and_then(serde_json::Value::as_str)
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| format!("Missing Homebrew {key} package name"))?;
+            let installed = entry
                 .get("installed_versions")
-                .and_then(|v| v.as_array())
-                .and_then(|a| a.first())
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            let current = formula
+                .ok_or_else(|| format!("Missing installed versions for {name}"))?;
+            let installed = if let Some(version) = installed.as_str() {
+                version.to_string()
+            } else {
+                installed
+                    .as_array()
+                    .and_then(|versions| {
+                        versions
+                            .iter()
+                            .map(serde_json::Value::as_str)
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .ok_or_else(|| format!("Invalid installed versions for {name}"))?
+                    .join(", ")
+            };
+            let current = entry
                 .get("current_version")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            if !name.is_empty() && !installed.is_empty() && !current.is_empty() {
-                results.push(BrewOutdatedPackage {
-                    name: name.to_string(),
-                    installed_version: installed.to_string(),
-                    current_version: current.to_string(),
-                    is_cask: false,
-                    homepage: None,
-                    description: None,
-                    changelog_url: None,
-                });
+                .and_then(serde_json::Value::as_str)
+                .filter(|version| !version.is_empty())
+                .ok_or_else(|| format!("Missing current version for {name}"))?;
+            if installed.is_empty() {
+                return Err(format!("Empty installed versions for {name}"));
             }
+            results.push(BrewOutdatedPackage {
+                name: name.to_string(),
+                installed_version: installed,
+                current_version: current.to_string(),
+                is_cask,
+                pinned: entry
+                    .get("pinned")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                homepage: None,
+                description: None,
+                changelog_url: None,
+            });
         }
     }
-
-    // Casks
-    if let Some(casks) = data.get("casks").and_then(|v| v.as_array()) {
-        for cask in casks {
-            let name = cask
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            let installed = cask
-                .get("installed_versions")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            let current = cask
-                .get("current_version")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            if !name.is_empty() && !installed.is_empty() && !current.is_empty() {
-                results.push(BrewOutdatedPackage {
-                    name: name.to_string(),
-                    installed_version: installed.to_string(),
-                    current_version: current.to_string(),
-                    is_cask: true,
-                    homepage: None,
-                    description: None,
-                    changelog_url: None,
-                });
-            }
-        }
-    }
-
     results.sort_by(|a, b| a.name.cmp(&b.name));
-    results
+    Ok(results)
 }
 
 /// Enrich outdated packages with homepage/description and changelog URL hints.
@@ -1008,6 +1043,7 @@ fn enrich_brew_outdated(packages: Vec<BrewOutdatedPackage>) -> Vec<BrewOutdatedP
             };
 
             if let Some(metadata) = metadata {
+                package.name.clone_from(&metadata.install_name);
                 package.homepage = metadata.homepage.clone();
                 package.description = metadata.description.clone();
             }
@@ -1056,31 +1092,35 @@ pub(super) fn parse_brew_info_json(
     let entries_key = if is_cask { "casks" } else { "formulae" };
     let name_key = if is_cask { "token" } else { "name" };
 
-    data.get(entries_key)
+    let mut metadata = HashMap::new();
+    for entry in data
+        .get(entries_key)
         .and_then(serde_json::Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|entry| {
-            let name = entry.get(name_key).and_then(serde_json::Value::as_str)?;
-            if name.is_empty() {
-                return None;
-            }
-
-            Some((
-                name.to_string(),
-                BrewPackageMetadata {
-                    homepage: entry
-                        .get("homepage")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string),
-                    description: entry
-                        .get("desc")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string),
-                },
-            ))
-        })
-        .collect()
+    {
+        let Some(name) = entry
+            .get(name_key)
+            .and_then(serde_json::Value::as_str)
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+        let value = BrewPackageMetadata {
+            install_name: homebrew_package_name(name, entry, is_cask).to_string(),
+            homepage: entry
+                .get("homepage")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            description: entry
+                .get("desc")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+        };
+        metadata.insert(name.to_string(), value.clone());
+        metadata.insert(value.install_name.clone(), value);
+    }
+    metadata
 }
 
 pub(super) fn brew_compare_url(

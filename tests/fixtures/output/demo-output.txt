@@ -101,7 +101,8 @@ x Flake check failed
 + All flake inputs up to date
 
 > Checking Homebrew updates
-+ All Homebrew packages up to date
+  Includes versioned self-updating casks; latest-version casks require --greedy.
++ No eligible Homebrew updates found
 
 > Checking tracked nix files
 + Git preflight passed

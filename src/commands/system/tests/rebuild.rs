@@ -4,6 +4,7 @@ use super::*;
 fn rebuild_command_includes_base_args() {
     let args = RebuildArgs {
         preflight: false,
+        force_activation: false,
         timing: false,
         verbose: false,
         passthrough: Vec::new(),
@@ -21,6 +22,7 @@ fn rebuild_command_includes_base_args() {
 fn rebuild_command_includes_passthrough_args() {
     let args = RebuildArgs {
         preflight: false,
+        force_activation: false,
         timing: false,
         verbose: false,
         passthrough: vec!["--show-trace".into()],
@@ -62,6 +64,7 @@ fn rebuild_command_uses_manifest_rebuild_command() {
 
     let args = RebuildArgs {
         preflight: false,
+        force_activation: false,
         timing: false,
         verbose: false,
         passthrough: Vec::new(),
@@ -76,6 +79,7 @@ fn rebuild_command_uses_manifest_rebuild_command() {
 fn rebuild_command_owns_log_format() {
     let args = RebuildArgs {
         preflight: false,
+        force_activation: false,
         timing: false,
         verbose: false,
         passthrough: vec!["--log-format".into(), "raw".into()],
@@ -200,6 +204,7 @@ fn split_darwin_defaults_on_for_darwin_and_allows_opt_out() {
 
     let args = RebuildArgs {
         preflight: false,
+        force_activation: false,
         timing: false,
         verbose: false,
         passthrough: Vec::new(),

@@ -125,12 +125,19 @@ impl Printer {
         let color = self.style.color;
         let handle = thread::spawn(move || {
             let mut index = 0usize;
+            let started = std::time::Instant::now();
             loop {
                 let frame = frames[index % frames.len()];
                 let text = thread_text
                     .lock()
                     .map(|text| text.clone())
                     .unwrap_or_default();
+                let columns = rustix::termios::tcgetwinsize(rustix::stdio::stderr())
+                    .ok()
+                    .map(|size| usize::from(size.ws_col))
+                    .filter(|width| *width > 0)
+                    .unwrap_or(80);
+                let text = loading_message(&text, started.elapsed().as_secs(), columns);
                 eprint!(
                     "\r\x1b[2K{}{}{} {text}{}",
                     ansi_prefix(color, AnsiStyle::Activity),
@@ -351,6 +358,19 @@ impl Drop for LoadingIndicator {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+fn loading_message(text: &str, seconds: u64, columns: usize) -> String {
+    let suffix = format!(" ({seconds}s)");
+    let available = columns.saturating_sub(suffix.len() + 3);
+    let clean: String = text
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect();
+    format!(
+        "{}{suffix}",
+        crate::infra::text::truncate_with_ellipsis(&clean, available)
+    )
 }
 
 const fn loading_frames(icon_set: IconSet) -> &'static [&'static str] {
@@ -581,5 +601,22 @@ mod tests {
         assert!(!parse_confirm_response("\n", false));
         assert!(parse_confirm_response("  \n", true));
         assert!(!parse_confirm_response("  \n", false));
+    }
+}
+
+#[cfg(test)]
+mod loading_progress_tests {
+    use super::loading_message;
+
+    #[test]
+    fn long_progress_stays_on_one_line_and_keeps_elapsed_time() {
+        let message = loading_message(
+            "Resolving anomalyco/tap/hex: checking package sources\n",
+            12,
+            40,
+        );
+        assert!(message.ends_with(" (12s)"));
+        assert!(!message.contains('\n'));
+        assert!(message.chars().count() + 2 < 40);
     }
 }

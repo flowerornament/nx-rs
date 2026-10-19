@@ -11,6 +11,7 @@ fn sample_upgrade_args() -> UpgradeArgs {
         skip: UpgradeSkipArgs::default(),
         yes: false,
         allow_source_builds: false,
+        greedy: false,
         targets: Vec::new(),
         passthrough: Vec::new(),
     }

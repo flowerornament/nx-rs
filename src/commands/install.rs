@@ -13,6 +13,7 @@ use crate::domain::location::PackageLocation;
 use crate::domain::plan::{EditSpec, InstallPlan, build_install_plan, nix_manifest_candidates};
 use crate::domain::source::{
     ExplicitSourceTarget, PackageSource, SourcePreferences, SourceResult, detect_language_package,
+    is_tap_qualified,
 };
 use crate::infra::ai_engine::{
     AiEngine, ClaudeCodeEngine, CommandOutcome, build_edit_prompt, build_routing_context,
@@ -22,7 +23,7 @@ use crate::infra::cache::MultiSourceCache;
 use crate::infra::file_edit::{
     EditOutcome, analyse_manifest_for_preview, insert_edit, is_unsupported_edit_shape,
 };
-use crate::infra::finder::{find_first_package, find_package};
+use crate::infra::finder::{find_first_package, find_package, find_package_in_file};
 use crate::infra::flake_input::{FlakeInputEdit, add_flake_input};
 use crate::infra::package_query::{PackageQueryReport, query_package, query_packages};
 use crate::infra::shell::git_diff;
@@ -52,7 +53,11 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
     ctx.printer.action(&format!("Installing {pkg_list}"));
 
     let engine = select_engine(args.engine(), args.model(), ctx.printer.style());
-    let routing_context = InstallRoutingContext::build(ctx);
+    let routing_context = ctx
+        .printer
+        .with_loading("Reading package routing configuration", |_| {
+            InstallRoutingContext::build(ctx)
+        });
     let mut cache = load_cache(ctx);
     let prefetched_searches = prefetch_install_searches(args, ctx, &mut cache);
 
@@ -72,12 +77,18 @@ pub fn cmd_install(args: &InstallArgs, ctx: &AppContext) -> i32 {
         }
     }
 
-    run_post_install_actions(success_count, args, ctx, || {
-        let rebuild = RebuildArgs::default();
+    let rebuild_code = run_post_install_actions(success_count, args, ctx, || {
+        let rebuild = RebuildArgs {
+            force_activation: true,
+            ..RebuildArgs::default()
+        };
         let system_ctx = ctx.system_context();
         cmd_rebuild_with_command(&rebuild, &system_ctx, TimingCommand::Install)
     });
 
+    if rebuild_code != 0 {
+        return rebuild_code;
+    }
     i32::from(success_count != args.packages.len())
 }
 
@@ -86,19 +97,19 @@ fn run_post_install_actions<F>(
     args: &InstallArgs,
     _ctx: &AppContext,
     rebuild: F,
-) where
+) -> i32
+where
     F: FnOnce() -> i32,
 {
     if success_count == 0 || args.dry_run() {
-        return;
+        return 0;
     }
-
-    println!();
-    Printer::detail("Run: nx rebuild");
-
     if args.rebuild() {
-        let _ = rebuild();
+        return rebuild();
     }
+    println!();
+    Printer::detail("Run: nx rebuild to apply the configuration");
+    0
 }
 
 /// Install a single package. Returns `true` on success.
@@ -133,6 +144,18 @@ fn install_one(
     apply_install_phase(&prepared, args, ctx, engine)
 }
 
+fn find_install_declaration(
+    package: &str,
+    args: &InstallArgs,
+    ctx: &AppContext,
+) -> anyhow::Result<Option<PackageLocation>> {
+    if args.cask() {
+        find_package_in_file(package, &ctx.config_files.homebrew_casks())
+    } else {
+        find_package(package, &ctx.repo_root)
+    }
+}
+
 fn start_install_resolution(
     package: &str,
     args: &InstallArgs,
@@ -160,7 +183,7 @@ fn start_install_resolution(
         );
     }
 
-    match find_package(package, &ctx.repo_root) {
+    match find_install_declaration(package, args, ctx) {
         Ok(Some(location)) => {
             report_already_installed(package, &location, ctx);
             return InstallStart::Completed;
@@ -775,6 +798,11 @@ fn search_for_package(
                 Printer::detail(&format!("- {}: {}", source.source, source.reason));
             }
         }
+        if is_tap_qualified(package) {
+            Printer::detail(&format!(
+                "For a cask, use: nx install --cask {package} --rebuild (no discovery required)"
+            ));
+        }
         return None;
     }
 
@@ -798,7 +826,12 @@ fn resolve_search_candidates(
         .map(|&idx| &candidates[idx])
         .collect();
 
-    match find_existing_for_candidates(candidates, repo_root) {
+    let existing = if args.cask() {
+        find_install_declaration(package, args, ctx)
+    } else {
+        find_existing_for_candidates(candidates, repo_root)
+    };
+    match existing {
         Ok(Some(location)) => {
             show_resolution_groups(package, &[], Some(&location), ctx);
             Some(SearchResolution::AlreadyInstalled(location))
@@ -1089,8 +1122,13 @@ fn prefetch_install_searches(
     cache: &mut Option<MultiSourceCache>,
 ) -> InstallSearchPrefetch {
     let mut by_package = HashMap::new();
-    let packages =
-        packages_needing_search_prefetch(&args.packages, &ctx.repo_root, &mut by_package);
+    let packages = ctx
+        .printer
+        .with_loading("Checking existing package declarations", |_| {
+            packages_needing_search_prefetch(&args.packages, &mut by_package, |name| {
+                find_install_declaration(name, args, ctx)
+            })
+        });
 
     if packages.len() >= 2 {
         let prefs = source_prefs_from_args(args);
@@ -1113,15 +1151,28 @@ fn query_install_package(
     cache: &mut Option<MultiSourceCache>,
     printer: &Printer,
 ) -> PackageQueryReport {
-    printer.with_loading(&format!("Resolving source for {package}"), |_| {
+    let detail = match prefs.explicit_target {
+        ExplicitSourceTarget::Cask => "explicit Homebrew cask; no source search".to_string(),
+        ExplicitSourceTarget::Mas => "explicit App Store app; no source search".to_string(),
+        ExplicitSourceTarget::Any if is_tap_qualified(package) && prefs.force_source.is_none() => {
+            "Homebrew formula/cask only; --cask skips discovery".to_string()
+        }
+        ExplicitSourceTarget::Any => prefs.force_source.as_ref().map_or_else(
+            || "parallel package sources; up to 45s; --cask skips discovery".to_string(),
+            |source| format!("{source}; up to 45s"),
+        ),
+    };
+    let message = format!("Resolving {package}: {detail}");
+    printer.activity(crate::output::printer::ActivityKind::Searching, &message);
+    printer.with_loading(&message, |_| {
         query_package(package, prefs, repo_root, cache)
     })
 }
 
 fn packages_needing_search_prefetch(
     packages: &[String],
-    repo_root: &Path,
     prefetched: &mut HashMap<String, InstallPrefetchEntry>,
+    mut lookup: impl FnMut(&str) -> anyhow::Result<Option<PackageLocation>>,
 ) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut pending = Vec::new();
@@ -1131,7 +1182,7 @@ fn packages_needing_search_prefetch(
             continue;
         }
 
-        match find_package(package, repo_root) {
+        match lookup(package) {
             Ok(Some(location)) => {
                 prefetched.insert(
                     package.clone(),

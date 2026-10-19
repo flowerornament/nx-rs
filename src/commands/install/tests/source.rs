@@ -106,11 +106,46 @@ fn packages_needing_search_prefetch_skips_already_installed_packages() {
 
     let packages = vec!["ripgrep".to_string(), "fd".to_string(), "fd".to_string()];
     let mut prefetched_entries = HashMap::new();
-    let prefetched = packages_needing_search_prefetch(&packages, root, &mut prefetched_entries);
+    let prefetched = packages_needing_search_prefetch(&packages, &mut prefetched_entries, |name| {
+        find_package(name, root)
+    });
 
     assert_eq!(prefetched, vec!["fd".to_string()]);
     assert!(matches!(
         prefetched_entries.get("ripgrep"),
         Some(InstallPrefetchEntry::AlreadyInstalled(_))
     ));
+}
+
+#[test]
+fn explicit_cask_does_not_match_a_nix_declaration() {
+    let tmp = setup_install_root(
+        r"{ pkgs, ... }: {
+  home.packages = with pkgs; [
+    firefox
+  ];
+}
+",
+    );
+    let ctx = test_context(tmp.path());
+    let mut args = install_args_template();
+    args.target.cask = true;
+    assert!(
+        find_install_declaration("firefox", &args, &ctx)
+            .unwrap()
+            .is_none()
+    );
+    write_nix(
+        tmp.path(),
+        "packages/homebrew/casks.nix",
+        r#"[
+  "firefox"
+]
+"#,
+    );
+    assert!(
+        find_install_declaration("firefox", &args, &ctx)
+            .unwrap()
+            .is_some()
+    );
 }

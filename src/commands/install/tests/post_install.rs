@@ -67,3 +67,12 @@ fn post_install_skips_rebuild_when_nothing_installed() {
 
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
+
+#[test]
+fn requested_rebuild_failure_is_not_reported_as_success() {
+    let tmp = temp_root();
+    let ctx = test_context(tmp.path());
+    let mut args = install_args_template();
+    args.flow.rebuild = true;
+    assert_eq!(run_post_install_actions(1, &args, &ctx, || 7), 7);
+}

@@ -60,7 +60,7 @@ const VERSION_HELP: &str = "Examples:\n  nx --version\n  nx -V\n  nx version\n  
 const COMPLETION_HELP: &str = "Examples:\n  nx completion zsh > ~/.zsh/completions/_nx\n  nx completion bash > /usr/local/etc/bash_completion.d/nx\n\nNotes:\n  - Completion scripts are written to stdout.\n  - Re-run this after upgrading nx if completions drift.";
 const DOCTOR_HELP: &str = "Examples:\n  nx doctor\n  nx doctor --verbose\n  nx doctor --json\n\nNotes:\n  - `doctor` is repo-scoped and expects to run inside a managed nix config repo.\n  - Reports repo checks and public Nix substrate health, including Determinate freshness, lazy trees, garbage collection, and observed `/nix` filesystem availability.\n  - Reserves substrate warnings for actionable conditions; optional settings and ordinary disk availability are informational.\n  - Read-only: never upgrades Nix, clears private caches, or runs garbage collection.";
 const INIT_HELP: &str = "Examples:\n  nx init\n  nx init --refresh\n\nNotes:\n  - `init` scans the repo and writes `.nx/manifest.toml`.\n  - `--refresh` re-scans and merges with the existing manifest when possible.";
-const INSTALL_HELP: &str = "Examples:\n  nx ripgrep\n  nx install ripgrep fd\n  nx install firefox --cask\n  nx install pyyaml --verbose\n\nNotes:\n  - Bare tokens like `nx ripgrep` are treated as `nx install ripgrep`.\n  - Source lookups show loading feedback while package queries run.\n  - `--verbose` surfaces cache and query timing details during package resolution.";
+const INSTALL_HELP: &str = "Examples:\n  nx ripgrep\n  nx install ripgrep fd\n  nx install firefox --cask\n  nx install --cask anomalyco/tap/hex --rebuild\n  nx install pyyaml --verbose\n\nNotes:\n  - Bare tokens like `nx ripgrep` are treated as `nx install ripgrep`.\n  - Source lookups show loading feedback while package queries run.\n  - `--verbose` surfaces cache and query timing details during package resolution.";
 const REMOVE_HELP: &str = "Examples:\n  nx remove ripgrep\n  nx rm firefox --dry-run\n  nx uninstall ripgrep --yes\n\nNotes:\n  - `rm` and `uninstall` are aliases of `remove`.\n  - `--dry-run` previews file edits without writing them.";
 const SEARCH_HELP: &str = "Examples:\n  nx search ripgrep\n  nx search ripgrep --nur\n  nx search ripgrep --source homebrew --json\n  nx search ripgrep --verbose\n\nNotes:\n  - `search` never edits the repo.\n  - Source queries show loading feedback while lookups run.\n  - `--verbose` surfaces cache state, backend availability, and timing details.";
 const WHERE_HELP: &str = "Examples:\n  nx where ripgrep\n\nNotes:\n  - `where` shows the owning file and snippet for an installed declaration.";
@@ -756,12 +756,18 @@ pub struct UpdateArgs {
 
 #[derive(Debug, Clone, Parser, Default)]
 #[command(after_long_help = REBUILD_HELP)]
+#[allow(clippy::struct_excessive_bools)] // Independent CLI switches.
 pub struct RebuildArgs {
     #[arg(
         long,
         help = "Run lint, git, and flake preflight checks without rebuilding"
     )]
     pub preflight: bool,
+    #[arg(
+        long,
+        help = "Reapply activation even when the Nix system is already current"
+    )]
+    pub force_activation: bool,
     #[arg(long, help = "Print rebuild phase timings after recording them")]
     pub timing: bool,
     #[arg(long, short = 'v', help = "Stream full Nix build logs")]
@@ -797,6 +803,11 @@ pub struct UpgradeArgs {
         help = "Proceed when binary cache coverage is excessive or unavailable"
     )]
     pub allow_source_builds: bool,
+    #[arg(
+        long,
+        help = "Also check latest-version casks; may reinstall apps without version information"
+    )]
+    pub greedy: bool,
     #[arg(
         value_name = "INPUTS",
         help = "Optional flake input names to upgrade instead of updating the entire lockfile"
@@ -1703,6 +1714,7 @@ mod tests {
             "no-ai",
             "yes",
             "allow-source-builds",
+            "greedy",
         ]
         .into_iter()
         .map(str::to_owned)
@@ -1743,7 +1755,10 @@ mod tests {
         assert_subcommand_local_long_flags("undo", &["yes"]);
         assert_subcommand_local_long_flags("update", &[]);
         assert_subcommand_local_long_flags("test", &[]);
-        assert_subcommand_local_long_flags("rebuild", &["preflight", "timing", "verbose"]);
+        assert_subcommand_local_long_flags(
+            "rebuild",
+            &["preflight", "timing", "verbose", "force-activation"],
+        );
         assert_subcommand_local_long_flags("profile", &["limit", "json"]);
         assert_subcommand_local_long_flags("version", &["json"]);
         assert_subcommand_local_long_flags("doctor", &["json", "verbose"]);

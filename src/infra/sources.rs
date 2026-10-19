@@ -12,8 +12,8 @@ use serde_json::Value;
 use crate::domain::source::{
     ExplicitSourceTarget, NixSearchEntry, OVERLAY_PACKAGES, PackageSource, SourcePreferences,
     SourceResult, check_platforms, clean_attr_path, deduplicate_results, detect_language_package,
-    get_current_system, mapped_name, parse_nix_search_results, score_match, search_name_variants,
-    sort_results,
+    get_current_system, homebrew_package_name, is_tap_qualified, mapped_name,
+    parse_nix_search_results, score_match, search_name_variants, sort_results,
 };
 use crate::infra::cache::MultiSourceCache;
 use crate::infra::shell::run_captured_command;
@@ -353,13 +353,7 @@ fn search_homebrew(name: &str, is_cask: bool, allow_fallback: bool) -> SourceBac
                 vec![SourceResult {
                     name: name.to_string(),
                     source: PackageSource::Cask,
-                    attr: Some(
-                        entry
-                            .get("token")
-                            .and_then(Value::as_str)
-                            .unwrap_or(name)
-                            .to_string(),
-                    ),
+                    attr: Some(homebrew_package_name(name, &entry, true).to_string()),
                     version: entry
                         .get("version")
                         .and_then(Value::as_str)
@@ -377,13 +371,7 @@ fn search_homebrew(name: &str, is_cask: bool, allow_fallback: bool) -> SourceBac
                 vec![SourceResult {
                     name: name.to_string(),
                     source: PackageSource::Homebrew,
-                    attr: Some(
-                        entry
-                            .get("name")
-                            .and_then(Value::as_str)
-                            .unwrap_or(name)
-                            .to_string(),
-                    ),
+                    attr: Some(homebrew_package_name(name, &entry, false).to_string()),
                     version: entry
                         .get("versions")
                         .and_then(|v| v.get("stable"))
@@ -832,25 +820,27 @@ fn build_search_tasks(
             );
         }
 
-        let package = name.clone();
-        push_task(
-            SearchTaskKind::Source(PackageSource::Nxs),
-            Box::new(move || (search_fns.nxs)(&package)),
-        );
-        if let Some(lock_path) = flake_lock_path {
-            let package = name.clone();
-            let lock_path = lock_path.to_path_buf();
-            push_task(
-                SearchTaskKind::Source(PackageSource::FlakeInput),
-                Box::new(move || (search_fns.flake_inputs)(&package, &lock_path)),
-            );
-        }
-        if prefs.nur || prefs.bleeding_edge {
+        if !is_tap_qualified(name) {
             let package = name.clone();
             push_task(
-                SearchTaskKind::Source(PackageSource::Nur),
-                Box::new(move || (search_fns.nur)(&package)),
+                SearchTaskKind::Source(PackageSource::Nxs),
+                Box::new(move || (search_fns.nxs)(&package)),
             );
+            if let Some(lock_path) = flake_lock_path {
+                let package = name.clone();
+                let lock_path = lock_path.to_path_buf();
+                push_task(
+                    SearchTaskKind::Source(PackageSource::FlakeInput),
+                    Box::new(move || (search_fns.flake_inputs)(&package, &lock_path)),
+                );
+            }
+            if prefs.nur || prefs.bleeding_edge {
+                let package = name.clone();
+                push_task(
+                    SearchTaskKind::Source(PackageSource::Nur),
+                    Box::new(move || (search_fns.nur)(&package)),
+                );
+            }
         }
         let package = name.clone();
         push_task(
@@ -1585,5 +1575,59 @@ mod tests {
 
         assert_eq!(results.results.len(), 1);
         assert!(warnings.is_empty(), "warnings should be suppressed");
+    }
+}
+
+#[cfg(test)]
+mod tapped_tests {
+    use super::*;
+
+    #[test]
+    fn qualified_discovery_never_schedules_nix_backends() {
+        let (_, tasks) = build_search_tasks(
+            &["anomalyco/tap/hex".into()],
+            &SourcePreferences::default(),
+            Some(Path::new("flake.lock")),
+            SearchOptions::standard(true),
+            default_search_fns(),
+        );
+        assert_eq!(tasks.len(), 2);
+        assert!(tasks.iter().all(|task| matches!(
+            task.kind,
+            SearchTaskKind::Source(PackageSource::Homebrew | PackageSource::Cask)
+        )));
+    }
+
+    #[test]
+    fn explicit_cask_preserves_tap_without_backend_queries() {
+        let prefs = SourcePreferences {
+            explicit_target: ExplicitSourceTarget::Cask,
+            ..Default::default()
+        };
+        let results = search_explicit_source("anomalyco/tap/hex", &prefs).unwrap();
+        assert_eq!(results[0].attr.as_deref(), Some("anomalyco/tap/hex"));
+        assert_eq!(results[0].source, PackageSource::Cask);
+    }
+
+    #[test]
+    fn metadata_retains_taps_and_builtin_short_names() {
+        let cask = serde_json::json!({"token":"hex","full_token":"anomalyco/tap/hex"});
+        let formula = serde_json::json!({"name":"hex","full_name":"anomalyco/tap/hex"});
+        assert_eq!(
+            homebrew_package_name("hex", &cask, true),
+            "anomalyco/tap/hex"
+        );
+        assert_eq!(
+            homebrew_package_name("hex", &formula, false),
+            "anomalyco/tap/hex"
+        );
+        assert_eq!(
+            homebrew_package_name("other/tap/hex", &cask, true),
+            "other/tap/hex"
+        );
+        assert_eq!(
+            homebrew_package_name("firefox", &serde_json::json!({"token":"firefox"}), true),
+            "firefox"
+        );
     }
 }

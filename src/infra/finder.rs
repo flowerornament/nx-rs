@@ -67,6 +67,27 @@ pub fn find_package(name: &str, repo_root: &Path) -> anyhow::Result<Option<Packa
     find_package_exact(name, repo_root)
 }
 
+/// Restrict explicit source lookups to the declaration file for that source.
+pub fn find_package_in_file(name: &str, path: &Path) -> anyhow::Result<Option<PackageLocation>> {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
+    };
+    let index = FinderIndex {
+        snapshots: vec![],
+        files: vec![IndexedFile {
+            path: path.to_path_buf(),
+            lines: content.lines().map(str::to_string).collect(),
+        }],
+    };
+    let names = expand_lookup_names(&[name.to_string()]);
+    Ok(find_first_package_in_index(
+        &build_lookup_specs(&names)?,
+        &index,
+    ))
+}
+
 pub fn find_first_package(
     names: &[String],
     repo_root: &Path,

@@ -893,6 +893,60 @@ fn split_darwin_rebuild_skips_activation_when_system_is_current() -> Result<(), 
 }
 
 #[test]
+fn split_darwin_rebuild_can_reapply_current_system() -> Result<(), Box<dyn Error>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let nx_bin = resolve_nx_bin(&workspace_root)?;
+    let repo_root = TempDir::new()?;
+    copy_tree(
+        &workspace_root.join("tests/fixtures/system/repo_base"),
+        repo_root.path(),
+    )?;
+    ensure_test_layout(repo_root.path())?;
+    let stub_dir = repo_root.path().join(STUB_DIR_NAME);
+    fs::create_dir_all(&stub_dir)?;
+    install_stubs(&stub_dir)?;
+    let log_path = repo_root.path().join(LOG_FILE_NAME);
+    let home_dir = TempDir::new()?;
+    let profile_link = home_dir.path().join("system-profile");
+    symlink("/nix/store/new-system", &profile_link)?;
+
+    let mut command = Command::new(nx_bin);
+    command
+        .args(["--plain", "--minimal", "rebuild", "--force-activation"])
+        .current_dir(repo_root.path())
+        .env("NX_REPO_ROOT", repo_root.path())
+        .env("HOME", home_dir.path())
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .env("NX_SPLIT_DARWIN", "1")
+        .env("NX_SYSTEM_PROFILE_PATH", &profile_link)
+        .env("NX_SYSTEM_IT_LOG", &log_path)
+        .env("NX_SYSTEM_IT_MODE", "success")
+        .env(
+            "NX_SYSTEM_IT_DARWIN_REBUILD",
+            stub_dir.join("darwin-rebuild"),
+        )
+        .env("PATH", prepend_path(&stub_dir));
+    let output = run_command_with_optional_stdin(&mut command, None)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("System rebuilt"));
+    assert!(!stdout.contains("System already current"));
+    assert_invocations(
+        "split_rebuild_force_activation",
+        repo_root.path(),
+        &read_invocations(&log_path)?,
+        &split_rebuild_calls(false),
+    );
+    Ok(())
+}
+
+#[test]
 fn split_darwin_rebuild_authorizes_sudo_when_prompt_is_needed() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");

@@ -368,12 +368,26 @@ as `nx rebulid` stay command errors so `nx` can suggest the intended command.
 - Use `--dry-run` to preview edits without writing files.
 - Use `--yes` to skip interactive prompts and accept defaults.
 - Use `--cask` or `--mas` to force macOS package targets.
+- For `brew install --cask anomalyco/tap/hex`, use
+  `nx install --cask anomalyco/tap/hex --rebuild`. Without `--rebuild`, nx edits
+  your configuration and asks you to run `nx rebuild` to install the app.
+  `--cask` skips discovery, works before the tap is installed, and preserves the
+  full name. Homebrew installs the tap when applying that cask. A requested install
+  rebuild reapplies activation even when the declaration was already present.
+- Preview with `nx install --cask anomalyco/tap/hex --dry-run`.
+  Inspect the declaration with `nx installed anomalyco/tap/hex` or `nx where anomalyco/tap/hex`.
+  Remove the declaration with `nx remove anomalyco/tap/hex`, then rebuild.
+  Actual app removal follows your Homebrew cleanup policy; nx does not forcibly
+  uninstall apps or delete their data when removing declarations.
 - Use `--bleeding-edge`, `--nur`, or `--source` to bias source selection.
 - Use `--service` to offer service scaffolding after install.
-- Use `--rebuild` to rebuild after successful changes.
+- Use `--rebuild` to apply the configuration after successful installs, including
+  declarations already present. A failed activation exits nonzero.
 - Use `--engine`, `--model`, and `--explain` for AI-assisted routing/edit flows.
 - Use `--verbose` to surface cache and query timing diagnostics.
-- Source resolution shows live loading feedback while package queries run.
+- Source resolution describes the active source scope and shows elapsed seconds
+  while package queries run. Tap-qualified discovery queries only Homebrew;
+  ordinary discovery queries the configured package sources in parallel.
 
 ---
 
@@ -506,6 +520,9 @@ Runs repo quality checks. This validates the managed Nix config repo itself.
 ---
 
 #### `rebuild`
+
+Use `nx rebuild --force-activation` to reapply activation and Homebrew declarations
+even when the Nix system path is already current.
 
 Runs `darwin-rebuild switch` for the managed repo.
 
@@ -652,6 +669,10 @@ Runs the upgrade flow for either the whole repo or named flake inputs.
 - `nx upgrade` with no positional inputs runs the full repo-wide flow: flake
   update, binary cache admission, Homebrew update/upgrade, rebuild, and git
   commit.
+- Homebrew upgrades include formulae and versioned self-updating casks. Use
+  `--greedy` to also check casks whose version is `latest`; these can be reinstalled
+  when Homebrew cannot compare installed and current versions. Pins are respected.
+  Formula/cask commands remain distinct, and query or upgrade failures exit nonzero.
 - `nx upgrade <input...>` updates only the named flake inputs via
   `nix flake update <input...>`.
 - Nx commits `flake.lock` and any repaired hash files once, at the end of a

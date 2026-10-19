@@ -121,11 +121,11 @@ Defined at root callback:
 - `test`
   - no args
 - `rebuild`
-  - options: `--preflight`, `--timing`, `--verbose/-v`
+  - options: `--preflight`, `--timing`, `--verbose/-v`, `--force-activation`
   - passthrough args accepted
 - `upgrade`
   - args: `[inputs...]`
-  - options: `--dry-run/-n`, `--verbose/-v`, `--yes/-y`, `--skip-rebuild`, `--skip-commit`, `--skip-brew`, `--no-ai`, `--allow-source-builds`
+  - options: `--dry-run/-n`, `--verbose/-v`, `--yes/-y`, `--skip-rebuild`, `--skip-commit`, `--skip-brew`, `--no-ai`, `--allow-source-builds`, `--greedy`
   - passthrough args accepted
 - `generations`
   - subcommands: `status`, `plan`, `prune`
@@ -305,6 +305,12 @@ Package-source search order:
 5. sort by source priority and confidence
 6. deduplicate by `(source, attr)`
 
+Tap-qualified Homebrew names retain their owner/repository/package identity through
+metadata resolution, cached install planning and config edits. Qualified discovery
+checks only Homebrew formula/cask sources, not Nix backends. `--cask` bypasses
+discovery and declares the supplied name, including taps not yet installed.
+Homebrew installs the named tap when applying the cask; no extra tap edit is required.
+
 ## 6.3 Search Execution Failure/Timeout
 
 - Singular and batch queries use one bounded package/source job executor.
@@ -414,8 +420,10 @@ For nix-based sources:
 
 ## 7.8 Post-Install
 
-- On successful (non-dry-run) installs, print `Run: nx rebuild`.
-- If `--rebuild`, run darwin-rebuild switch directly.
+- Successful non-dry-run installs without `--rebuild` explain how to apply the configuration.
+- `--rebuild` applies successful installs, including declarations already present,
+  and propagates rebuild failure. It requests forced activation so Homebrew
+  declarations are reapplied even when the Nix system path is unchanged.
 
 ## 8. Remove Flow Contract
 
@@ -428,6 +436,8 @@ For nix-based sources:
   - if concrete line known: direct file edit removal
   - else fallback to Claude-based edit
 - Command stops at the first per-package failure and returns `1`; successful removals and no-change outcomes such as dry-run, cancellation, and AI no-op return `0`.
+- Removing a cask declaration explains that actual app removal follows the
+  Homebrew activation cleanup policy; declaration removal itself does not uninstall it.
 
 ## 9. Query Commands Contract
 
@@ -540,7 +550,7 @@ Experimental split Darwin rebuild:
 - Runs `nix build --no-link --print-out-paths <repo_root>#darwinConfigurations.<host>.system`. Interactive runs select `--log-format bar`; `--verbose` selects `bar-with-logs`; non-interactive and `--timing` runs select `internal-json`.
 - Interactive user-facing Nix commands inherit stdin and receive a pseudoterminal-backed stderr initialized from nx's terminal settings. Nx retains the original bytes in a bounded diagnostic tail. For display, complete single-line replacement frames (`CR` through `ESC[K`) are coalesced to the latest at a 500 ms cadence; the final frame is flushed on exit. Permanent messages, clear-line controls and activation output are preserved unchanged. Unmatched partial frames/prompts flush within 100 ms, and partial-frame buffering is limited to 16 KiB. Nx may capture stdout when it is command data, such as the split build's resulting store path, but it never interprets progress content, prefixes, indents, or re-renders native Nix output.
 - Resolves `<host>` from `NX_DARWIN_HOST`, `scutil --get HostName`, `scutil --get LocalHostName`, then `hostname -s`; an explicit hostname takes precedence over a Bonjour name with a collision suffix.
-- If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
+- If the built system path equals `/nix/var/nix/profiles/system`'s symlink target, exits `0` without profile update or activation unless `--force-activation` is passed. `NX_SYSTEM_PROFILE_PATH` may override the compare target for sandboxed tests.
 - Otherwise reports successful build and profile-update phase completion, then runs `nix-env -p /nix/var/nix/profiles/system --set <systemConfig>` and `<systemConfig>/activate`, sudo-wrapped when platform sudo is enabled.
 - If direct split activation would require an interactive sudo prompt but the legacy `sudo darwin-rebuild` path is available non-interactively, falls back to legacy `darwin-rebuild` to preserve passwordless sudoers setups.
 - In interactive terminals, profile updates use Nix's native `bar` format; `--verbose` selects `bar-with-logs`. Direct activation inherits stdin and stdout and receives the same pseudoterminal-backed stderr, so the activation script and nested tools retain terminal-aware behavior. Captured activation retains raw diagnostics but cannot impose a log format on nested commands. Non-interactive `darwin-rebuild` fallback uses `internal-json`. Nx owns the log format for Nix commands it invokes directly and removes conflicting passthrough selections.
@@ -603,9 +613,12 @@ High-level phases:
 4. Brew phase:
   - repo-wide upgrades run brew unless `--skip-brew`
   - targeted input upgrades skip brew by default
-  - `brew outdated --json`
+  - `brew outdated --json --greedy-auto-updates` includes versioned self-updating casks; `--greedy` replaces this policy flag to include latest-version casks
+  - parse formula/cask installed versions as arrays or legacy strings; query/JSON/schema failure exits nonzero rather than reporting no updates
+  - pinned packages remain visible but are excluded from upgrade commands
   - enrich and changelog fetch
-  - non-dry-run `brew upgrade <pkgs...>`
+  - non-dry-run upgrades formulae with `brew upgrade --formula <pkgs...>` and casks separately with `brew upgrade --cask <policy> <pkgs...>`
+  - preserve tapped identities from metadata and propagate Homebrew upgrade failures before rebuild/commit
 5. Rebuild unless `--skip-rebuild`
   - The binary cache admission step parses the `will be built` and `will be fetched` sections and lists up to 10 names from each non-empty source-build or local-build class (store hash prefix and `.drv` suffix stripped).
   - Unrecognized lines end the active section so later store paths cannot be misclassified. When no plan is recognized, retrying once after input realization is the primary remediation; `--allow-source-builds` is reserved for independently verified coverage.
@@ -692,6 +705,8 @@ Dry-run behavior:
   cleanup, and top-level layout remain centralized.
 - Captured package/source lookups (`search`, `info`, install resolution, and Homebrew
   outdated checks) use shared loading scopes rather than one-off progress printers.
+- Loading indicators show elapsed seconds; install resolution describes its source
+  scope and explicit cask shortcut.
 - Interactive Nix updates, checks, builds, and profile updates use Nix's native `bar`
   renderer with the shared redraw cadence above; `--verbose` selects `bar-with-logs`.
   Permanent verbose build logs remain unchanged. Interactive activation inherits
@@ -781,3 +796,4 @@ Dry-run behavior:
 - Real-config evaluation-cache comparisons are per-command dry-run controls;
   preserve existing caches and forbid lock updates. System tests isolate timing
   and trace paths from inherited user state.
+

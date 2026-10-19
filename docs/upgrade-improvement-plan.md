@@ -57,3 +57,36 @@ Do not weaken admission, change flake identity, delete caches, stop shared
 workloads or infer runtime savings from loaded-host gate timings. Use scoped jj
 commits and publish a review branch. Public release and live adoption remain
 explicit final operations.
+
+## Qualification decision
+
+The measured warm planner is already below 0.3 seconds. Keep evaluation reuse
+and flake identity unchanged: an empty Git commit is semantically observable,
+and hiding it could evaluate a different configuration. Keep cache admission.
+Keep the already-current shortcut and the existing narrow sudo authorization;
+blindly choosing legacy activation earlier would remove that shortcut or require
+broader privileges. The retained fallback trace is the next evidence source.
+
+The harness now records HEAD and content, checks both before/after each command,
+can run planning alone, and can refuse above a requested load/CPU ratio. A real
+plan-only attempt at config `dd6cdbc63754` was refused before Nix execution:
+1-minute load 56.493 on 18 CPUs exceeded the requested ratio 2. The retained
+manifest has zero samples and `complete: false`. This qualifies the refusal
+control, not a new performance result. Raw receipt:
+`.nx/perf/qualified-plan-20261019b/manifest.json`.
+
+Optional summary batches are bounded first. Overlapping their output with actual
+Homebrew mutations would obscure phase ownership and failure ordering; a ~1s
+inspection saving is not enough evidence to introduce that scheduling change.
+Routine traces can justify a later buffered read-only overlap. No extra parallel
+Nix evaluation or lock writer is introduced.
+
+A read-only receipt-cost probe found installed Homebrew metadata at 1.981s
+(139 formulae, 18 casks) and canonical Nix environment queries at 0.163s,
+0.474s and 0.205s (16 system references, the user-environment pointer, 132 HM
+references). These loaded-host single observations are not a stable benchmark.
+Receipt observations run independent Homebrew metadata and local Nix store
+inspection concurrently under the same five-second budget; they never evaluate
+flakes or mutate state. Their actual wall time remains visible in timing history.
+Store query arguments resolve environment symlinks first: passing a subpath
+inside a store object would query the enclosing object instead.

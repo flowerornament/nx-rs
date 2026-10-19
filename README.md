@@ -647,18 +647,31 @@ prove every network request. Compare only matching inputs, execution mode, cache
 conditions, and suite definitions; loaded-host observations are not regression
 thresholds. The retained artifacts can later be imported by git-evidence.
 
+Optional upgrade comparisons and AI summaries share a 10-second budget per
+batch. `NX_SUMMARY_TIMEOUT_SECONDS` accepts 1–300 seconds; `--no-ai` skips AI
+summaries. Provider failures keep the underlying input and version lists.
+
+Every real upgrade ends with an observed result: installed/upgraded/removed
+Homebrew versions, changes to direct Nix environment references, system profile,
+activation and commit outcomes. Partial failures retain the changes already
+made. Unknown observations say so. The receipt is saved in timing history;
+`nx profile --json` exposes it. Observation costs have their own timing phases.
+Changed formula and binary-cask commands are checked for PATH shadowing.
+
 Measure this machine's real pinned configuration separately:
 
 ```bash
 just perf-nix --host Ishikawa --repeat 3
+# Planning only, without an explicit eval warmup; refuse a busy host:
+just perf-nix --host Ishikawa --operations plan --max-load-per-cpu 2 --repeat 3
 ```
 
 This rotates evaluation, build dry-run, and flake checking (`--no-build`) order,
 retains stdout and structured stderr, and reports successful sample medians and
-ranges. It refuses lock updates and does not activate or build the system. Input
+ranges. It refuses lock updates and does not activate or build the system. Git HEAD, input
 content hashes, Nix version, exit results, timeouts, and per-sample host load are
 retained in `.nx/perf/real-*/manifest.json`. Existing caches remain in place: the
-first sample is not necessarily cold. A configuration change aborts the run;
+first sample is not necessarily cold. A tracked-content or Git HEAD change aborts the run;
 failed samples remain evidence and are excluded from successful timing medians.
 Use `--build` to also measure system realization with `--no-link`, without
 activation. Use `--report .nx/perf/<run-directory>` to inspect retained results.

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use rustix::fs::{FlockOperation, flock};
@@ -13,6 +14,7 @@ use crate::domain::upgrade::{
     FlakeLockInput, InputChange, RootInputChanges, build_flake_update_args, diff_root_inputs,
     github_owner_repo, load_flake_lock, parse_flake_lock_content, short_rev,
 };
+use crate::domain::upgrade_receipt::UpgradeStep;
 use crate::infra::ai_engine::DEFAULT_CODEX_MODEL;
 use crate::infra::nix_output::NixOutputMode;
 use crate::infra::nix_runtime::{
@@ -36,15 +38,59 @@ use super::rebuild::run_rebuild;
 
 pub fn cmd_upgrade(args: &UpgradeArgs, ctx: &AppContext) -> i32 {
     let mut timing = TimingSession::new(TimingCommand::Upgrade, &ctx.repo_root);
-    let code = run_upgrade(args, ctx, &mut timing);
-    if let Err(error) = append_timing(&timing.finish(code)) {
+    let mut receipt = super::receipt::start(args);
+    let observe = !args.dry_run()
+        && !args
+            .passthrough
+            .iter()
+            .any(|arg| arg == "--commit-lock-file");
+    let before = observe.then(|| observe_packages(args, ctx, &mut timing, "observe-before"));
+    let code = run_upgrade(args, ctx, &mut timing, &mut receipt);
+    if let Some(before) = before {
+        let after = observe_packages(args, ctx, &mut timing, "observe-after");
+        super::receipt::finish(&mut receipt, &before, &after);
+    }
+    let mut record = timing.finish(code);
+    if observe {
+        receipt.activation = super::receipt::activation_outcome(&record.phases, receipt.rebuild);
+        super::receipt::print(&receipt, code);
+        record.upgrade_receipt = Some(receipt);
+    }
+    if let Err(error) = append_timing(&record) {
         ctx.printer
             .warn(&format!("Failed to record upgrade timing: {error:#}"));
     }
     code
 }
 
-fn run_upgrade(args: &UpgradeArgs, ctx: &AppContext, timing: &mut TimingSession) -> i32 {
+fn observe_packages(
+    args: &UpgradeArgs,
+    ctx: &AppContext,
+    timing: &mut TimingSession,
+    phase: &str,
+) -> super::receipt::Snapshot {
+    timing.nested(phase, |_| {
+        ctx.printer.action(if phase == "observe-before" {
+            "Recording installed package state"
+        } else {
+            "Checking installed package changes"
+        });
+        (
+            ctx.printer
+                .with_loading("Reading local package inventories", |_| {
+                    super::receipt::Snapshot::observe(args)
+                }),
+            0,
+        )
+    })
+}
+
+fn run_upgrade(
+    args: &UpgradeArgs,
+    ctx: &AppContext,
+    timing: &mut TimingSession,
+    receipt: &mut crate::domain::upgrade_receipt::UpgradeReceipt,
+) -> i32 {
     if args.dry_run() {
         ctx.printer.dry_run_banner();
     }
@@ -77,14 +123,36 @@ fn run_upgrade(args: &UpgradeArgs, ctx: &AppContext, timing: &mut TimingSession)
     // Phase 1: Flake update and cache admission
     let prepared = match prepare_flake_update(args, ctx, timing) {
         Ok(prepared) => prepared,
-        Err(code) => return code,
+        Err(code) => {
+            receipt.inputs = UpgradeStep::Failed;
+            return code;
+        }
     };
+    receipt.changed_inputs = prepared
+        .root_inputs
+        .names()
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    if !args.brew_only() {
+        receipt.inputs = if prepared.lock_changed {
+            UpgradeStep::LockChanged
+        } else {
+            UpgradeStep::Unchanged
+        };
+    }
 
     // Phase 2: Brew, after the candidate system is admitted
-    if args.should_run_brew_phase()
-        && let Err(code) = timing.measure("homebrew-upgrade", || run_brew_phase(args, ctx))
-    {
-        return code;
+    if args.should_run_brew_phase() {
+        let result = timing.measure("homebrew-upgrade", || run_brew_phase(args, ctx));
+        receipt.homebrew = if result.is_ok() {
+            UpgradeStep::Completed
+        } else {
+            UpgradeStep::Failed
+        };
+        if let Err(code) = result {
+            return code;
+        }
     }
 
     if args.dry_run() {
@@ -92,45 +160,66 @@ fn run_upgrade(args: &UpgradeArgs, ctx: &AppContext, timing: &mut TimingSession)
         return 0;
     }
 
-    let mut repaired_paths = Vec::new();
-
-    // Phase 3: Rebuild
-    if !args.skip_rebuild() {
-        let rebuild = RebuildArgs {
-            verbose: args.flow.verbose,
-            ..RebuildArgs::default()
-        };
-        let system_ctx = ctx.system_context();
-        if let Err(code) = system_ctx.require_manifest_system_safe("rebuild") {
-            return code;
+    let repaired_paths = if args.skip_rebuild() {
+        Vec::new()
+    } else {
+        match rebuild_upgrade(args, ctx, timing, receipt) {
+            Ok(paths) => paths,
+            Err(code) => return code,
         }
-        let rebuild_result = timing.nested("rebuild", |timing| {
-            let result = run_rebuild(&rebuild, &system_ctx, timing);
-            let code = result.code;
-            (result, code)
-        });
-        if rebuild_result.code != 0 {
-            return 1;
-        }
-        repaired_paths = rebuild_result.repaired_paths;
-    }
+    };
 
     // Phase 4: Commit
     if !args.skip_commit()
         && (prepared.lock_changed || !repaired_paths.is_empty())
         && let Err(code) = timing.measure("commit", || {
-            commit_flake_lock(
+            let result = commit_flake_lock(
                 ctx,
                 prepared.lock_changed,
                 &prepared.root_inputs,
                 &repaired_paths,
-            )
+            );
+            receipt.commit = match &result {
+                Ok(CommitOutcome::Committed) => UpgradeStep::Committed,
+                Ok(CommitOutcome::NoChanges) => UpgradeStep::NoOwnedChanges,
+                Err(_) => UpgradeStep::Failed,
+            };
+            result.map(|_| ())
         })
     {
         return code;
     }
 
     0
+}
+
+fn rebuild_upgrade(
+    args: &UpgradeArgs,
+    ctx: &AppContext,
+    timing: &mut TimingSession,
+    receipt: &mut crate::domain::upgrade_receipt::UpgradeReceipt,
+) -> Result<Vec<PathBuf>, i32> {
+    let rebuild = RebuildArgs {
+        verbose: args.flow.verbose,
+        ..RebuildArgs::default()
+    };
+    let system_ctx = ctx.system_context();
+    system_ctx.require_manifest_system_safe("rebuild")?;
+    let result = timing.nested("rebuild", |timing| {
+        let result = run_rebuild(&rebuild, &system_ctx, timing);
+        let code = result.code;
+        (result, code)
+    });
+    receipt.rebuild = if result.code == 0 {
+        UpgradeStep::Completed
+    } else {
+        UpgradeStep::Failed
+    };
+    if result.code == 0 {
+        Ok(result.repaired_paths)
+    } else {
+        Err(1)
+    }
 }
 
 pub(super) struct UpgradeLock {
@@ -465,6 +554,15 @@ fn enrich_optional<T: Sync, R: Send>(
     })
 }
 
+fn summary_deadline() -> Instant {
+    let seconds = std::env::var("NX_SUMMARY_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| (1..=300).contains(value))
+        .unwrap_or(10);
+    Instant::now() + Duration::from_secs(seconds)
+}
+
 fn report_flake_changes(args: &UpgradeArgs, ctx: &AppContext, root_inputs: &RootInputChanges) {
     if root_inputs.is_empty() {
         ctx.printer.success("All flake inputs up to date");
@@ -479,14 +577,22 @@ fn report_flake_changes(args: &UpgradeArgs, ctx: &AppContext, root_inputs: &Root
 
         // Fetch summaries and AI descriptions in parallel across all inputs.
         let no_ai = args.no_ai();
-        let enriched = enrich_optional(&root_inputs.changed, |change| {
-            let summary = fetch_flake_compare_summary(change);
-            let ai_summary = summary
-                .as_ref()
-                .ok()
-                .and_then(|sum| maybe_ai_summary(no_ai, || summarize_flake_change_ai(change, sum)));
-            (summary, ai_summary)
-        });
+        let deadline = summary_deadline();
+        Printer::detail(&format!(
+            "Fetching optional input summaries (up to {}s)",
+            deadline.saturating_duration_since(Instant::now()).as_secs() + 1
+        ));
+        let enriched = ctx
+            .printer
+            .with_loading("Fetching optional input summaries", |_| {
+                enrich_optional(&root_inputs.changed, |change| {
+                    let summary = fetch_flake_compare_summary(change, deadline);
+                    let ai_summary = summary.as_ref().ok().and_then(|sum| {
+                        maybe_ai_summary(no_ai, || summarize_flake_change_ai(change, sum, deadline))
+                    });
+                    (summary, ai_summary)
+                })
+            });
 
         for (change, enrichment) in &enriched {
             println!();
@@ -510,6 +616,10 @@ fn report_flake_changes(args: &UpgradeArgs, ctx: &AppContext, root_inputs: &Root
                     Printer::sub_detail(&format_compare_summary(summary));
                     if let Some(ai_summary) = ai_summary {
                         Printer::sub_detail(ai_summary);
+                    } else if !no_ai {
+                        Printer::sub_detail(
+                            "Optional AI summary unavailable (provider failure or time budget).",
+                        );
                     }
                 }
                 Err(error) => ctx
@@ -533,18 +643,27 @@ pub(super) struct CompareSummary {
     pub(super) commit_subjects: Vec<String>,
 }
 
-fn fetch_flake_compare_summary(change: &InputChange) -> Result<CompareSummary, CompareFetchError> {
+fn fetch_flake_compare_summary(
+    change: &InputChange,
+    deadline: Instant,
+) -> Result<CompareSummary, CompareFetchError> {
     let endpoint = flake_compare_endpoint(change).ok_or(CompareFetchError::MissingRevision)?;
-    fetch_compare_summary(&endpoint)
+    fetch_compare_summary(&endpoint, deadline)
 }
 
-fn fetch_brew_compare_summary(package: &BrewOutdatedPackage) -> Option<CompareSummary> {
+fn fetch_brew_compare_summary(
+    package: &BrewOutdatedPackage,
+    deadline: Instant,
+) -> Option<CompareSummary> {
     let endpoint = brew_compare_endpoint(package)?;
-    fetch_compare_summary(&endpoint).ok()
+    fetch_compare_summary(&endpoint, deadline).ok()
 }
 
-fn fetch_compare_summary(endpoint: &str) -> Result<CompareSummary, CompareFetchError> {
-    let output = run_captured_command("gh", &["api", endpoint], None)
+fn fetch_compare_summary(
+    endpoint: &str,
+    deadline: Instant,
+) -> Result<CompareSummary, CompareFetchError> {
+    let output = crate::infra::bounded_command::run("gh", &["api", endpoint], deadline)
         .map_err(|error| CompareFetchError::Command(format!("{error:#}")))?;
     compare_summary_from_output(&output)
 }
@@ -647,24 +766,36 @@ pub(super) fn should_use_detailed_ai_summary(input_name: &str, commit_count: usi
     KEY_INPUTS.contains(&input_name) || commit_count > 50
 }
 
-fn summarize_flake_change_ai(change: &InputChange, summary: &CompareSummary) -> Option<String> {
+fn summarize_flake_change_ai(
+    change: &InputChange,
+    summary: &CompareSummary,
+    deadline: Instant,
+) -> Option<String> {
     let target = format!(
         "flake input {} ({}/{})",
         change.name, change.owner, change.repo
     );
     let detailed = should_use_detailed_ai_summary(&change.name, summary.total_commits);
-    summarize_with_ai(&target, &summary.commit_subjects, detailed, 2, 400)
+    summarize_with_ai(
+        &target,
+        &summary.commit_subjects,
+        detailed,
+        2,
+        400,
+        deadline,
+    )
 }
 
 fn summarize_brew_change_ai(
     package: &BrewOutdatedPackage,
     summary: &CompareSummary,
+    deadline: Instant,
 ) -> Option<String> {
     let target = format!(
         "Homebrew package {} ({} -> {})",
         package.name, package.installed_version, package.current_version
     );
-    summarize_with_ai(&target, &summary.commit_subjects, false, 1, 180)
+    summarize_with_ai(&target, &summary.commit_subjects, false, 1, 180, deadline)
 }
 
 fn summarize_with_ai(
@@ -673,14 +804,15 @@ fn summarize_with_ai(
     _detailed: bool,
     max_lines: usize,
     max_chars: usize,
+    deadline: Instant,
 ) -> Option<String> {
     if commits.is_empty() {
         return None;
     }
 
     // Prefer Claude (Max auth) for all summaries, fall back to Codex.
-    summarize_with_claude(target, commits, max_lines, max_chars)
-        .or_else(|| summarize_with_codex(target, commits, max_lines, max_chars))
+    summarize_with_claude(target, commits, max_lines, max_chars, deadline)
+        .or_else(|| summarize_with_codex(target, commits, max_lines, max_chars, deadline))
 }
 
 fn summarize_with_codex(
@@ -688,6 +820,7 @@ fn summarize_with_codex(
     commits: &[String],
     max_lines: usize,
     max_chars: usize,
+    deadline: Instant,
 ) -> Option<String> {
     let prompt = build_codex_summary_prompt(target, commits);
     run_ai_summary(
@@ -695,6 +828,7 @@ fn summarize_with_codex(
         &["exec", "-m", DEFAULT_CODEX_MODEL, "--full-auto", &prompt],
         max_lines,
         max_chars,
+        deadline,
     )
 }
 
@@ -703,9 +837,16 @@ fn summarize_with_claude(
     commits: &[String],
     max_lines: usize,
     max_chars: usize,
+    deadline: Instant,
 ) -> Option<String> {
     let prompt = build_claude_summary_prompt(target, commits);
-    run_ai_summary("claude", &["--print", "-p", &prompt], max_lines, max_chars)
+    run_ai_summary(
+        "claude",
+        &["--print", "-p", &prompt],
+        max_lines,
+        max_chars,
+        deadline,
+    )
 }
 
 fn build_codex_summary_prompt(target: &str, commits: &[String]) -> String {
@@ -749,8 +890,9 @@ fn run_ai_summary(
     args: &[&str],
     max_lines: usize,
     max_chars: usize,
+    deadline: Instant,
 ) -> Option<String> {
-    let output = run_captured_command(program, args, None).ok()?;
+    let output = crate::infra::bounded_command::run(program, args, deadline).ok()?;
     if output.code != 0 {
         return None;
     }
@@ -852,12 +994,23 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<(), i32> {
 
     // Fetch summaries and AI descriptions in parallel across all packages.
     let no_ai = args.no_ai();
-    let enriched = enrich_optional(&outdated, |package| {
-        maybe_ai_summary(no_ai, || {
-            fetch_brew_compare_summary(package)
-                .and_then(|summary| summarize_brew_change_ai(package, &summary))
-        })
-    });
+    let deadline = summary_deadline();
+    if !no_ai {
+        Printer::detail(&format!(
+            "Fetching optional Homebrew summaries (up to {}s)",
+            deadline.saturating_duration_since(Instant::now()).as_secs() + 1
+        ));
+    }
+    let enriched = ctx
+        .printer
+        .with_loading("Fetching optional Homebrew summaries", |_| {
+            enrich_optional(&outdated, |package| {
+                maybe_ai_summary(no_ai, || {
+                    fetch_brew_compare_summary(package, deadline)
+                        .and_then(|summary| summarize_brew_change_ai(package, &summary, deadline))
+                })
+            })
+        });
 
     for (package, enrichment) in &enriched {
         println!();
@@ -878,6 +1031,9 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<(), i32> {
 
         match enrichment {
             Ok(Some(ai_summary)) => Printer::sub_detail(ai_summary),
+            Ok(None) if !no_ai => Printer::sub_detail(
+                "Optional summary unavailable (no comparison, provider failure or time budget).",
+            ),
             Ok(None) => {}
             Err(_) => ctx
                 .printer
@@ -899,6 +1055,14 @@ fn run_brew_phase(args: &UpgradeArgs, ctx: &AppContext) -> Result<(), i32> {
         .action(&format!("Upgrading {upgrade_count} Homebrew packages"));
     println!();
 
+    apply_brew_upgrades(args, ctx, &outdated)
+}
+
+fn apply_brew_upgrades(
+    args: &UpgradeArgs,
+    ctx: &AppContext,
+    outdated: &[BrewOutdatedPackage],
+) -> Result<(), i32> {
     let mut failed = false;
     for is_cask in [false, true] {
         let names = outdated
@@ -1257,7 +1421,7 @@ fn commit_flake_lock(
     lock_changed: bool,
     root_inputs: &RootInputChanges,
     extra_paths: &[PathBuf],
-) -> Result<(), i32> {
+) -> Result<CommitOutcome, i32> {
     let message = build_upgrade_commit_message(lock_changed, root_inputs, extra_paths);
     let mut paths = Vec::new();
     if lock_changed {
@@ -1272,11 +1436,11 @@ fn commit_flake_lock(
     match commit_upgrade_paths(&ctx.repo_root, &paths, &message) {
         Ok(CommitOutcome::Committed) => {
             ctx.printer.success(&format!("Committed: {message}"));
-            Ok(())
+            Ok(CommitOutcome::Committed)
         }
         Ok(CommitOutcome::NoChanges) => {
             Printer::detail("No changes to commit");
-            Ok(())
+            Ok(CommitOutcome::NoChanges)
         }
         Err(err) => {
             ctx.printer.error("Commit failed");

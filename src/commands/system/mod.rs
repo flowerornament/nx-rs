@@ -4,6 +4,7 @@ mod homebrew_validation;
 mod lint;
 mod nix_diagnostics;
 mod rebuild;
+mod receipt;
 mod test;
 mod undo;
 mod update;

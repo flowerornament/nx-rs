@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 import statistics
 import subprocess
@@ -25,6 +26,10 @@ def identity(repo):
     return digest.hexdigest()
 
 
+def source_head(repo):
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+
 def activity_summary(path):
     counts = {}
     downloads = []
@@ -44,10 +49,12 @@ def activity_summary(path):
 
 
 def record(
-    repo, host, directory, repeat, timeout, build=False, compare_eval_cache=False
+    repo, host, directory, repeat, timeout, build=False, compare_eval_cache=False,
+    operations=None, max_load_per_cpu=None
 ):
     directory.mkdir(parents=True, exist_ok=False)
     source = identity(repo)
+    head = source_head(repo)
     attr = f"{repo}#darwinConfigurations.{host}.system"
     commands = {
         "evaluate": ["nix", "eval", "--raw", f"{attr}.drvPath"],
@@ -66,12 +73,21 @@ def record(
         ]
     if build:
         commands["build"] = ["nix", "build", "--no-link", "--print-out-paths", attr]
+    if operations:
+        unknown = set(operations) - commands.keys()
+        if unknown:
+            raise ValueError(f"unknown operations: {sorted(unknown)}")
+        commands = {name: commands[name] for name in dict.fromkeys(operations)}
     manifest = {
         "version": 1,
         "mode": "real-pinned-config",
         "repo": str(repo),
         "host": host,
         "tracked_content_sha256": source,
+        "git_head": head,
+        "logical_cpus": os.cpu_count(),
+        "max_load_per_cpu": max_load_per_cpu,
+        "operations": list(commands),
         "nix_version": subprocess.check_output(["nix", "--version"], text=True).strip(),
         "repeat": repeat,
         "timeout_seconds": timeout,
@@ -85,12 +101,26 @@ def record(
     def save():
         destination.write_text(json.dumps(manifest, indent=2) + "\n")
 
+    def qualify():
+        reason = None
+        load = os.getloadavg()
+        manifest["qualification"] = {"load": load, "logical_cpus": os.cpu_count(), "at_ns": time.time_ns()}
+        if identity(repo) != source or source_head(repo) != head:
+            reason = "tracked configuration or Git HEAD changed during measurement"
+        elif max_load_per_cpu is not None and load[0] / (os.cpu_count() or 1) > max_load_per_cpu:
+            reason = "host load exceeds requested load-per-CPU limit"
+        if reason:
+            manifest["refused_reason"] = reason
+            save()
+            raise ValueError(reason)
+
     save()
     for index in range(repeat):
         # Rotate order: the first command can warm shared evaluation caches.
         names = list(commands)
         names = names[index % len(names) :] + names[: index % len(names)]
         for name in names:
+            qualify()
             args = commands[name] + [
                 "--no-update-lock-file",
                 "--log-format",
@@ -126,8 +156,7 @@ def record(
                 f"{stem}: {sample['wall_ns'] / 1e9:.3f}s code={sample['code']}",
                 flush=True,
             )
-            if identity(repo) != source:
-                raise ValueError("tracked configuration changed during measurement")
+            qualify()
     manifest.update(complete=True, finished_at_ns=time.time_ns())
     save()
     report(directory)
@@ -172,6 +201,8 @@ def main():
         action="store_true",
         help="Compare planning with the per-command evaluation cache disabled; preserve all existing caches",
     )
+    parser.add_argument("--operations", nargs="+", help="Run only named operations in this order, e.g. plan check; avoids an implicit evaluate warmup")
+    parser.add_argument("--max-load-per-cpu", type=float, help="Refuse samples above this 1-minute load / logical CPU ratio")
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--output", type=Path)
@@ -183,16 +214,17 @@ def main():
         parser.error("--host is required when recording")
     if args.repeat < 1 or args.timeout < 1:
         parser.error("repeat and timeout must be positive")
+    if args.max_load_per_cpu is not None and (not math.isfinite(args.max_load_per_cpu) or args.max_load_per_cpu <= 0):
+        parser.error("max-load-per-cpu must be positive")
     output = args.output or Path(".nx/perf") / time.strftime("real-%Y%m%dT%H%M%S")
-    record(
-        args.repo.resolve(),
-        args.host,
-        output.resolve(),
-        args.repeat,
-        args.timeout,
-        args.build,
-        args.compare_eval_cache,
-    )
+    try:
+        record(
+            args.repo.resolve(), args.host, output.resolve(), args.repeat, args.timeout,
+            args.build, args.compare_eval_cache, args.operations, args.max_load_per_cpu,
+        )
+    except ValueError as error:
+        parser.exit(1, f"Measurement refused: {error}\nArtifacts: {output.resolve()}\n")
+
 
 
 if __name__ == "__main__":

@@ -53,6 +53,8 @@ pub struct TimingRecord {
     pub workload_start: Option<Workload>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workload_end: Option<Workload>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upgrade_receipt: Option<crate::domain::upgrade_receipt::UpgradeReceipt>,
     pub phases: Vec<TimingPhase>,
 }
 
@@ -209,6 +211,7 @@ impl TimingSession {
             trace_path: crate::infra::run_trace::path(),
             workload_start: Some(self.workload_start),
             workload_end: Some(Workload::observe()),
+            upgrade_receipt: None,
             phases: self.phases,
         }
     }

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- bounds optional comparison and AI work with shared deadlines, visible progress, descendant cleanup and output limits
+- prints and persists observed upgrade receipts, including partial package changes, activation/commit outcomes, unknown observations and command shadowing
+- qualifies real measurements with Git identity, optional host-load refusal and planning-only controls
+
 - validates generated Homebrew core declarations before split profile changes and preserves split-build timings when legacy activation is required
 - supports `nx upgrade --brew-only` for Homebrew updates with a current-pin rebuild, plus opt-in bounded routine traces and workload context in timing history
 

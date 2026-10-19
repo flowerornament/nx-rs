@@ -69,7 +69,9 @@ run_nx() {
   shift
   (
     cd "$repo"
-    env \
+    env -u NX_PROFILE_PATH -u NX_TRACE_PATH -u NX_TRACE_DIR \
+      -u NX_TRACE_KEEP -u NX_TRACE_MAX_BYTES -u XDG_STATE_HOME \
+      -u NX_SUMMARY_TIMEOUT_SECONDS \
       HOME="$home" \
       NX_OUTPUT_DEMO=1 \
       NX_REPO_ROOT="$repo" \

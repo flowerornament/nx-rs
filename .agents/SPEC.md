@@ -593,6 +593,19 @@ The existing upgrade lock still serializes real operations. It never owns or
 commits an unchanged/preexisting lock edit; existing rebuild hash-repair rules
 still apply to paths repaired by this invocation.
 
+Real upgrades print an observed result receipt even after failure. Read-only
+before/after observations have a five-second budget each and are attributed as
+`observe-before` and `observe-after` phases. They compare installed Homebrew
+formula/cask versions and direct Nix environment references (system `sw` and
+Darwin per-user Home Manager paths), rather than the full dependency closure.
+Unavailable/failed observations are unknown, never an empty successful diff.
+The receipt distinguishes input, Homebrew, rebuild, activation and owned commit
+outcomes; records system profile targets; and checks changed Homebrew commands
+against PATH. App-only casks have no command shadowing check. These observations
+are snapshots, not an exclusive audit of external package-manager activity.
+Dry runs retain their existing preview and omit receipt observations.
+The structured receipt is an additive optional `upgrade_receipt` timing field.
+
 High-level phases:
 
 1. Determinate substrate phase:
@@ -608,6 +621,9 @@ High-level phases:
   - non-dry-run with positional inputs: stream `nix flake update <input...>`, preserving CLI order
   - load the new lock and derive one root-input change set through the lock's `root.inputs` mapping; transitive node churn remains part of `flake.lock` but is not reported as a user-managed input
   - fetch change info and summaries
+  - optional comparison/AI batches share one absolute deadline (10 seconds by default; `NX_SUMMARY_TIMEOUT_SECONDS=1..300` overrides); provider fallback never resets it
+  - optional commands run in owned process groups with nonblocking bounded output; deadline cancellation kills their group and reaps the leader, including when inherited pipes outlive the leader; oversized output is rejected
+  - the shared printer shows enrichment activity and its time budget; summary failure/timeout remains advisory and preserves every input/package row
   - optional flake and Homebrew enrichment worker panics retain the input/package row, warn that its summary is unavailable, and do not abort the upgrade or discard other workers' summaries
   - use complete locked revisions for GitHub comparison identity while keeping abbreviated revisions display-only; comparison failures are advisory and report whether command execution, the API, or response parsing failed
   - normal flake check and build phases realize changed sources on demand
@@ -805,8 +821,10 @@ Dry-run behavior:
 - `just perf-nix --host HOST` measures real pinned evaluation, build planning and
   flake checking without building checks or allowing lock updates. Optional
   `--build` realizes the system without linking or activation. It retains input
-  content identity, Nix version, load, raw logs, exit results and timeouts; drift
-  aborts with incomplete evidence. Existing caches are preserved. Observed
+  tracked-content identity and Git HEAD, Nix version, load, raw logs, exit results
+  and timeouts. It checks drift before/after each command and retains incomplete
+  evidence on refusal. `--operations plan` avoids an explicit-evaluation warmup;
+  `--max-load-per-cpu` optionally refuses busy-host samples before execution. Existing caches are preserved. Observed
   download and source-copy activity counts do not prove all network requests.
 
 - Automatic rebuild/upgrade timing storage resolves `NX_PROFILE_PATH` first, then
@@ -823,6 +841,10 @@ Dry-run behavior:
 - Trace timeline reports retain phase/command interval boundaries and show peak
   command concurrency. Summed command work is elapsed interval work, not CPU time.
 - Real-config evaluation-cache comparisons are per-command dry-run controls;
-  preserve existing caches and forbid lock updates. System tests isolate timing
+  preserve existing caches and forbid lock updates. Real measurements retain
+  both tracked-content identity and Git HEAD, refusing drift before/after each
+  command. `--operations plan` avoids implicit explicit-evaluation warmup;
+  `--max-load-per-cpu` optionally refuses busy-host measurements and retains the
+  refusal with workload context and no invented successful samples. System tests isolate timing
   and trace paths from inherited user state.
 

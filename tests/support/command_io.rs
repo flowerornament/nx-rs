@@ -16,6 +16,7 @@ pub fn run_command_with_optional_stdin(
         "NX_TRACE_DIR",
         "NX_TRACE_KEEP",
         "NX_TRACE_MAX_BYTES",
+        "NX_SUMMARY_TIMEOUT_SECONDS",
         "XDG_STATE_HOME",
     ] {
         if !command.get_envs().any(|(name, _)| name == key) {

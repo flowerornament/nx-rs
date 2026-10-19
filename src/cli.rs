@@ -893,7 +893,7 @@ pub struct UpgradeFlowArgs {
     pub dry_run: bool,
     #[arg(long, short = 'v', help = "Enable verbose upgrade output")]
     pub verbose: bool,
-    #[arg(long, help = "Disable AI-assisted recovery prompts")]
+    #[arg(long, help = "Disable optional AI update summaries")]
     pub no_ai: bool,
 }
 

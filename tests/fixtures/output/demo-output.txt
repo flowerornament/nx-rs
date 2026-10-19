@@ -86,6 +86,8 @@ error: flake evaluation failed
 x Flake check failed
 
   $ nx upgrade
+> Recording installed package state
+
 > Checking Determinate Nix
 + Determinate Nix 3.21.8 is current
 
@@ -128,5 +130,13 @@ x Flake check failed
   activating Home Manager...
   linking generation...
 + System rebuilt
+
+> Checking installed package changes
+
+  Upgrade result
+  Inputs: unchanged; Homebrew: completed; rebuild: completed; activation: completed; commit: not needed
+  System profile change unknown
+  Homebrew: no observed package changes
+  Nix environment references: unknown (system profile unavailable)
 
 + Output demo complete

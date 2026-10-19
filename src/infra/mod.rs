@@ -1,5 +1,6 @@
 pub mod activation_profile;
 pub mod ai_engine;
+pub(crate) mod bounded_command;
 pub mod cache;
 pub mod config_scan;
 pub mod file_edit;

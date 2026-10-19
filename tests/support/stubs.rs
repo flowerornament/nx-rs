@@ -323,6 +323,11 @@ case "$program" in
     exit 1
     ;;
   gh)
+    if [ "${1:-}" = "api" ] && [ -n "${NX_SYSTEM_IT_SUMMARY_SLEEP:-}" ]; then
+      sleep "$NX_SYSTEM_IT_SUMMARY_SLEEP" &
+      wait
+      exit 1
+    fi
     if [ "${1:-}" = "auth" ] && [ "${2:-}" = "token" ]; then
       if [ "$mode" = "upgrade_with_token" ]; then
         echo "ghp_system_matrix_token"
@@ -358,6 +363,18 @@ case "$program" in
     fi
 
     if [ "${1:-}" = "info" ] && [ "${2:-}" = "--json=v2" ]; then
+      if [ "${3:-}" = "--installed" ]; then
+        version=1.0
+        if [ -f "$HOME/.brew-upgraded" ]; then version=2.0; fi
+        if [ "$mode" = "upgrade_brew_casks" ] || [ "$mode" = "upgrade_brew_failure" ] || [ "$mode" = "upgrade_brew_pinned" ]; then
+          echo "{\"formulae\":[],\"casks\":[{\"token\":\"hex\",\"installed\":\"$version\"}]}"
+        elif [ "$mode" = "upgrade_brew_outdated" ]; then
+          echo "{\"formulae\":[{\"name\":\"ripgrep\",\"installed\":[{\"version\":\"$version\"}]}],\"casks\":[]}"
+        else
+          echo '{"formulae":[],"casks":[]}'
+        fi
+        exit 0
+      fi
       if [ "$mode" = "brew_validation_missing" ]; then
         echo 'vercel-cli was migrated to homebrew/cask/vercel' >&2
         exit 1
@@ -379,6 +396,7 @@ case "$program" in
     fi
 
     if [ "${1:-}" = "upgrade" ]; then
+      : > "$HOME/.brew-upgraded"
       if [ "$mode" = "upgrade_brew_failure" ]; then
         echo 'Cask upgrade failed' >&2
         exit 1

@@ -179,3 +179,13 @@ later git-evidence import; no integration or imported receipt is claimed here.
 For Nix setting semantics, consult the [Determinate performance documentation](https://docs.determinate.systems/determinate-nix/best-practices/).
 The measurements and recommendation order above are local evidence, rather than
 vendor speedup estimates.
+
+## Implementation follow-through
+
+The seven recommendations are tracked under `nx-rs-lhmz`; see
+[upgrade-improvement-plan.md](upgrade-improvement-plan.md) for acceptance and
+qualification decisions. The harness supports plan-only runs, HEAD drift checks
+and optional load refusal. The first qualified retry refused at 56.493 load on
+18 CPUs, before issuing a Nix command; this is not a speed measurement.
+Warm-cache identity and the narrow sudo policy remain intact. Further duplicate
+evaluation optimization needs the trace from a normal upgrade.

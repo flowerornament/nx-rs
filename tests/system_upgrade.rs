@@ -1488,6 +1488,7 @@ fn run_case_with_extra_env(
         &serde_json::json!({"process_wall_ns":elapsed.as_nanos(),"traced":tracing,"exit_code":exit_code}),
     )?;
     assert_upgrade_timing(&timings_path, case.expected_exit)?;
+    assert_receipt(&timings_path, case)?;
 
     let expected_calls = expected_upgrade_calls(case);
     assert_invocations(case.id, repo_root.path(), &invocations, &expected_calls);
@@ -1671,6 +1672,32 @@ fn should_ignore_snapshot_path(rel_path: &str) -> bool {
     rel_path == LOG_FILE_NAME || rel_path == STUB_DIR_NAME || rel_path.starts_with(".system-stubs/")
 }
 
+fn assert_receipt(timings_path: &Path, case: &UpgradeCase) -> Result<(), Box<dyn Error>> {
+    let timing: serde_json::Value = serde_json::from_str(&fs::read_to_string(timings_path)?)?;
+    if case.cli_args.contains(&"--dry-run") {
+        assert!(timing.get("upgrade_receipt").is_none());
+    } else {
+        let receipt = &timing["upgrade_receipt"];
+        assert!(receipt.is_object());
+        if matches!(case.mode, "upgrade_brew_casks" | "upgrade_brew_failure") {
+            let changes = receipt["packages"][0]["changes"].as_array().unwrap();
+            assert_eq!(changes.len(), 1);
+            assert_eq!(changes[0]["before"][0]["version"], "1.0");
+            assert_eq!(changes[0]["after"][0]["version"], "2.0");
+            assert_eq!(
+                receipt["homebrew"],
+                if case.expected_exit == 0 {
+                    "completed"
+                } else {
+                    "failed"
+                }
+            );
+        }
+    }
+
+    Ok(())
+}
+
 fn assert_upgrade_timing(path: &Path, exit: i32) -> Result<(), Box<dyn Error>> {
     let timing_records: Vec<serde_json::Value> = fs::read_to_string(path)?
         .lines()
@@ -1691,23 +1718,58 @@ fn assert_upgrade_timing(path: &Path, exit: i32) -> Result<(), Box<dyn Error>> {
 }
 
 fn expected_upgrade_calls(case: &UpgradeCase) -> Vec<ExpectedCall> {
-    if case.cli_args.contains(&"--brew-only") {
-        return std::iter::once(ExpectedCall::new(
-            "git",
-            EXPECTED_CWD_REPO_ROOT,
-            REBUILD_TIMING_HEAD_ARGS,
-        ))
-        .chain(case.expected_calls.iter().copied())
-        .collect();
+    let mut calls = vec![ExpectedCall::new(
+        "git",
+        EXPECTED_CWD_REPO_ROOT,
+        REBUILD_TIMING_HEAD_ARGS,
+    )];
+    let brew_enabled = !case.cli_args.contains(&"--skip-brew") && !case.cli_args.contains(&"nx-rs");
+    let observe = !case.cli_args.contains(&"--dry-run")
+        && (!case.cli_args.contains(&"--skip-rebuild") || brew_enabled);
+    let inventory = ExpectedCall::new(
+        "brew",
+        EXPECTED_CWD_REPO_ROOT,
+        &["info", "--json=v2", "--installed"],
+    );
+    if observe {
+        calls.push(inventory);
     }
-    [
-        ExpectedCall::new("git", EXPECTED_CWD_REPO_ROOT, REBUILD_TIMING_HEAD_ARGS),
-        NIX_VERSION_CALL,
-        DETERMINATE_VERSION_CALL,
-    ]
-    .into_iter()
-    .chain(case.expected_calls.iter().copied())
-    .collect()
+    if !case.cli_args.contains(&"--brew-only") {
+        calls.extend([NIX_VERSION_CALL, DETERMINATE_VERSION_CALL]);
+    }
+    calls.extend(case.expected_calls.iter().copied());
+    if observe {
+        calls.push(inventory);
+    }
+    calls
+}
+
+#[test]
+fn optional_summary_deadline_preserves_changed_input_and_upgrade_success()
+-> Result<(), Box<dyn Error>> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let binary = resolve_nx_bin(&root)?;
+    let case = UPGRADE_CASES
+        .iter()
+        .find(|case| {
+            case.mode == "upgrade_flake_changed" && case.cli_args.contains(&"--skip-commit")
+        })
+        .unwrap();
+    let started = std::time::Instant::now();
+    let output = run_case_with_extra_env(
+        &binary,
+        &root.join("tests/fixtures/system/repo_base"),
+        case,
+        &[
+            ("NX_SUMMARY_TIMEOUT_SECONDS", "1"),
+            ("NX_SYSTEM_IT_SUMMARY_SLEEP", "60"),
+        ],
+    )?;
+    let rendered = format!("{}{}", output.stdout, output.stderr);
+    assert!(rendered.contains("nixpkgs"));
+    assert!(rendered.contains("optional command deadline reached"));
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    Ok(())
 }
 
 #[test]

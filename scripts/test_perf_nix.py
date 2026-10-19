@@ -81,7 +81,7 @@ class RealMeasurementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root) / "evidence"
             with (
-                patch.object(perf_nix, "identity", side_effect=["before", "after"]),
+                patch.object(perf_nix, "identity", side_effect=["before", "before", "after"]),
                 patch.object(subprocess, "check_output", return_value="nix test"),
                 patch.object(
                     subprocess,
@@ -94,6 +94,39 @@ class RealMeasurementTests(unittest.TestCase):
             manifest = json.loads((directory / "manifest.json").read_text())
             self.assertFalse(manifest["complete"])
             self.assertEqual(len(manifest["samples"]), 1)
+
+    def test_head_drift_and_load_refuse_before_running_nix(self):
+        for head_values, load, reason in [
+            (["old", "new"], 0, "HEAD changed"),
+            (["same", "same"], 100, "host load"),
+        ]:
+            with (
+                tempfile.TemporaryDirectory() as root,
+                patch.object(perf_nix, "identity", return_value="same"),
+                patch.object(perf_nix, "source_head", side_effect=head_values),
+                patch.object(subprocess, "check_output", return_value="nix test"),
+                patch.object(perf_nix.os, "getloadavg", return_value=(load, 0, 0)),
+                patch.object(perf_nix.os, "cpu_count", return_value=2),
+                patch.object(subprocess, "run") as run,
+            ):
+                directory = Path(root) / "evidence"
+                with self.assertRaisesRegex(ValueError, reason):
+                    perf_nix.record(Path(root), "host", directory, 1, 1, max_load_per_cpu=1)
+                run.assert_not_called()
+                manifest = json.loads((directory / "manifest.json").read_text())
+                self.assertFalse(manifest["complete"])
+                self.assertIn("refused_reason", manifest)
+
+    def test_plan_only_does_not_warm_with_explicit_evaluation(self):
+        with (
+                tempfile.TemporaryDirectory() as root,
+            patch.object(perf_nix, "identity", return_value="same"),
+            patch.object(subprocess, "check_output", return_value="same"),
+            patch.object(subprocess, "run", return_value=subprocess.CompletedProcess("nix", 0)) as run,
+        ):
+            perf_nix.record(Path(root), "host", Path(root) / "evidence", 1, 1, operations=["plan"])
+            self.assertEqual(run.call_count, 1)
+            self.assertIn("--dry-run", run.call_args.args[0])
 
 
 if __name__ == "__main__":

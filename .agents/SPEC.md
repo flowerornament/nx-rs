@@ -624,6 +624,10 @@ High-level phases:
   - non-dry-run with positional inputs: stream `nix flake update <input...>`, preserving CLI order
   - load the new lock and derive one root-input change set through the lock's `root.inputs` mapping; transitive node churn remains part of `flake.lock` but is not reported as a user-managed input
   - fetch change info and summaries
+  - wrap summary prose to terminal width (at most 100 columns, 80 when redirected), preserving complete sentences; reject excessively verbose provider responses instead of truncating them
+  - show commit count and labeled AI summary by default; show up to three separate commit-title bullets with `--verbose`, `--no-ai`, or unavailable AI
+  - supply at most 30 commit titles with explicit sampled/total counts to AI; prompts must avoid claims about unobserved changes and speculative risk assessments
+  - AI subprocesses inherit their installed CLI's configured model; only explicit install/remove `--model` arguments override it
   - optional enrichment runs with at most four workers, preserving row order and per-row panic/failure isolation
   - optional comparison/AI batches share one absolute deadline (10 seconds by default; `NX_SUMMARY_TIMEOUT_SECONDS=1..300` overrides); provider fallback never resets it
   - optional commands run in owned process groups with nonblocking bounded output; deadline cancellation kills their group and reaps the leader, including when inherited pipes outlive the leader; oversized output is rejected

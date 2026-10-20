@@ -323,6 +323,10 @@ case "$program" in
     exit 1
     ;;
   gh)
+    if [ "${1:-}" = "api" ] && [ -n "${NX_SYSTEM_IT_COMPARE_JSON:-}" ]; then
+      printf '%s\n' "$NX_SYSTEM_IT_COMPARE_JSON"
+      exit 0
+    fi
     if [ "${1:-}" = "api" ] && [ -n "${NX_SYSTEM_IT_SUMMARY_SLEEP:-}" ]; then
       sleep "$NX_SYSTEM_IT_SUMMARY_SLEEP" &
       wait

@@ -12,7 +12,18 @@ use crate::infra::shell::{CapturedCommand, run_captured_command};
 use crate::output::printer::{ActivityKind, Printer};
 use crate::output::style::OutputStyle;
 
-pub const DEFAULT_CODEX_MODEL: &str = "gpt-5-codex-mini";
+pub(crate) fn codex_exec_args<'a>(
+    prompt: &'a str,
+    model: Option<&'a str>,
+    sandbox: &'a str,
+) -> Vec<&'a str> {
+    let mut args = vec!["exec", "--sandbox", sandbox];
+    if let Some(model) = model {
+        args.extend(["-m", model]);
+    }
+    args.push(prompt);
+    args
+}
 
 // --- Types
 
@@ -76,13 +87,13 @@ pub trait AiEngine: Send + Sync {
 
 /// Fast non-interactive engine via `codex exec`.
 pub struct CodexEngine {
-    pub model: String,
+    pub model: Option<String>,
 }
 
 impl CodexEngine {
     pub fn new(model: Option<&str>) -> Self {
         Self {
-            model: model.unwrap_or(DEFAULT_CODEX_MODEL).to_string(),
+            model: model.map(String::from),
         }
     }
 }
@@ -103,7 +114,7 @@ impl AiEngine for CodexEngine {
             package,
             run_captured_command(
                 "codex",
-                &["exec", "-m", &self.model, "--full-auto", &prompt],
+                &codex_exec_args(&prompt, self.model.as_deref(), "workspace-write"),
                 Some(cwd),
             ),
             candidates,
@@ -114,7 +125,7 @@ impl AiEngine for CodexEngine {
     fn run_edit(&self, prompt: &str, cwd: &Path) -> CommandOutcome {
         let result = run_captured_command(
             "codex",
-            &["exec", "-m", &self.model, "--full-auto", prompt],
+            &codex_exec_args(prompt, self.model.as_deref(), "workspace-write"),
             Some(cwd),
         );
         match result {
@@ -1099,7 +1110,11 @@ mod tests {
     #[test]
     fn codex_engine_uses_default_model() {
         let engine = CodexEngine::new(None);
-        assert_eq!(engine.model, DEFAULT_CODEX_MODEL);
+        assert_eq!(engine.model, None);
+        assert_eq!(
+            codex_exec_args("prompt", None, "read-only"),
+            ["exec", "--sandbox", "read-only", "prompt"]
+        );
     }
 
     #[test]
@@ -1111,8 +1126,19 @@ mod tests {
 
     #[test]
     fn codex_engine_custom_model() {
-        let engine = CodexEngine::new(Some("gpt-4o"));
-        assert_eq!(engine.model, "gpt-4o");
+        let engine = CodexEngine::new(Some("custom-model"));
+        assert_eq!(engine.model.as_deref(), Some("custom-model"));
+        assert_eq!(
+            codex_exec_args("prompt", engine.model.as_deref(), "workspace-write"),
+            [
+                "exec",
+                "--sandbox",
+                "workspace-write",
+                "-m",
+                "custom-model",
+                "prompt"
+            ]
+        );
     }
 
     #[test]

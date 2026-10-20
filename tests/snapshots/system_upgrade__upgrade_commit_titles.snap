@@ -1,0 +1,8 @@
+---
+source: tests/system_upgrade.rs
+expression: entry
+---
+    - fix: restore the pinned target after a failed push so the local bookmark
+      matches the published state
+    - refactor: share interned text ownership
+    - test: make workspace layout explicit

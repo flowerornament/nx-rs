@@ -287,6 +287,7 @@ fn parse_compare_json_extracts_commit_summary() {
             "feat: first line".to_string(),
             "fix: second line".to_string(),
             "chore: third line".to_string(),
+            "docs: fourth line".to_string(),
         ]
     );
 }
@@ -320,18 +321,47 @@ fn maybe_ai_summary_runs_when_enabled() {
 }
 
 #[test]
-fn detailed_ai_summary_for_key_input() {
-    assert!(should_use_detailed_ai_summary("home-manager", 1));
-    assert!(should_use_detailed_ai_summary("custom-input", 51));
-    assert!(!should_use_detailed_ai_summary("custom-input", 10));
+fn compare_summary_prioritizes_prose_and_keeps_titles_for_fallback_and_verbose() {
+    let summary = parse_compare_json(
+        r#"{"total_commits":12,"commits":[
+        {"commit":{"message":"fix: restore target after failed push"}},
+        {"commit":{"message":"refactor: share interned text"}}
+    ]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        format_compare_summary(
+            &summary,
+            Some("Restores the target after a failed push."),
+            false
+        ),
+        ["AI summary: Restores the target after a failed push."]
+    );
+    let fallback = format_compare_summary(&summary, None, false);
+    assert_eq!(
+        fallback,
+        [
+            "Commit titles (2 of 12):",
+            "- fix: restore target after failed push",
+            "- refactor: share interned text"
+        ]
+    );
+    let verbose = format_compare_summary(&summary, Some("Summary."), true);
+    assert_eq!(&verbose[1..], &fallback);
+    let prompt = build_summary_prompt("anneal", &summary);
+    assert!(prompt.contains("2 sampled commit titles out of 12 total commits"));
+    assert!(prompt.contains("Do not infer risks"));
 }
 
 #[test]
-fn parse_ai_summary_output_compacts_and_truncates() {
-    let output = "Summary: first line\n\n- second line\nthird line";
-    let parsed = parse_ai_summary_output(output, 2, 30).expect("summary should parse");
-    assert!(parsed.starts_with("Summary: first line second"));
-    assert!(parsed.len() <= 30);
+fn parse_ai_summary_output_keeps_complete_prose_and_rejects_excessive_output() {
+    let output = "Summary: First line\n\n- second line\nthird line.";
+    assert_eq!(
+        parse_ai_summary_output(output).as_deref(),
+        Some("First line second line third line.")
+    );
+    assert!(parse_ai_summary_output(&"x".repeat(1201)).is_none());
+    assert!(parse_ai_summary_output("\n  \n").is_none());
 }
 
 #[test]

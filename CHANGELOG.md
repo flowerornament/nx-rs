@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.5.46 - 2026-10-21
+
 - serializes mutating commands on Darwin and Linux with a shared kernel operation lock, visible waiting, fresh planning after acquisition and separate wait timings
 - keeps external commands protected after their nx parent exits, including activation commands that close inherited descriptors
 

@@ -586,7 +586,7 @@ fn clean_entry(entry: &CacheEntry) -> Result<(), String> {
     match &entry.clean {
         CleanMethod::RemoveContents => remove_dir_contents(&entry.path),
         CleanMethod::Command(prog, args) => {
-            let status = Command::new(prog)
+            let status = crate::infra::shell::operation_command(prog)
                 .args(args.iter())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())

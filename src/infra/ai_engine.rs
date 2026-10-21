@@ -1,6 +1,6 @@
 use std::io::BufRead;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use regex::Regex;
 use serde_json::Value;
@@ -246,7 +246,7 @@ impl ClaudeCodeEngine {
         let printer = Printer::new(self.style);
         let session_id = uuid::Uuid::new_v4();
 
-        let mut cmd = Command::new("claude");
+        let mut cmd = crate::infra::shell::operation_command("claude");
         cmd.args([
             "--print",
             "--verbose",

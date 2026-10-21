@@ -815,6 +815,26 @@ Scans host cache directories, reports sizes, and cleans them after confirmation.
 
 ---
 
+### Concurrent commands
+
+Mutating nx commands wait for one shared operation lock on macOS and Linux.
+You can run `nx rebuild` or `nx upgrade` while another agent is working: nx shows
+the owning command, PID and repository, waits, then reads the current state before
+planning. `nx` and `nx-dev` share the same lock across repositories and users.
+Configuration edits, generation pruning and cache cleanup participate too.
+
+Queries, dry runs and `nx rebuild --preflight` remain available while an operation
+is running. Ctrl-C while waiting cancels your waiter without affecting the owner.
+Queued rebuilds/upgrades record waiting time as an `operation-wait` timing phase.
+External commands retain the lock until they exit, even if their nx parent exits
+unexpectedly; there is no stale PID file to clear.
+
+The default lock is `/var/tmp/nx-operation.lock`. Never delete it to clear
+contention: the kernel owns the lock and releases it when its last holder exits.
+`NX_OPERATION_LOCK_PATH` selects another absolute path for isolated environments;
+processes using different paths cannot coordinate. Direct `darwin-rebuild`,
+`nixos-rebuild`, Homebrew and older nx versions do not participate in this protocol.
+
 ### Behavior Notes
 
 - `help`, `where`, `list`, `info`, `status`, `installed`, `search`,

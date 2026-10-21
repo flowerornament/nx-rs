@@ -100,8 +100,14 @@ pub struct TimingSession {
 impl TimingSession {
     #[must_use]
     pub fn new(command: TimingCommand, repo_root: &Path) -> Self {
-        let started = std::time::Instant::now();
-        let started_at_ms = now_ms();
+        let wait = crate::infra::operation_lock::wait_timing();
+        let started = wait.map_or_else(std::time::Instant::now, |wait| wait.started);
+        let started_at_ms = wait.map_or_else(now_ms, |wait| {
+            wait.started_at
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        });
         Self {
             command: command.as_str().to_string(),
             repo_head: git_head(repo_root),
@@ -109,7 +115,14 @@ impl TimingSession {
             started_at_ms,
             started,
             repo_root: repo_root.to_path_buf(),
-            phases: Vec::new(),
+            phases: wait.map_or_else(Vec::new, |wait| {
+                vec![TimingPhase {
+                    name: "operation-wait".into(),
+                    duration_ms: wait.duration.as_millis(),
+                    status: "ok".into(),
+                    children: Vec::new(),
+                }]
+            }),
             workload_start: Workload::observe(),
         }
     }

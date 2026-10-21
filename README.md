@@ -602,6 +602,8 @@ Active files and explicitly named traces are preserved. Limits warn and mark a
 trace incomplete without changing the command's result. `NX_TRACE_PATH` takes
 precedence and retains its exclusive-file behavior. Timing records link to their
 trace and include start/end load averages and available CPU count.
+Home Manager session variables apply in new sessions. To enable tracing in an
+existing shell immediately, export `NX_TRACE_DIR` with the configured path.
 
 Upgrade records cover the version check, flake update, cache admission, summaries,
 Homebrew, rebuild, and commit. Rebuild phases are nested inside the upgrade;
@@ -614,10 +616,19 @@ For detailed observation during your next normal upgrade, choose a new trace pat
 NX_TRACE_PATH=/tmp/my-upgrade.jsonl nx upgrade -y
 python3 ~/code/nx-rs/scripts/perf_system.py --trace /tmp/my-upgrade.jsonl
 python3 ~/code/nx-rs/scripts/perf_system.py --timeline /tmp/my-upgrade.jsonl
+python3 ~/code/nx-rs/scripts/perf_system.py --nix-activities /tmp/my-upgrade.jsonl
 ```
 
 The versioned JSON Lines trace records monotonic phase/command intervals, parent
 relationships, exit results, and available structured Nix activity IDs and targets.
+The activity report pairs IDs within each command, shows the longest activities,
+and keeps unfinished or unmatched activity records visible. Determinate activity
+names and typed installable/source-path targets distinguish evaluation from local
+copying even when they share a numeric type. Older traces remain readable but
+cannot recover names that were not recorded. Activity durations overlap.
+Builder/post-build log lines and arbitrary diagnostic payload remain outside
+the measurement trace. Invalid activity IDs stay unknown. Colliding IDs remain
+ambiguous for the rest of their command, rather than producing guessed intervals.
 It does not change command selection or terminal output. Command labels contain
 bounded operation names rather than arbitrary arguments, prompts, or environment
 values. Nix activity fields can contain source URLs and store paths. An existing

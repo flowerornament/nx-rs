@@ -1,5 +1,8 @@
 # Local Nix performance evidence
 
+Latest measurements and trace improvements:
+[Detailed performance traces, 2026-10-21](performance/2026-10-21.md).
+
 Current ranked recommendations and new measurements:
 [Upgrade performance recommendations, 2026-10-19](performance-recommendations.md).
 

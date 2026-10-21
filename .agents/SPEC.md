@@ -823,6 +823,14 @@ Dry-run behavior:
 - Additive timing fields `trace_path`, `workload_start` and `workload_end`
   retain the trace location, load averages and available logical CPU count.
   Legacy readers ignore these fields and missing historical fields remain valid.
+- Nix activities retain IDs, parent IDs, type, fields and optional semantic name.
+  Named payload retains only `nix.installable` and `nix.source.path`; arbitrary
+  payload, diagnostic text and builder/post-build log results are excluded.
+  `perf_system.py --nix-activities`
+  pairs activity IDs within their enclosing command, reports longest intervals
+  and exposes unfinished activities/unmatched stops. Colliding open IDs remain
+  ambiguous rather than producing guessed durations. Nested durations overlap;
+  old traces without names remain valid and show numeric types.
 
 - Upgrade timing covers the complete command flow, including early failures and
   upgrades that skip rebuild. Rebuild is a nested phase; one upgrade writes one

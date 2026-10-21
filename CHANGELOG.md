@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- retains Determinate Nix activity names and typed targets in performance traces, distinguishing evaluation from source copying while excluding builder log messages
+- reports longest inner Nix activities with command ownership and incomplete pairs via `perf_system.py --nix-activities`
+
 ## v1.5.46 - 2026-10-21
 
 - serializes mutating commands on Darwin and Linux with a shared kernel operation lock, visible waiting, fresh planning after acquisition and separate wait timings

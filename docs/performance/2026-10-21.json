@@ -1,0 +1,213 @@
+{
+  "version": 1,
+  "date": "2026-10-21",
+  "release_revision": "7f9a723a52052f5ad2e8f56b33716f39d5475c98",
+  "configuration_revision": "f9a61ae8fc4edc1dccaf51dd649a62efebd02222",
+  "nx_version": "1.5.46",
+  "routine_tracing": {
+    "config_commit": "f9a61ae8fc4edc1dccaf51dd649a62efebd02222",
+    "directory": "~/.local/state/nx/traces",
+    "max_files": 20,
+    "max_bytes": 8388608,
+    "mode": "0600",
+    "activated": true,
+    "new_session_verified": true
+  },
+  "rebuild": {
+    "trace_sha256": "545a68406800d50159850e77c150c5638fa74b9541ac35174489abcb2d55877c",
+    "events": 5240,
+    "wall_ns": 321537129250,
+    "command_union_ns": 321504092833,
+    "outside_commands_ns": 33036417,
+    "peak_concurrent_commands": 1,
+    "workload_start": {
+      "logical_cpus": 18,
+      "load_average": [
+        65.7255859375,
+        54.06396484375,
+        43.86328125
+      ]
+    },
+    "workload_end": {
+      "logical_cpus": 18,
+      "load_average": [
+        103.21826171875,
+        81.80322265625,
+        60.005859375
+      ]
+    },
+    "activity_count": 252,
+    "unfinished": 0,
+    "unmatched_stops": 0,
+    "activity_names_recorded": false,
+    "download_activity_count": 45,
+    "timing_phases_ms": {
+      "git-preflight": 14,
+      "flake-check": 1436,
+      "activation": 320055,
+      "activation/build": 251221,
+      "activation/profile-compare": 0,
+      "activation/homebrew-validation": 2158,
+      "activation/legacy-switch": 66551,
+      "activation/legacy-switch/homebrew-bundle": 4333
+    }
+  },
+  "pinned_components": {
+    "complete": true,
+    "git_head": "aa5c3a71ffd98d6f9081c9e9f952668049cc38c7",
+    "tracked_content_sha256": "6347de34fd9d283cb7320cc22f8377514a52e5a75d589ab07e47b5644732a483",
+    "nix_version": "nix (Determinate Nix 3.23.3) 2.35.3",
+    "logical_cpus": 18,
+    "max_load_per_cpu": 2.0,
+    "operations": [
+      "plan",
+      "check"
+    ],
+    "conditions": "Existing caches retained; first sample is not a cold-cache claim.",
+    "samples": [
+      {
+        "operation": "plan",
+        "wall_ns": 349566250,
+        "code": 0,
+        "load_start": [
+          18.48828125,
+          19.6630859375,
+          32.30908203125
+        ],
+        "load_end": [
+          18.48828125,
+          19.6630859375,
+          32.30908203125
+        ]
+      },
+      {
+        "operation": "check",
+        "wall_ns": 985232375,
+        "code": 0,
+        "load_start": [
+          18.48828125,
+          19.6630859375,
+          32.30908203125
+        ],
+        "load_end": [
+          18.48828125,
+          19.6630859375,
+          32.30908203125
+        ]
+      },
+      {
+        "operation": "check",
+        "wall_ns": 129202458,
+        "code": 0,
+        "load_start": [
+          18.48828125,
+          19.6630859375,
+          32.30908203125
+        ],
+        "load_end": [
+          18.48828125,
+          19.6630859375,
+          32.30908203125
+        ]
+      },
+      {
+        "operation": "plan",
+        "wall_ns": 129294500,
+        "code": 0,
+        "load_start": [
+          18.48828125,
+          19.6630859375,
+          32.30908203125
+        ],
+        "load_end": [
+          18.48828125,
+          19.6630859375,
+          32.30908203125
+        ]
+      },
+      {
+        "operation": "plan",
+        "wall_ns": 177572625,
+        "code": 0,
+        "load_start": [
+          18.48828125,
+          19.6630859375,
+          32.30908203125
+        ],
+        "load_end": [
+          18.48828125,
+          19.6630859375,
+          32.30908203125
+        ]
+      },
+      {
+        "operation": "check",
+        "wall_ns": 353990750,
+        "code": 0,
+        "load_start": [
+          18.48828125,
+          19.6630859375,
+          32.30908203125
+        ],
+        "load_end": [
+          18.48828125,
+          19.6630859375,
+          32.30908203125
+        ]
+      }
+    ],
+    "download_activities": 0,
+    "local_source_copy_activities": 0
+  },
+  "controlled": {
+    "manifest": {
+      "version": 1,
+      "harness": "system-upgrade-trace-v2",
+      "mode": "structured-stub",
+      "source_commit": "44950b4b39cc85ad1faba8713c3a2db61dcce8af",
+      "binary_sha256": "70fb0a09f4f61e60dcf677323abb704e623bcbb1ba046d4d75fdfce816b2b6c9",
+      "suite_sha256": "1e09f4f7fe0af9326a37dadfcd4ca98f1f4b6594b930bc19992cf260a699d903",
+      "repeat": 3,
+      "platform": "macOS-26.7.1-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "cpu_count": 18,
+      "load_start": [
+        27.8369140625,
+        21.5703125,
+        32.6181640625
+      ],
+      "started_at_ns": 1792577891940024000,
+      "complete": true,
+      "load_end": [
+        34.24853515625,
+        27.4033203125,
+        33.11767578125
+      ],
+      "finished_at_ns": 1792578045777550000
+    },
+    "scenario_count": 35,
+    "executions": 210
+  },
+  "sample": {
+    "seconds": 5,
+    "main_thread_samples": 4276,
+    "waiting_on_daemon_samples": 4275,
+    "scope": "snapshot during realization; not a whole-run CPU percentage"
+  },
+  "raw_artifacts": [
+    ".nx/perf/detailed-20261021/",
+    ".nx/perf/qualified-1.5.46-20261021/",
+    ".nx/perf/controlled-1.5.46-20261021/"
+  ],
+  "limits": [
+    "Busy shared host; no isolated speedup claim.",
+    "Initial detailed capture used released collector, which omitted Determinate names and named payload.",
+    "Two isolated preflight probes failed routing lint before Nix; excluded from performance results (nx-rs-60fs).",
+    "One failed isolated probe appended a timing record with its distinct desk repo path; retained and excluded from operational aggregates."
+  ],
+  "operational_upgrades": {
+    "count": 10,
+    "with_detailed_trace": 0,
+    "snapshot_cutoff_ms": 1792578000296
+  }
+}

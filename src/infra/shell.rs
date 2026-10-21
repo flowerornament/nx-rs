@@ -22,6 +22,23 @@ use crate::output::printer::Printer;
 type CommandEnv<'a> = &'a [(&'a str, &'a str)];
 const STDERR_TEE_CAPTURE_LIMIT: usize = 256 * 1024;
 
+pub(crate) fn operation_command(program: &str) -> Command {
+    if !crate::infra::operation_lock::active() {
+        return Command::new(program);
+    }
+    // Keep an inherited lock descriptor outside sudo's close-from boundary.
+    // A caught signal is reset for the command, but the waiting shell survives
+    // Ctrl-C long enough to reap it. The trailing commands prevent tail exec.
+    let mut command = Command::new("/bin/sh");
+    command.args([
+        "-c",
+        "trap : HUP INT QUIT TERM; \"$@\"; code=$?; wait; exit \"$code\"",
+        "nx-operation",
+        program,
+    ]);
+    command
+}
+
 pub struct CapturedCommand {
     pub code: i32,
     pub stdout: String,
@@ -112,7 +129,7 @@ struct StreamedLine {
 /// Run a command and parse stdout as JSON while suppressing stderr noise.
 pub fn run_json_command_quiet(program: &str, args: &[&str]) -> Option<Value> {
     let mut trace = crate::infra::run_trace::command(program, args);
-    let output = Command::new(program)
+    let output = operation_command(program)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -151,7 +168,7 @@ pub fn run_captured_command_with_env(
     env: Option<CommandEnv<'_>>,
 ) -> anyhow::Result<CapturedCommand> {
     let mut trace = crate::infra::run_trace::command(program, args);
-    let mut command = Command::new(program);
+    let mut command = operation_command(program);
     configure_command(&mut command, args, cwd, env);
 
     let output = command
@@ -176,7 +193,7 @@ pub(crate) fn run_captured_command_observing_stderr(
     observe: impl Fn(&[u8]) + Sync,
 ) -> anyhow::Result<CapturedCommand> {
     let mut trace = crate::infra::run_trace::command(program, args);
-    let mut child = Command::new(program)
+    let mut child = operation_command(program)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -357,7 +374,7 @@ fn run_native_command_observing_stderr(
     rustix::fs::fcntl_setfl(&pty.controller, flags | rustix::fs::OFlags::NONBLOCK)
         .map_err(|err| anyhow!("configuring stderr pseudoterminal: {err}"))?;
 
-    let mut command = Command::new(program);
+    let mut command = operation_command(program);
     configure_command(&mut command, args, cwd, env);
     command
         .stdin(Stdio::inherit())
@@ -506,7 +523,7 @@ fn run_stdout_collecting_stderr_with_env_profiled(
     env: Option<CommandEnv<'_>>,
 ) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)> {
     let mut trace = crate::infra::run_trace::command(program, args);
-    let mut command = Command::new(program);
+    let mut command = operation_command(program);
     configure_command(&mut command, args, cwd, env);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -578,7 +595,7 @@ fn run_streaming_command_with_env(
     collect_output: bool,
 ) -> anyhow::Result<StreamedCommand> {
     let mut trace = crate::infra::run_trace::command(program, args);
-    let mut command = Command::new(program);
+    let mut command = operation_command(program);
     configure_command(&mut command, args, cwd, env);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 

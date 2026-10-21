@@ -8,6 +8,16 @@ pub fn run_command_with_optional_stdin(
     command: &mut Command,
     stdin: Option<&str>,
 ) -> Result<std::process::Output, Box<dyn Error>> {
+    let operation_dir = tempfile::TempDir::new()?;
+    if !command
+        .get_envs()
+        .any(|(name, _)| name == "NX_OPERATION_LOCK_PATH")
+    {
+        command.env(
+            "NX_OPERATION_LOCK_PATH",
+            operation_dir.path().join("operation.lock"),
+        );
+    }
     // Test commands must opt in explicitly to external timing/trace locations.
     // Preserve overrides supplied by a test; remove inherited user configuration.
     for key in [

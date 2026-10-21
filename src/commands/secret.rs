@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use anyhow::{Context, bail, ensure};
 
@@ -269,7 +269,7 @@ fn run_sops_set_with_program(
     value: &str,
 ) -> anyhow::Result<()> {
     let index = format!("[\"{key}\"]");
-    let mut child = Command::new(program)
+    let mut child = crate::infra::shell::operation_command(program)
         .args(["-i", "set", "--value-stdin", "--idempotent"])
         .arg(secrets_file)
         .arg(index)

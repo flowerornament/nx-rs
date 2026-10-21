@@ -80,6 +80,7 @@ run_nx() {
       NX_SYSTEM_IT_LOG="$log" \
       NX_SYSTEM_IT_MODE="$mode" \
       NX_SYSTEM_PROFILE_PATH="$profile" \
+      NX_OPERATION_LOCK_PATH="$scratch/operation.lock" \
       PATH="$stubs:$PATH" \
       PYTHONDONTWRITEBYTECODE=1 \
       "$nx_bin" "$@"

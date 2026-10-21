@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::bail;
 
-use crate::cli::{Cli, CommandKind};
+use crate::cli::{Cli, CommandKind, GenerationsCommand};
 use crate::commands::completion::cmd_completion;
 use crate::commands::context::{AppContext, HostContext};
 use crate::commands::doctor::cmd_doctor;
@@ -30,17 +30,69 @@ const NX_REPO_ROOT_ENV: &str = "NX_REPO_ROOT";
 
 pub fn execute(cli: Cli) -> i32 {
     let trace = crate::infra::run_trace::Run::from_env();
-    let code = execute_inner(cli);
+    let code = execute_coordinated(cli);
     if let Some(trace) = trace {
         trace.finish(code);
     }
     code
 }
 
-fn execute_inner(cli: Cli) -> i32 {
+fn execute_coordinated(cli: Cli) -> i32 {
     let style = OutputStyle::from_flags(cli.plain(), cli.unicode(), cli.minimal());
     let printer = Printer::new(style);
+    let _guard = if let Some(command) = mutating_command(&cli.command) {
+        let repo = find_repo_root().unwrap_or_else(|_| env::current_dir().unwrap_or_default());
+        match crate::infra::operation_lock::OperationGuard::acquire(command, &repo, &printer) {
+            Ok(guard) => Some(guard),
+            Err(error) => {
+                printer.error(&format!("Cannot coordinate nx operation: {error:#}"));
+                return 1;
+            }
+        }
+    } else {
+        None
+    };
+    execute_inner(cli, printer)
+}
 
+fn mutating_command(command: &CommandKind) -> Option<&'static str> {
+    match command {
+        CommandKind::Rebuild(args) if !args.preflight => Some("rebuild"),
+        CommandKind::Upgrade(args) if !args.dry_run() => Some("upgrade"),
+        CommandKind::Install(args) if !args.dry_run() => Some("install"),
+        CommandKind::Remove(args) if !args.dry_run => Some("remove"),
+        CommandKind::Init(_) => Some("init"),
+        CommandKind::Undo(_) => Some("undo"),
+        CommandKind::Update(_) => Some("update"),
+        CommandKind::Secret(_) => Some("secret"),
+        CommandKind::CleanCaches(args) if !args.dry_run => Some("clean-caches"),
+        CommandKind::Generations(args) if matches!(&args.command, GenerationsCommand::Prune(prune) if !prune.dry_run) => {
+            Some("generations prune")
+        }
+        CommandKind::Rebuild(_)
+        | CommandKind::Upgrade(_)
+        | CommandKind::Install(_)
+        | CommandKind::Remove(_)
+        | CommandKind::CleanCaches(_)
+        | CommandKind::Generations(_)
+        | CommandKind::Version(_)
+        | CommandKind::Help(_)
+        | CommandKind::Completion(_)
+        | CommandKind::Doctor(_)
+        | CommandKind::Search(_)
+        | CommandKind::Where(_)
+        | CommandKind::List(_)
+        | CommandKind::Info(_)
+        | CommandKind::Status(_)
+        | CommandKind::Unused(_)
+        | CommandKind::Installed(_)
+        | CommandKind::Profile(_)
+        | CommandKind::Lint(_)
+        | CommandKind::Test(_) => None,
+    }
+}
+
+fn execute_inner(cli: Cli, printer: Printer) -> i32 {
     if let CommandKind::Version(args) = &cli.command {
         return cmd_version(args);
     }
@@ -168,7 +220,7 @@ fn config_files_for_manifest_health(
 mod tests {
     use super::{
         config_files_for_manifest_health, detect_repo_root, host_generations_args,
-        resolve_repo_root,
+        mutating_command, resolve_repo_root,
     };
     use crate::cli::Cli;
     use crate::domain::drift::{DriftReport, ManifestHealth};
@@ -178,6 +230,39 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    #[test]
+    fn operation_lock_covers_mutations_but_keeps_inspection_available() {
+        let cases: &[(&[&str], Option<&str>)] = &[
+            (&["nx", "rebuild"], Some("rebuild")),
+            (&["nx", "rebuild", "--preflight"], None),
+            (&["nx", "upgrade"], Some("upgrade")),
+            (&["nx", "upgrade", "--brew-only"], Some("upgrade")),
+            (&["nx", "upgrade", "--dry-run"], None),
+            (&["nx", "install", "hello", "--rebuild"], Some("install")),
+            (&["nx", "install", "hello", "--dry-run"], None),
+            (&["nx", "remove", "hello"], Some("remove")),
+            (&["nx", "remove", "hello", "--dry-run"], None),
+            (&["nx", "update"], Some("update")),
+            (&["nx", "undo"], Some("undo")),
+            (&["nx", "init"], Some("init")),
+            (
+                &["nx", "secret", "add", "key", "--value", "value"],
+                Some("secret"),
+            ),
+            (&["nx", "generations", "prune"], Some("generations prune")),
+            (&["nx", "generations", "plan"], None),
+            (&["nx", "generations", "prune", "--dry-run"], None),
+            (&["nx", "clean-caches"], Some("clean-caches")),
+            (&["nx", "clean-caches", "--dry-run"], None),
+            (&["nx", "list"], None),
+            (&["nx", "profile"], None),
+        ];
+        for (args, expected) in cases {
+            let cli = Cli::try_parse_from(*args).unwrap();
+            assert_eq!(mutating_command(&cli.command), *expected, "{args:?}");
+        }
+    }
 
     #[test]
     fn resolve_repo_root_uses_env_path() {

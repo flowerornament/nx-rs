@@ -71,6 +71,30 @@ Defined at root callback:
 
 ## 2.3 Command Options
 
+Mutating commands share one Unix operation lock at `/var/tmp/nx-operation.lock`
+on Darwin and Linux. The path is independent of repository, user, HOME, XDG
+settings and binary name, so participating `nx` and `nx-dev` processes serialize
+host changes. `NX_OPERATION_LOCK_PATH` selects an absolute path for isolated environments;
+all processes coordinating the same host must use the same path.
+
+- Lock `rebuild`, real `upgrade`/`install`/`remove`, `init`, `update`, `undo`,
+  `secret`, real `generations prune` and real `clean-caches` before repository
+  scanning or command side effects. Nested in-process rebuilds share ownership.
+- Queries, help, dry runs and `rebuild --preflight` do not wait for the lock.
+- Contention waits visibly with owner command/PID/repository and elapsed time in
+  interactive mode. Ctrl-C while waiting cancels the waiter, leaving the owner alone.
+- After waiting, derive the plan from fresh repository/host state. Rebuild/upgrade
+  timings include a separate `operation-wait` phase in the existing record format.
+- Use a kernel file lock; stale metadata never establishes ownership. Never unlink
+  the lock file. Reject symlinks, hard links and non-regular lock files.
+- Keep the descriptor inherited into children. Command runners retain a waiting
+  shell around the command, preserving ownership across sudo's descriptor cleanup
+  and nx's unexpected exit until the command completes. Signals to the waiting
+  shell must not release the lease while its command is alive.
+- Retain the repository upgrade lock and rollback rules beneath this host guard.
+  Direct non-nx tools, old nx versions and processes using another lock path do not
+  participate in this protocol.
+
 - `version`
   - options: `--json`
 - `help`

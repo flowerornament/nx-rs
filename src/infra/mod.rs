@@ -11,6 +11,7 @@ pub mod hash;
 mod native_progress;
 pub mod nix_output;
 pub mod nix_runtime;
+pub(crate) mod operation_lock;
 pub mod package_query;
 pub mod persistence;
 pub mod query_info;

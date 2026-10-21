@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::SystemTime;
 
 use crate::app::dirs_home;
@@ -42,7 +41,7 @@ pub fn maybe_refresh_before_system_command(needs_refresh: bool, printer: &Printe
         source_root.display()
     ));
 
-    match Command::new("cargo")
+    match crate::infra::shell::operation_command("cargo")
         .args(["install", "--path", SOURCE_ROOT, "--force"])
         .current_dir(&source_root)
         .status()

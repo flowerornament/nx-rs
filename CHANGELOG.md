@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- serializes mutating commands on Darwin and Linux with a shared kernel operation lock, visible waiting, fresh planning after acquisition and separate wait timings
+- keeps external commands protected after their nx parent exits, including activation commands that close inherited descriptors
+
 ## v1.5.45 - 2026-10-19
 
 - wraps upgrade summaries without clipped sentences, labels AI prose, and moves commit titles into readable verbose/fallback bullets

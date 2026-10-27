@@ -94,12 +94,27 @@ impl Printer {
 
     /// Wrap prose and hanging bullets while preserving the shared detail indent.
     pub fn sub_paragraph(text: &str) {
-        let width = rustix::termios::tcgetwinsize(rustix::stdio::stdout())
-            .ok()
-            .map_or(80, |size| usize::from(size.ws_col));
-        for line in paragraph_lines(text, width) {
+        for line in paragraph_lines(text, Self::width()) {
             println!("{line}");
         }
+    }
+
+    pub fn paragraph(text: &str) {
+        for line in paragraph_lines_at(text, Self::width(), LineLayout::Detail) {
+            println!("{line}");
+        }
+    }
+
+    pub fn rows(rows: &[(String, String)]) {
+        for line in aligned_rows(rows, Self::width()) {
+            println!("{line}");
+        }
+    }
+
+    fn width() -> usize {
+        rustix::termios::tcgetwinsize(rustix::stdio::stdout())
+            .ok()
+            .map_or(80, |size| usize::from(size.ws_col))
     }
 
     pub fn dry_run_banner(&self) {
@@ -430,7 +445,11 @@ fn wrapped_segments(line: &str, max_content: usize) -> Vec<&str> {
 }
 
 fn paragraph_lines(text: &str, width: usize) -> Vec<String> {
-    let indent = LineLayout::SubDetail.indent();
+    paragraph_lines_at(text, width, LineLayout::SubDetail)
+}
+
+fn paragraph_lines_at(text: &str, width: usize, layout: LineLayout) -> Vec<String> {
+    let indent = layout.indent();
     let (marker, content) = text
         .strip_prefix("- ")
         .map_or(("", text), |text| ("- ", text));
@@ -450,6 +469,36 @@ fn paragraph_lines(text: &str, width: usize) -> Vec<String> {
             format!("{indent}{prefix}{line}")
         })
         .collect()
+}
+
+fn aligned_rows(rows: &[(String, String)], width: usize) -> Vec<String> {
+    let width = if width == 0 { 80 } else { width.min(100) };
+    let column = rows
+        .iter()
+        .map(|(label, _)| label.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(24)
+        .min(width.saturating_sub(12));
+    let prefix = " ".repeat(column + 6);
+    let mut lines = Vec::new();
+    for (label, value) in rows {
+        let stacked = label.chars().count() > column;
+        if stacked {
+            lines.extend(paragraph_lines(label, width));
+        }
+        for (index, segment) in wrapped_segments(value, width.saturating_sub(prefix.len()).max(1))
+            .into_iter()
+            .enumerate()
+        {
+            lines.push(if index == 0 && !stacked {
+                format!("    {label:column$}  {segment}")
+            } else {
+                format!("{prefix}{segment}")
+            });
+        }
+    }
+    lines
 }
 
 fn nth_char_boundary(input: &str, n: usize) -> usize {
@@ -493,6 +542,29 @@ mod tests {
                     .collect::<Vec<_>>()
                     .join(" "),
                 text
+            );
+        }
+    }
+
+    #[test]
+    fn rows_align_values_and_wrap_without_losing_long_names() {
+        let rows = vec![
+            ("node".into(), "26.12.0 → 26.12.1".into()),
+            ("hex (cask)".into(), "2.3.0 → 2.3.1".into()),
+        ];
+        let lines = super::aligned_rows(&rows, 80);
+        assert_eq!(lines[0].find("26.12.0"), lines[1].find("2.3.0"));
+        let rows = vec![(
+            "anomalyco/tap/a-very-long-package-name (cask)".into(),
+            "1.4.4,4783783166214144 → 1.4.4,4952523841339392".into(),
+        )];
+        for width in [32, 40, 80, 100] {
+            let lines = super::aligned_rows(&rows, width);
+            assert!(lines.iter().all(|line| line.chars().count() <= width));
+            let text = lines.iter().map(|line| line.trim()).collect::<String>();
+            assert_eq!(
+                text.replace(' ', ""),
+                format!("{}{}", rows[0].0, rows[0].1).replace(' ', "")
             );
         }
     }

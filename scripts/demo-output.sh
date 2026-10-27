@@ -108,5 +108,19 @@ fi
 scenario 'nx upgrade'
 run_nx success upgrade --no-ai
 
+scenario 'nx upgrade --brew-only --skip-rebuild'
+run_nx upgrade_brew_casks upgrade --brew-only --skip-rebuild --no-ai
+
+scenario 'nx upgrade --brew-only --skip-rebuild --verbose'
+rm -f "$home/.brew-upgraded"
+run_nx upgrade_brew_casks upgrade --brew-only --skip-rebuild --no-ai --verbose
+
+scenario 'nx upgrade --brew-only --skip-rebuild  # expected failure'
+rm -f "$home/.brew-upgraded"
+if run_nx upgrade_brew_failure upgrade --brew-only --skip-rebuild --no-ai; then
+  error 'Expected Homebrew upgrade to fail'
+  exit 1
+fi
+
 printf '\n'
-success 'Output demo complete'
+success 'Output demo complete' 

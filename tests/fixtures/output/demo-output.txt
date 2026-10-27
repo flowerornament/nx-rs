@@ -26,9 +26,9 @@
 > Checking binary cache coverage
   darwin host: test-host
   Source Builds (2)
-  starship-1.23.0
-  terminal-notifier-2.0.0
-  1 paths will be fetched from the binary cache
+    starship-1.23.0
+    terminal-notifier-2.0.0
+  1 path will be fetched from the binary cache
 + Rebuild preflight passed
 
   $ nx rebuild --preflight --verbose
@@ -45,9 +45,9 @@
 > Checking binary cache coverage
   darwin host: test-host
   Source Builds (2)
-  starship-1.23.0
-  terminal-notifier-2.0.0
-  1 paths will be fetched from the binary cache
+    starship-1.23.0
+    terminal-notifier-2.0.0
+  1 path will be fetched from the binary cache
 + Rebuild preflight passed
 
   $ nx rebuild --preflight  # local configuration builds
@@ -64,14 +64,14 @@
 > Checking binary cache coverage
   darwin host: test-host
   Local Builds (6)
-  starship-1.23.0
-  terminal-notifier-2.0.0
-  python3.12-httpx-0.28.1
-  darwin-system-26.05pre
-  home-manager-generation
-  nix-2.24.9
+    starship-1.23.0
+    terminal-notifier-2.0.0
+    python3.12-httpx-0.28.1
+    darwin-system-26.05pre
+    home-manager-generation
+    nix-2.24.9
   Nix marks these as cheap or required to build locally.
-  1 paths will be fetched from the binary cache
+  1 path will be fetched from the binary cache
 + Rebuild preflight passed
 
   $ nx rebuild --preflight  # expected failure
@@ -95,12 +95,10 @@ x Flake check failed
 > Checking binary cache coverage
   darwin host: test-host
   Source Builds (2)
-  starship-1.23.0
-  terminal-notifier-2.0.0
-  1 paths will be fetched from the binary cache
+    starship-1.23.0
+    terminal-notifier-2.0.0
+  1 path will be fetched from the binary cache
 + All flake inputs up to date
-
-> Recording installed package state
 
 > Checking Homebrew updates
   Includes versioned self-updating casks; latest-version casks require --greedy.
@@ -131,12 +129,75 @@ x Flake check failed
   linking generation...
 + System rebuilt
 
-> Checking installed package changes
-
-  Upgrade result
-  Inputs: unchanged; Homebrew: completed; rebuild: completed; activation: completed; commit: not needed
-  System profile change unknown
++ Upgrade complete · <elapsed>
   Homebrew: no observed package changes
-  Nix system-profile references: unknown (system profile unavailable)
+  Nix profile references: changes unknown (system profile unavailable)
+  Nix system: activated
+  Config: unchanged; no commit needed
+
+  $ nx upgrade --brew-only --skip-rebuild
+> Keeping current Nix inputs
+
+> Checking Homebrew updates
+  Includes versioned self-updating casks; latest-version casks require --greedy.
+  Homebrew updates (1)
+    anomalyco/tap/hex (cask)  1.0 → 2.0
+
+> Upgrading 1 Homebrew package
+  Warning: demo Homebrew caveat
+  stub brew upgrade ok
++ Homebrew packages upgraded
+
++ Upgrade complete · <elapsed>
+  Homebrew · 1 changed
+    hex (cask)  1.0 → 2.0
+  Nix system: rebuild skipped
+  Config: skipped; no commit needed
+
+  $ nx upgrade --brew-only --skip-rebuild --verbose
+> Keeping current Nix inputs
+
+> Checking Homebrew updates
+  Includes versioned self-updating casks; latest-version casks require --greedy.
+  Homebrew updates (1)
+    anomalyco/tap/hex (cask)  1.0 → 2.0
+    https://example.invalid/hex
+
+> Upgrading 1 Homebrew package
+  ==> Linking demo package
+  Warning: demo Homebrew caveat
+  stub brew upgrade ok
++ Homebrew packages upgraded
+
++ Upgrade complete · <elapsed>
+  Homebrew · 1 changed
+    cask:hex  1.0 → 2.0
+  Nix profile references: observation skipped
+  Nix system: rebuild skipped
+  Config: skipped; no commit needed
+    Inputs: skipped; Homebrew: completed; rebuild: skipped; activation: skipped; commit: not needed
+    System profile: unknown → unknown
+
+  $ nx upgrade --brew-only --skip-rebuild  # expected failure
+> Keeping current Nix inputs
+
+> Checking Homebrew updates
+  Includes versioned self-updating casks; latest-version casks require --greedy.
+  Homebrew updates (1)
+    anomalyco/tap/hex (cask)  1.0 → 2.0
+
+> Upgrading 1 Homebrew package
+  Warning: demo Homebrew caveat
+  Cask upgrade failed
+  Recent suppressed steps:
+    ==> Linking demo package
+x Some Homebrew upgrades failed
+
+x Upgrade incomplete · <elapsed>
+  Homebrew · 1 changed
+    hex (cask)  1.0 → 2.0
+  Nix system: rebuild skipped
+  Config: skipped; commit not run
+  Homebrew upgrade: failed
 
 + Output demo complete

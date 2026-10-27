@@ -217,18 +217,19 @@ fn report_cache_plan(ctx: &SystemContext<'_>, plan: &CachePlan) {
     }
 
     Printer::detail(&format!(
-        "{} paths will be fetched from the binary cache",
-        plan.to_fetch
+        "{} path{} will be fetched from the binary cache",
+        plan.to_fetch,
+        if plan.to_fetch == 1 { "" } else { "s" }
     ));
 }
 
 fn report_builds(label: &str, builds: &[String]) {
     Printer::body(&format!("{label} ({})", builds.len()));
     for name in builds.iter().take(MAX_LISTED_SOURCE_BUILDS) {
-        Printer::body(name);
+        Printer::sub_paragraph(name);
     }
     if builds.len() > MAX_LISTED_SOURCE_BUILDS {
-        Printer::detail(&format!(
+        Printer::sub_detail(&format!(
             "... and {} more",
             builds.len() - MAX_LISTED_SOURCE_BUILDS
         ));

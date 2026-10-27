@@ -412,12 +412,24 @@ PYLOCK
     fi
 
     if [ "${1:-}" = "upgrade" ]; then
+      if [ "${NX_OUTPUT_DEMO:-0}" = "1" ]; then
+        case " $* " in
+          *" --verbose "*) echo '==> Linking demo package' >&2 ;;
+          *" --quiet "*) echo '==> Linking demo package' >&2 ;;
+          *) echo 'missing Homebrew verbosity flag' >&2; exit 1 ;;
+        esac
+        echo 'Warning: demo Homebrew caveat' >&2
+      fi
       : > "$HOME/.brew-upgraded"
       if [ "$mode" = "upgrade_brew_failure" ]; then
         echo 'Cask upgrade failed' >&2
         exit 1
       fi
-      echo "stub brew upgrade ok"
+      if [ "${NX_OUTPUT_DEMO:-0}" = "1" ]; then
+        echo "stub brew upgrade ok" >&2
+      else
+        echo "stub brew upgrade ok"
+      fi
       exit 0
     fi
     echo "stub brew unsupported: $*" >&2

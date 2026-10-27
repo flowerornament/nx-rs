@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- streamlines daily upgrades with aligned package rows, elapsed results, clear activation/commit outcomes and grouped PATH consequences
+- uses native quiet Homebrew output by default, keeps full diagnostics under `--verbose`, and clears loading before streaming child output
+- omits missing optional Homebrew summaries and lets AI decline uninformative maintenance samples
+
 ## v1.5.46 - 2026-10-21
 
 - serializes mutating commands on Darwin and Linux with a shared kernel operation lock, visible waiting, fresh planning after acquisition and separate wait timings

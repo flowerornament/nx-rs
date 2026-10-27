@@ -759,7 +759,7 @@ const UPGRADE_BREW_WITH_UPDATES_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new(
         "brew",
         EXPECTED_CWD_REPO_ROOT,
-        &["upgrade", "--formula", "ripgrep"],
+        &["upgrade", "--formula", "--quiet", "ripgrep"],
     ),
 ];
 
@@ -795,6 +795,7 @@ const UPGRADE_CASK_CALLS: &[ExpectedCall] = &[
         &[
             "upgrade",
             "--cask",
+            "--quiet",
             "--greedy-auto-updates",
             "anomalyco/tap/hex",
         ],
@@ -825,7 +826,13 @@ const UPGRADE_CASK_GREEDY_CALLS: &[ExpectedCall] = &[
     ExpectedCall::new(
         "brew",
         EXPECTED_CWD_REPO_ROOT,
-        &["upgrade", "--cask", "--greedy", "anomalyco/tap/hex"],
+        &[
+            "upgrade",
+            "--cask",
+            "--quiet",
+            "--greedy",
+            "anomalyco/tap/hex",
+        ],
     ),
 ];
 const UPGRADE_CASK_DRY_RUN_CALLS: &[ExpectedCall] = &[
@@ -923,10 +930,7 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
                 ],
             ),
         ],
-        stdout_contains: &[
-            "Homebrew-only upgrade; keeping current Nix inputs",
-            "System rebuilt",
-        ],
+        stdout_contains: &["Keeping current Nix inputs", "System rebuilt"],
     },
     UpgradeCase {
         id: "upgrade_brew_only_skips_input_refresh",
@@ -938,7 +942,7 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
             EXPECTED_CWD_REPO_ROOT,
             &["outdated", "--json", "--greedy-auto-updates"],
         )],
-        stdout_contains: &["Homebrew-only upgrade; keeping current Nix inputs"],
+        stdout_contains: &["Keeping current Nix inputs"],
     },
     UpgradeCase {
         id: "upgrade_brew_only_dry_run_keeps_lock",
@@ -1230,7 +1234,7 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
         expected_exit: 0,
         expected_calls: UPGRADE_CASK_PINNED_CALLS,
         stdout_contains: &[
-            "Pinned; left unchanged",
+            "pinned; 2.0 available",
             "All outdated Homebrew packages are pinned",
         ],
     },
@@ -1240,7 +1244,7 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
         mode: "upgrade_brew_outdated",
         expected_exit: 0,
         expected_calls: UPGRADE_BREW_WITH_UPDATES_CALLS,
-        stdout_contains: &["Homebrew Outdated (1)", "Homebrew packages upgraded"],
+        stdout_contains: &["Homebrew updates (1)", "Homebrew packages upgraded"],
     },
     UpgradeCase {
         id: "upgrade_brew_with_updates_dry_run_skips_upgrade",
@@ -1248,7 +1252,7 @@ const UPGRADE_CASES: &[UpgradeCase] = &[
         mode: "upgrade_brew_outdated",
         expected_exit: 0,
         expected_calls: UPGRADE_DRY_RUN_BREW_WITH_UPDATES_CALLS,
-        stdout_contains: &["Homebrew Outdated (1)"],
+        stdout_contains: &["Homebrew updates (1)"],
     },
 ];
 
@@ -1819,7 +1823,7 @@ fn failed_legacy_fallback_retains_attempt_and_reports_failed_activation()
         stdout_contains: &[
             "Running darwin-rebuild switch",
             "Rebuild failed",
-            "activation: failed",
+            "activation failed",
         ],
     };
     run_case_with_extra_env(
@@ -1851,7 +1855,7 @@ fn admitted_input_changes_remain_uncommitted_after_brew_failure() -> Result<(), 
         mode: "upgrade_flake_changed",
         expected_exit: 1,
         expected_calls: EXPECTED,
-        stdout_contains: &["Inputs: lock changed", "commit: not run"],
+        stdout_contains: &["Config: updated nixpkgs", "commit not run"],
     };
     run_case_with_extra_env(
         &binary,

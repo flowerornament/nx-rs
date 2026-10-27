@@ -1,5 +1,6 @@
 import errno
 import fcntl
+import itertools
 import os
 import pathlib
 import pty
@@ -10,7 +11,6 @@ import struct
 import termios
 import time
 import unittest
-
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SNAPSHOT = ROOT / "tests/fixtures/output/demo-output.txt"
@@ -35,7 +35,9 @@ def run_demo() -> str:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0 or not select.select([master], [], [], remaining)[0]:
-                raise TimeoutError(f"demo-output exceeded {DEMO_TIMEOUT_SECONDS} seconds")
+                raise TimeoutError(
+                    f"demo-output exceeded {DEMO_TIMEOUT_SECONDS} seconds"
+                )
             try:
                 chunk = os.read(master, 65_536)
             except OSError as error:
@@ -73,7 +75,9 @@ def terminal_screen(stream: str) -> str:
                 if params in {"", "0"}:
                     del line[cursor:]
                 elif params == "1":
-                    line[: min(cursor + 1, len(line))] = " " * min(cursor + 1, len(line))
+                    line[: min(cursor + 1, len(line))] = " " * min(
+                        cursor + 1, len(line)
+                    )
                 elif params == "2":
                     line.clear()
             index = match.end()
@@ -113,8 +117,15 @@ class DemoOutputTest(unittest.TestCase):
     def test_final_terminal_screen_matches_reference(self) -> None:
         stream = run_demo()
         self.assert_native_nix_passthrough(stream)
-        screen = terminal_screen(stream)
+        screen = re.sub(
+            r"(Upgrade (?:complete|incomplete)) · \d+\.\ds",
+            r"\1 · <elapsed>",
+            terminal_screen(stream),
+        )
         self.assertEqual(screen, SNAPSHOT.read_text())
+        self.assertEqual(screen.count("Warning: demo Homebrew caveat"), 3)
+        self.assertEqual(screen.count("==> Linking demo package"), 2)
+        self.assertNotIn("- Upgrading Homebrew packages", screen)
         self.assertEqual(stream.count("error: flake evaluation failed"), 1)
         self.assertEqual(
             line_style(stream, "> Preparing output demo"),
@@ -130,7 +141,7 @@ class DemoOutputTest(unittest.TestCase):
         )
 
         lines = screen.splitlines()
-        self.assertNotIn(("", ""), zip(lines, lines[1:], strict=False))
+        self.assertNotIn(("", ""), itertools.pairwise(lines))
         for index, line in enumerate(lines):
             if line.startswith("  $ "):
                 self.assertEqual(lines[index - 1], "")

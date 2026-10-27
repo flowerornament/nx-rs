@@ -362,6 +362,7 @@ fn parse_ai_summary_output_keeps_complete_prose_and_rejects_excessive_output() {
     );
     assert!(parse_ai_summary_output(&"x".repeat(1201)).is_none());
     assert!(parse_ai_summary_output("\n  \n").is_none());
+    assert!(parse_ai_summary_output("NONE").is_none());
 }
 
 #[test]

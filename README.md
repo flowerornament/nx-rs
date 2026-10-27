@@ -654,8 +654,9 @@ Optional upgrade comparisons and AI summaries share a 10-second budget per
 batch. `NX_SUMMARY_TIMEOUT_SECONDS` accepts 1–300 seconds; `--no-ai` skips AI
 summaries. Provider failures keep the underlying input and version lists.
 Summaries wrap to the terminal width without clipping sentences. Flake entries
-show commit counts and labeled AI prose; `--verbose` also shows up to three
-commit titles as separate bullets. Those titles are the fallback with `--no-ai`
+show commit counts and labeled AI prose; updates of up to three commits show their
+titles too. `--verbose` shows up to three commit titles as separate bullets for
+every update. Those titles are the fallback with `--no-ai`
 or when AI is unavailable. AI descriptions are based on a sample of up to 30
 commit titles, rather than a review of the full update.
 
@@ -664,7 +665,18 @@ Homebrew versions, changes to direct Nix environment references, system profile,
 activation and commit outcomes. Partial failures retain the changes already
 made. Unknown observations say so. The receipt is saved in timing history;
 `nx profile --json` exposes it. Observation costs have their own timing phases.
-Changed formula and binary-cask commands are checked for PATH shadowing.
+Changed formula and binary-cask commands are checked for PATH shadowing and grouped
+by the selected PATH directory, with an explanation of which commands are unaffected
+by the Homebrew update. The closing result shows elapsed time and aligned package
+changes, with plain activation and local-commit outcomes. Cask build IDs are compacted
+only when both primary versions differ; build-only updates retain their full IDs.
+Homebrew runs with `--quiet` by default. Known download, linking and cleanup lines
+are suppressed; warnings, caveats and unfamiliar output pass through. Failures show
+up to 20 recent suppressed lines (500 characters each) as context. Use
+`--verbose` for Homebrew logs, comparison URLs, unavailable-summary diagnostics,
+full version identities, profile paths and individual receipt status fields.
+Optional AI summaries may decline maintenance-only samples; commit titles remain
+available. Missing Homebrew summaries are silent in the normal display.
 
 Measure this machine's real pinned configuration separately:
 

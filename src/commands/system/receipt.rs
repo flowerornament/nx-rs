@@ -13,7 +13,6 @@ use crate::domain::upgrade_receipt::{
 };
 use crate::infra::bounded_command;
 use crate::infra::timing::TimingPhase;
-use crate::output::printer::Printer;
 
 pub(super) struct Snapshot {
     system: Option<String>,
@@ -132,95 +131,6 @@ pub(super) fn finish(receipt: &mut UpgradeReceipt, before: &Snapshot, after: &Sn
         }
     }
     receipt.shadowed_commands = shadowed_commands(&receipt.packages[0]);
-}
-
-pub(super) fn print(receipt: &UpgradeReceipt, code: i32) {
-    Printer::heading(if code == 0 {
-        "Upgrade result"
-    } else {
-        "Upgrade result (incomplete)"
-    });
-    Printer::detail(&format!(
-        "Inputs: {}; Homebrew: {}; rebuild: {}; activation: {}; commit: {}",
-        receipt.inputs, receipt.homebrew, receipt.rebuild, receipt.activation, receipt.commit
-    ));
-    if !receipt.changed_inputs.is_empty() {
-        Printer::detail(&format!(
-            "Changed inputs: {}",
-            receipt.changed_inputs.join(", ")
-        ));
-    }
-    match (&receipt.system_before, &receipt.system_after) {
-        (Some(old), Some(new)) if old != new => {
-            Printer::detail(&format!("System profile changed: {old} → {new}"));
-        }
-        (Some(_), Some(_)) => Printer::detail("System profile unchanged"),
-        _ => Printer::detail("System profile change unknown"),
-    }
-    for observed in &receipt.packages {
-        if observed.status == ObservationStatus::Unknown {
-            Printer::detail(&format!(
-                "{}: unknown ({})",
-                observed.scope,
-                observed
-                    .detail
-                    .as_deref()
-                    .unwrap_or("observation unavailable")
-            ));
-        } else if observed.status == ObservationStatus::Skipped {
-            Printer::detail(&format!("{}: skipped", observed.scope));
-        } else if observed.changes.is_empty() {
-            Printer::detail(&format!("{}: no observed package changes", observed.scope));
-        } else {
-            Printer::detail(&format!(
-                "{}: {} changed",
-                observed.scope,
-                observed.changes.len()
-            ));
-            for change in &observed.changes {
-                let old = versions(&change.before);
-                let new = versions(&change.after);
-                Printer::sub_detail(&if change.before.is_empty() {
-                    format!(
-                        "{}: {} {new}",
-                        change.name,
-                        if observed.scope == "Homebrew" {
-                            "installed"
-                        } else {
-                            "added reference"
-                        }
-                    )
-                } else if change.after.is_empty() {
-                    format!(
-                        "{}: {} {old}",
-                        change.name,
-                        if observed.scope == "Homebrew" {
-                            "removed"
-                        } else {
-                            "removed reference"
-                        }
-                    )
-                } else if old == new {
-                    format!("{}: {new} (output changed)", change.name)
-                } else {
-                    format!("{}: {old} → {new}", change.name)
-                });
-            }
-        }
-    }
-    for shadowed in &receipt.shadowed_commands {
-        Printer::detail(shadowed);
-    }
-}
-
-fn versions(packages: &[PackageState]) -> String {
-    let mut versions: Vec<_> = packages
-        .iter()
-        .map(|package| package.version.as_str())
-        .collect();
-    versions.sort_unstable();
-    versions.dedup();
-    versions.join(", ")
 }
 
 fn brew_inventory(text: &str) -> Result<Inventory, String> {

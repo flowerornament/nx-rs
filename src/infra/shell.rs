@@ -17,7 +17,7 @@ use crate::infra::activation_profile::ActivationPhaseProfiler;
 use crate::infra::native_progress::NativeProgress;
 use crate::infra::nix_output::{NixOutputMode, NixRecord, decode_nix_record, feed_nix_output};
 use crate::infra::timing::TimingPhase;
-use crate::output::printer::Printer;
+use crate::output::printer::{LoadingIndicator, Printer};
 
 type CommandEnv<'a> = &'a [(&'a str, &'a str)];
 const STDERR_TEE_CAPTURE_LIMIT: usize = 256 * 1024;
@@ -263,7 +263,63 @@ pub fn run_indented_command_with_env(
     _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<i32> {
-    Ok(run_streaming_command_with_env(program, args, cwd, env, indent, false)?.code)
+    Ok(run_streaming_command_with_env(program, args, cwd, env, indent, false, None)?.code)
+}
+
+/// Show elapsed progress while silent; yield the display to the first child output.
+pub fn run_indented_command_with_progress(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    printer: &Printer,
+    indent: &str,
+    label: &str,
+    visible: fn(&str) -> bool,
+) -> anyhow::Result<i32> {
+    Ok(run_streaming_command_with_env(
+        program,
+        args,
+        cwd,
+        None,
+        indent,
+        false,
+        Some(StreamProgress {
+            loading: Some(printer.loading(label)),
+            visible,
+            hidden: VecDeque::new(),
+        }),
+    )?
+    .code)
+}
+
+struct StreamProgress {
+    loading: Option<LoadingIndicator>,
+    visible: fn(&str) -> bool,
+    hidden: VecDeque<String>,
+}
+
+impl StreamProgress {
+    fn show(&mut self, line: &str) -> bool {
+        if !(self.visible)(line) {
+            if line.is_empty() {
+                return false;
+            }
+            if self.hidden.len() == 20 {
+                self.hidden.pop_front();
+            }
+            self.hidden
+                .push_back(crate::infra::text::truncate_with_ellipsis(line, 500));
+            return false;
+        }
+        self.finish();
+        true
+    }
+
+    fn finish(&mut self) {
+        if let Some(loading) = self.loading.take() {
+            loading.finish();
+        }
+    }
 }
 
 pub fn run_indented_command_collecting_with_env(
@@ -274,7 +330,7 @@ pub fn run_indented_command_collecting_with_env(
     _printer: &Printer,
     indent: &str,
 ) -> anyhow::Result<(i32, String)> {
-    let streamed = run_streaming_command_with_env(program, args, cwd, env, indent, true)?;
+    let streamed = run_streaming_command_with_env(program, args, cwd, env, indent, true, None)?;
     Ok((streamed.code, streamed.collected.unwrap_or_default()))
 }
 
@@ -593,6 +649,7 @@ fn run_streaming_command_with_env(
     env: Option<CommandEnv<'_>>,
     indent: &str,
     collect_output: bool,
+    mut progress: Option<StreamProgress>,
 ) -> anyhow::Result<StreamedCommand> {
     let mut trace = crate::infra::run_trace::command(program, args);
     let mut command = operation_command(program);
@@ -620,6 +677,12 @@ fn run_streaming_command_with_env(
     for event in rx {
         let trimmed = visible_stream_line(&event.line);
         let trimmed = trimmed.as_ref();
+        if progress
+            .as_mut()
+            .is_some_and(|progress| !progress.show(trimmed))
+        {
+            continue;
+        }
         if let Some(collected) = collected.as_mut() {
             if !collected.is_empty() {
                 collected.push('\n');
@@ -637,6 +700,17 @@ fn run_streaming_command_with_env(
     join_reader("stderr", stderr_handle)?;
 
     let status = child.wait().context("waiting for child process")?;
+    if let Some(mut progress) = progress {
+        progress.finish();
+        if !status.success() && !progress.hidden.is_empty() {
+            Printer::stream_line("Recent suppressed steps:", indent, 80);
+            let detail_indent = format!("{indent}  ");
+            for line in progress.hidden {
+                Printer::stream_line(&line, &detail_indent, 80);
+            }
+        }
+    }
+
     if let Some(trace) = trace.as_mut() {
         trace.finish(status.code().unwrap_or(1));
     }
@@ -801,6 +875,25 @@ mod tests {
     use crate::output::style::OutputStyle;
 
     struct FailingReader;
+
+    #[test]
+    fn progress_retains_only_a_bounded_hidden_tail_and_yields_to_visible_output() {
+        let mut progress = StreamProgress {
+            loading: None,
+            visible: |line| line.starts_with("Warning:"),
+            hidden: VecDeque::new(),
+        };
+        for index in 0..25 {
+            assert!(!progress.show(&format!("step {index}")));
+        }
+        assert_eq!(progress.hidden.len(), 20);
+        assert_eq!(progress.hidden.front().unwrap(), "step 5");
+        assert!(progress.show("Warning: preserve this"));
+        assert!(!progress.show(&"x".repeat(2000)));
+        assert!(progress.hidden.back().unwrap().chars().count() <= 500);
+        assert!(!progress.show(""));
+        assert_eq!(progress.hidden.len(), 20);
+    }
 
     #[test]
     fn observed_capture_reports_progress_before_child_can_finish() {

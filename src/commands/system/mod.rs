@@ -9,6 +9,7 @@ mod test;
 mod undo;
 mod update;
 mod upgrade;
+mod upgrade_output;
 
 pub use lint::cmd_lint;
 pub use rebuild::{cmd_rebuild, cmd_rebuild_with_command};

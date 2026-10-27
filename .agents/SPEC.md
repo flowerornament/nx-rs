@@ -632,6 +632,17 @@ against PATH. App-only casks have no command shadowing check. These observations
 are snapshots, not an exclusive audit of external package-manager activity.
 Dry runs retain their existing preview and omit receipt observations.
 The structured receipt is an additive optional `upgrade_receipt` timing field.
+Human output ends with elapsed time, aligned observed package changes, activation
+and local-commit outcomes. Unknown observations and partial failures stay visible.
+Normal PATH notes group affected commands by selected directory; verbose output
+retains individual diagnostics, full profile paths and all status fields. Cask
+numeric build suffixes are shortened only when both primary versions differ;
+build-only changes retain full versions. Stored receipt data is unchanged.
+Homebrew upgrades use its native `--quiet` by default and `--verbose` on request;
+only recognized download/link/purge/cleanup lines are suppressed. Warnings, errors,
+caveats, prompts and unfamiliar output remain visible. A failed child replays up to
+20 suppressed lines (each capped at 500 characters) as context. Shared loading yields
+to the first child output before that output is printed.
 
 High-level phases:
 
@@ -649,7 +660,8 @@ High-level phases:
   - load the new lock and derive one root-input change set through the lock's `root.inputs` mapping; transitive node churn remains part of `flake.lock` but is not reported as a user-managed input
   - fetch change info and summaries
   - wrap summary prose to terminal width (at most 100 columns, 80 when redirected), preserving complete sentences; reject excessively verbose provider responses instead of truncating them
-  - show commit count and labeled AI summary by default; show up to three separate commit-title bullets with `--verbose`, `--no-ai`, or unavailable AI
+  - show commit count and labeled AI summary by default; show up to three separate commit-title bullets for updates of at most three commits, with `--verbose`, `--no-ai`, or unavailable AI
+  - optional AI summaries may return `NONE` for maintenance-only or uninformative title samples; use commit titles as fallback; missing Homebrew summaries and comparison URLs are verbose-only
   - supply at most 30 commit titles with explicit sampled/total counts to AI; prompts must avoid claims about unobserved changes and speculative risk assessments
   - AI subprocesses inherit their installed CLI's configured model; only explicit install/remove `--model` arguments override it
   - optional enrichment runs with at most four workers, preserving row order and per-row panic/failure isolation
@@ -767,6 +779,7 @@ Dry-run behavior:
 - Action groups use one blank row before the action and no blank rows between the action,
   its details, and its closing status. Overall summaries may use one blank row to separate
   them from the final action group.
+- Package/version rows align their value column, wrap with a hanging indent, and stack long labels on narrow terminals without truncating values.
 - Long-running operations should use the shared printer loading scope so spinner lifecycle,
   cleanup, and top-level layout remain centralized.
 - Captured package/source lookups (`search`, `info`, install resolution, and Homebrew

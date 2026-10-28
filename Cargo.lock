@@ -434,7 +434,7 @@ dependencies = [
 
 [[package]]
 name = "nx-rs"
-version = "1.5.46"
+version = "1.5.47"
 dependencies = [
  "anyhow",
  "chrono",

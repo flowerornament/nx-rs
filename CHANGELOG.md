@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.5.47 - 2026-10-27
+
 - streamlines daily upgrades with aligned package rows, elapsed results, clear activation/commit outcomes and grouped PATH consequences
 - uses native quiet Homebrew output by default, keeps full diagnostics under `--verbose`, and clears loading before streaming child output
 - omits missing optional Homebrew summaries and lets AI decline uninformative maintenance samples

@@ -122,6 +122,11 @@ class DemoOutputTest(unittest.TestCase):
             r"\1 · <elapsed>",
             terminal_screen(stream),
         )
+        screen = re.sub(
+            r"(?m)^  Update notes: .*$",
+            "  Update notes: <optional work outcome>",
+            screen,
+        )
         self.assertEqual(screen, SNAPSHOT.read_text())
         self.assertEqual(screen.count("Warning: demo Homebrew caveat"), 3)
         self.assertEqual(screen.count("==> Linking demo package"), 2)

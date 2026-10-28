@@ -268,6 +268,10 @@ pub(crate) fn command(program: &str, args: &[&str]) -> Option<Span> {
                     | "bar-with-logs"
                     | "internal-json"
                     | "auth"
+                    | "auth-status"
+                    | "inference"
+                    | "mcp"
+                    | "list"
                     | "api"
                     | "token"
                     | "version"
@@ -281,18 +285,29 @@ pub(crate) fn command(program: &str, args: &[&str]) -> Option<Span> {
     )
 }
 
-pub(crate) fn with_parent<T>(run: impl FnOnce() -> T) -> impl FnOnce() -> T {
-    let parent = PARENT.get();
-    move || {
+#[derive(Clone, Copy)]
+pub(crate) struct Parent(Option<u64>);
+
+impl Parent {
+    pub(crate) fn capture() -> Self {
+        Self(PARENT.get())
+    }
+
+    pub(crate) fn scope<T>(self, run: impl FnOnce() -> T) -> T {
         struct Restore(Option<u64>);
         impl Drop for Restore {
             fn drop(&mut self) {
                 PARENT.set(self.0);
             }
         }
-        let _restore = Restore(PARENT.replace(parent));
+        let _restore = Restore(PARENT.replace(self.0));
         run()
     }
+}
+
+pub(crate) fn with_parent<T>(run: impl FnOnce() -> T) -> impl FnOnce() -> T {
+    let parent = Parent::capture();
+    move || parent.scope(run)
 }
 
 /// Preserve typed Nix activity IDs, parents and targets. Diagnostics and build

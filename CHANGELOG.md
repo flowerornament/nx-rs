@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- requires verified subscription logins for all AI features, clears API/cloud billing overrides in child processes, and inherits CLI model defaults
+- overlaps one optional update-notes batch with upgrade work, cancels unfinished notes at completion, and caches exact-version evidence and summaries
+- discovers Homebrew release sources from project homepages and fixes streaming edit failures, engine selection for services, and deterministic Codex flake-input edits
+
 ## v1.5.47 - 2026-10-27
 
 - streamlines daily upgrades with aligned package rows, elapsed results, clear activation/commit outcomes and grouped PATH consequences

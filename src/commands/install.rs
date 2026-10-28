@@ -16,8 +16,8 @@ use crate::domain::source::{
     is_tap_qualified,
 };
 use crate::infra::ai_engine::{
-    AiEngine, ClaudeCodeEngine, CommandOutcome, build_edit_prompt, build_routing_context,
-    run_edit_with_callback, select_engine,
+    AiEngine, CommandOutcome, build_edit_prompt, build_routing_context, run_edit_with_callback,
+    select_engine,
 };
 use crate::infra::cache::MultiSourceCache;
 use crate::infra::file_edit::{
@@ -527,7 +527,7 @@ fn report_deterministic_edit(
 
 fn maybe_setup_service(package_name: &str, args: &InstallArgs, ctx: &AppContext) {
     maybe_setup_service_with(package_name, args, ctx, |prompt| {
-        let service_engine = ClaudeCodeEngine::new(args.model(), ctx.printer.style());
+        let service_engine = select_engine(args.engine(), args.model(), ctx.printer.style());
         service_engine.run_edit(prompt, &ctx.repo_root)
     });
 }

@@ -1395,7 +1395,8 @@ fn upgrade_rejects_nix_owned_commit_passthrough() -> Result<(), Box<dyn Error>> 
             .current_dir(repo_root.path())
             .env("NX_REPO_ROOT", repo_root.path())
             .env("NX_PROFILE_PATH", repo_root.path().join("timings.jsonl"))
-            .env_remove("NX_TRACE_PATH"),
+            .env_remove("NX_TRACE_PATH")
+            .env_remove("NX_AI_BILLING"),
         None,
     )?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1415,7 +1416,9 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &UpgradeCase) -> Result<(), B
     run_case_with_extra_env(nx_bin, repo_base, case, &[]).map(|_| ())
 }
 
+#[allow(dead_code)]
 struct CaseOutput {
+    invocations: Vec<support_invocations::Invocation>,
     stdout: String,
     stderr: String,
 }
@@ -1449,12 +1452,14 @@ fn run_case_with_extra_env(
     let mut command = Command::new(nx_bin);
     command
         .env_remove("NX_TRACE_PATH")
+        .env_remove("NX_AI_BILLING")
         .env("NX_PROFILE_PATH", &timings_path)
         .args(["--plain", "--minimal"])
         .args(case.cli_args)
         .current_dir(repo_root.path())
         .env("NX_REPO_ROOT", repo_root.path())
         .env("HOME", home_dir.path())
+        .env("XDG_CACHE_HOME", home_dir.path().join(".cache"))
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
         .env("PYTHONDONTWRITEBYTECODE", "1")
@@ -1509,8 +1514,19 @@ fn run_case_with_extra_env(
     assert_upgrade_timing(&timings_path, case.expected_exit)?;
     assert_receipt(&timings_path, case)?;
 
-    let expected_calls = expected_upgrade_calls(case);
-    assert_invocations(case.id, repo_root.path(), &invocations, &expected_calls);
+    let expected_calls = expected_upgrade_calls(case)
+        .into_iter()
+        .filter(|call| !call.is("gh", "api"))
+        .collect::<Vec<_>>();
+    let essential_calls = invocations
+        .iter()
+        .filter(|call| {
+            !(matches!(call.program.as_str(), "claude" | "codex" | "curl")
+                || call.program == "gh" && call.args.first().is_some_and(|arg| arg == "api"))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_invocations(case.id, repo_root.path(), &essential_calls, &expected_calls);
     assert_rendered_upgrade(case, &stdout, &stderr);
 
     assert_repo_state(case, &before, &after, &stdout, &stderr);
@@ -1518,6 +1534,7 @@ fn run_case_with_extra_env(
     assert_no_anonymous_boundaries(case.id, &stdout, &stderr);
 
     Ok(CaseOutput {
+        invocations,
         stdout: stdout.into_owned(),
         stderr: stderr.into_owned(),
     })
@@ -1870,28 +1887,32 @@ fn admitted_input_changes_remain_uncommitted_after_brew_failure() -> Result<(), 
 fn optional_commit_titles_are_readable_without_ai() -> Result<(), Box<dyn Error>> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let binary = resolve_nx_bin(&root)?;
-    let case = UPGRADE_CASES
+    let mut case = *UPGRADE_CASES
         .iter()
-        .find(|case| case.id == "upgrade_flake_changed_skip_commit_gate")
+        .find(|case| case.id == "upgrade_runs_rebuild_when_not_skipped")
         .unwrap();
+    case.mode = "upgrade_flake_changed";
     let output = run_case_with_extra_env(
         &binary,
         &root.join("tests/fixtures/system/repo_base"),
-        case,
-        &[(
-            "NX_SYSTEM_IT_COMPARE_JSON",
-            r#"{"total_commits":12,"commits":[
+        &case,
+        &[
+            ("NX_SYSTEM_IT_INVENTORY_SLEEP", "0.3"),
+            (
+                "NX_SYSTEM_IT_COMPARE_JSON",
+                r#"{"total_commits":12,"commits":[
             {"commit":{"message":"fix: restore the pinned target after a failed push so the local bookmark matches the published state"}},
             {"commit":{"message":"refactor: share interned text ownership"}},
             {"commit":{"message":"test: make workspace layout explicit"}},
             {"commit":{"message":"docs: explain publication"}}
         ]}"#,
-        )],
+            ),
+        ],
     )?;
     assert!(
         output
             .stdout
-            .contains(" · 12 commits\n    Commit titles (3 of 12):\n")
+            .contains("nixpkgs\n    Commit titles (3 of 12):\n")
     );
     assert!(
         output
@@ -1937,13 +1958,14 @@ fn optional_summary_deadline_preserves_changed_input_and_upgrade_success()
         &root.join("tests/fixtures/system/repo_base"),
         case,
         &[
-            ("NX_SUMMARY_TIMEOUT_SECONDS", "1"),
+            ("NX_SUMMARY_TIMEOUT_SECONDS", "60"),
             ("NX_SYSTEM_IT_SUMMARY_SLEEP", "60"),
         ],
     )?;
     let rendered = format!("{}{}", output.stdout, output.stderr);
     assert!(rendered.contains("nixpkgs"));
-    assert!(rendered.contains("optional command deadline reached"));
+    assert!(!rendered.contains("Optional summary unavailable"));
+    assert!(!rendered.contains("deadline reached"));
     assert!(started.elapsed() < std::time::Duration::from_secs(10));
     Ok(())
 }
@@ -1965,5 +1987,61 @@ fn trace_never_overwrites_existing_evidence() -> Result<(), Box<dyn Error>> {
     assert!(output.status.success());
     assert_eq!(fs::read_to_string(trace)?, "previous evidence");
     assert!(String::from_utf8_lossy(&output.stderr).contains("Could not create NX_TRACE_PATH"));
+    Ok(())
+}
+
+#[test]
+fn optional_notes_use_one_subscription_batch_and_cancel_slow_inference()
+-> Result<(), Box<dyn Error>> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let binary = resolve_nx_bin(&root)?;
+    let mut case = *UPGRADE_CASES
+        .iter()
+        .find(|case| case.id == "upgrade_runs_rebuild_when_not_skipped")
+        .unwrap();
+    case.mode = "upgrade_flake_changed";
+    case.cli_args = &["upgrade", "--skip-brew", "--skip-commit"];
+    for mode in ["success", "slow"] {
+        let started = std::time::Instant::now();
+        let output = run_case_with_extra_env(
+            &binary,
+            &root.join("tests/fixtures/system/repo_base"),
+            &case,
+            &[
+                ("NX_SYSTEM_IT_AI", mode),
+                ("NX_SYSTEM_IT_INVENTORY_SLEEP", "0.6"),
+                ("NX_SUMMARY_TIMEOUT_SECONDS", "60"),
+                ("ANTHROPIC_API_KEY", "test-key-must-be-cleared"),
+                ("OPENAI_API_KEY", "test-key-must-be-cleared"),
+                (
+                    "NX_SYSTEM_IT_COMPARE_JSON",
+                    r#"{"total_commits":1,"commits":[{"commit":{"message":"fix: restore target after failed push"}}]}"#,
+                ),
+            ],
+        )?;
+        eprintln!(
+            "optional-notes {mode}: {:.3}s",
+            started.elapsed().as_secs_f64()
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(20));
+        let inference = output
+            .invocations
+            .iter()
+            .filter(|call| call.program == "claude" && call.args.iter().any(|arg| arg == "--print"))
+            .count();
+        assert_eq!(inference, 1, "{mode}: {:?}", output.invocations);
+        assert!(
+            !output
+                .invocations
+                .iter()
+                .any(|call| call.program == "codex")
+        );
+        assert_eq!(
+            output.stdout.contains("AI summary: Restores the target"),
+            mode == "success",
+            "{}",
+            output.stdout
+        );
+    }
     Ok(())
 }

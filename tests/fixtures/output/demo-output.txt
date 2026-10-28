@@ -168,6 +168,7 @@ x Flake check failed
   Warning: demo Homebrew caveat
   stub brew upgrade ok
 + Homebrew packages upgraded
+  Update notes: <optional work outcome>
 
 + Upgrade complete · <elapsed>
   Homebrew · 1 changed

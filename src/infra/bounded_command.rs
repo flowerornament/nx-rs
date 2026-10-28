@@ -1,8 +1,9 @@
-//! Owned optional commands: one deadline covers execution and inherited pipes.
+//! Owned bounded commands: one deadline covers execution and inherited pipes.
 use std::io::{self, Read};
 use std::os::fd::AsFd;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -37,7 +38,11 @@ fn nonblocking(pipe: &impl AsFd) -> Result<()> {
     Ok(())
 }
 
-fn drain(pipe: &mut impl Read, bytes: &mut Vec<u8>) -> io::Result<bool> {
+fn drain(
+    pipe: &mut impl Read,
+    bytes: &mut Vec<u8>,
+    mut observe: impl FnMut(&[u8]),
+) -> io::Result<bool> {
     let mut buffer = [0; 16 * 1024];
     // Bound work per pass so a continuous writer cannot defeat the deadline.
     for _ in 0..16 {
@@ -47,6 +52,7 @@ fn drain(pipe: &mut impl Read, bytes: &mut Vec<u8>) -> io::Result<bool> {
                 if bytes.len() + count > OUTPUT_LIMIT {
                     return Err(io::Error::other("optional command exceeded output limit"));
                 }
+                observe(&buffer[..count]);
                 bytes.extend_from_slice(&buffer[..count]);
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(false),
@@ -58,19 +64,39 @@ fn drain(pipe: &mut impl Read, bytes: &mut Vec<u8>) -> io::Result<bool> {
 }
 
 pub(crate) fn run(program: &str, args: &[&str], deadline: Instant) -> Result<CapturedCommand> {
-    if Instant::now() >= deadline {
+    run_cancellable(program, args, deadline, None)
+}
+
+pub(crate) fn run_cancellable(
+    program: &str,
+    args: &[&str],
+    deadline: Instant,
+    cancel: Option<&AtomicBool>,
+) -> Result<CapturedCommand> {
+    let mut command = Command::new(program);
+    command.args(args).env("HOMEBREW_NO_AUTO_UPDATE", "1");
+    run_prepared(command, program, args, deadline, cancel, |_| {})
+}
+
+pub(crate) fn run_prepared(
+    mut command: Command,
+    program: &str,
+    trace_args: &[&str],
+    deadline: Instant,
+    cancel: Option<&AtomicBool>,
+    mut observe_stdout: impl FnMut(&[u8]),
+) -> Result<CapturedCommand> {
+    if Instant::now() >= deadline || cancelled(cancel) {
         return Ok(CapturedCommand::captured(
             124,
             String::new(),
-            "optional command deadline reached".into(),
+            "command deadline reached".into(),
         ));
     }
-    let mut trace = super::run_trace::command(program, args);
+    let mut trace = super::run_trace::command(program, trace_args);
     let mut child = OwnedChild {
-        child: Command::new(program)
-            .args(args)
+        child: command
             .process_group(0)
-            .env("HOMEBREW_NO_AUTO_UPDATE", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -85,16 +111,16 @@ pub(crate) fn run(program: &str, args: &[&str], deadline: Instant) -> Result<Cap
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let (mut out_done, mut err_done) = (false, false);
     let code = loop {
-        if Instant::now() >= deadline {
-            err.extend_from_slice(b"\noptional command deadline reached");
+        if Instant::now() >= deadline || cancelled(cancel) {
+            err.extend_from_slice(b"\ncommand deadline reached");
             break 124;
         }
         let drained = (|| -> io::Result<()> {
             if !out_done {
-                out_done = drain(&mut stdout, &mut out)?;
+                out_done = drain(&mut stdout, &mut out, &mut observe_stdout)?;
             }
             if !err_done {
-                err_done = drain(&mut stderr, &mut err)?;
+                err_done = drain(&mut stderr, &mut err, |_| {})?;
             }
             Ok(())
         })();
@@ -123,12 +149,45 @@ pub(crate) fn run(program: &str, args: &[&str], deadline: Instant) -> Result<Cap
     ))
 }
 
+fn cancelled(cancel: Option<&AtomicBool>) -> bool {
+    cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     // Output/status controls need scheduling room on loaded build hosts.
     const COMPLETION_BUDGET: Duration = Duration::from_secs(60);
+
+    #[test]
+    fn cancellation_stops_the_owned_process_without_waiting_for_its_deadline() {
+        let cancel = AtomicBool::new(false);
+        let mut command = Command::new("sh");
+        command.args(["-c", "printf ready; sleep 60 & wait"]);
+        let output = run_prepared(
+            command,
+            "sh",
+            &[],
+            Instant::now() + Duration::from_secs(60),
+            Some(&cancel),
+            |_| cancel.store(true, Ordering::Relaxed),
+        )
+        .unwrap();
+        assert_eq!(output.code, 124);
+        assert_eq!(output.stdout, "ready");
+        assert_eq!(
+            run_cancellable(
+                "nonexistent-cancelled-provider",
+                &[],
+                Instant::now() + COMPLETION_BUDGET,
+                Some(&cancel)
+            )
+            .unwrap()
+            .code,
+            124
+        );
+    }
 
     #[test]
     fn preserves_output_and_failure_status() {

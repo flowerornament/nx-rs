@@ -216,26 +216,6 @@ fn nix_config_appends_token_without_replacing_inherited_settings() {
 }
 
 #[test]
-fn flake_compare_url_uses_short_revs() {
-    let url = flake_compare_url(&sample_input_change());
-    assert_eq!(
-        url.as_deref(),
-        Some("https://github.com/nix-community/home-manager/compare/aaaaaaa...bbbbbbb")
-    );
-}
-
-#[test]
-fn flake_compare_endpoint_preserves_full_revs() {
-    let endpoint = flake_compare_endpoint(&sample_input_change());
-    assert_eq!(
-        endpoint.as_deref(),
-        Some(
-            "repos/nix-community/home-manager/compare/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        )
-    );
-}
-
-#[test]
 fn compare_failure_preserves_api_status_and_detail() {
     let output = CapturedCommand::captured(
         1,
@@ -296,61 +276,6 @@ fn parse_compare_json_extracts_commit_summary() {
 fn parse_compare_json_invalid_returns_none() {
     let summary = parse_compare_json("not json");
     assert!(summary.is_none());
-}
-
-#[test]
-fn maybe_ai_summary_respects_no_ai_gate() {
-    let mut called = false;
-    let summary = maybe_ai_summary(true, || {
-        called = true;
-        Some("should not run".to_string())
-    });
-    assert!(summary.is_none());
-    assert!(!called);
-}
-
-#[test]
-fn maybe_ai_summary_runs_when_enabled() {
-    let mut called = false;
-    let summary = maybe_ai_summary(false, || {
-        called = true;
-        Some("ok".to_string())
-    });
-    assert_eq!(summary.as_deref(), Some("ok"));
-    assert!(called);
-}
-
-#[test]
-fn compare_summary_prioritizes_prose_and_keeps_titles_for_fallback_and_verbose() {
-    let summary = parse_compare_json(
-        r#"{"total_commits":12,"commits":[
-        {"commit":{"message":"fix: restore target after failed push"}},
-        {"commit":{"message":"refactor: share interned text"}}
-    ]}"#,
-    )
-    .unwrap();
-    assert_eq!(
-        format_compare_summary(
-            &summary,
-            Some("Restores the target after a failed push."),
-            false
-        ),
-        ["AI summary: Restores the target after a failed push."]
-    );
-    let fallback = format_compare_summary(&summary, None, false);
-    assert_eq!(
-        fallback,
-        [
-            "Commit titles (2 of 12):",
-            "- fix: restore target after failed push",
-            "- refactor: share interned text"
-        ]
-    );
-    let verbose = format_compare_summary(&summary, Some("Summary."), true);
-    assert_eq!(&verbose[1..], &fallback);
-    let prompt = build_summary_prompt("anneal", &summary);
-    assert!(prompt.contains("2 sampled commit titles out of 12 total commits"));
-    assert!(prompt.contains("Do not infer risks"));
 }
 
 #[test]

@@ -1,4 +1,5 @@
 pub mod activation_profile;
+pub(crate) mod ai_cli;
 pub mod ai_engine;
 pub(crate) mod bounded_command;
 pub mod cache;

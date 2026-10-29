@@ -21,7 +21,7 @@ rnix = "0.11"
 rowan = "0.15"
 toml_edit = "0.22"
 walkdir = "2.5.0"
-claude-codes = { version = "2.1.52", default-features = false, features = ["types", "sync-client"] }
+claude-codes = { version = "2.1.52", default-features = false, features = ["types"] }
 uuid = { version = "1", features = ["v4"] }
 clap_complete = "4.6.0"
 rustix-openpty = "0.2.0"

@@ -421,8 +421,8 @@ Routing behavior:
 
 If source requires flake mod:
 
-- Turbo/Codex mode (no prompt) refuses and warns: use claude-code or claude engine.
-- Claude path may prompt to add flake input unless `--yes`.
+- Every engine supports deterministic flake input edits.
+- The install flow may prompt to add a flake input unless `--yes`.
 - `--dry-run` reports intended flake input action without mutation.
 
 ## 7.6 Platform-Incompatible Primary Result Fallback
@@ -435,9 +435,13 @@ For nix-based sources:
 
 ## 7.7 Engine Execution Semantics
 
-- Default (`--engine=claude-code`): streaming engine via `claude-codes` crate with activity display. Uses Max subscription auth by default (unsets `ANTHROPIC_API_KEY`); set `NX_AI_BILLING=api` for API key billing.
+- Default (`--engine=claude-code`): streaming Claude CLI with protocol types and activity display; a terminal successful result and zero process exit are both required.
 - `--engine=codex`: turbo path via `codex exec`.
-- `--engine=claude`: raw Claude CLI path via `claude --print`.
+- `--engine=claude`: captured Claude CLI path via `claude --print`.
+- All model execution passes through a shared subscription-only boundary: clear child API-key/auth-token/cloud-provider overrides; require Claude `claudeai` or Codex ChatGPT login; reject missing, unknown or API-only authentication before inference. `NX_AI_BILLING=api` cannot enable API billing. Never invoke login/logout commands or modify global credentials/configuration.
+- Preserve the CLI model defaults unless `--model` is explicit. Check login with a two-second bound, reused within the invocation; never force a different login during a Codex status probe.
+- Routing has a five-second complete budget, read-only sandbox/no Claude tools, and deterministic fallback. Required edits have a 120-second bound. Claude edits permit file tools without Bash or blanket permission bypass. Service setup honors the selected engine.
+- Reject unknown engine names at argument parsing.
 - All engines consume the same `InstallPlan` and dispatch prompts from its `EditSpec`.
 - Only a typed unsupported edit shape may fall back to AI; operational read,
   unrecognized parse, and atomic-write failures abort instead.
@@ -658,18 +662,16 @@ High-level phases:
   - non-dry-run with no positional inputs: stream `nix flake update`
   - non-dry-run with positional inputs: stream `nix flake update <input...>`, preserving CLI order
   - load the new lock and derive one root-input change set through the lock's `root.inputs` mapping; transitive node churn remains part of `flake.lock` but is not reported as a user-managed input
-  - fetch change info and summaries
-  - wrap summary prose to terminal width (at most 100 columns, 80 when redirected), preserving complete sentences; reject excessively verbose provider responses instead of truncating them
-  - show commit count and labeled AI summary by default; show up to three separate commit-title bullets for updates of at most three commits, with `--verbose`, `--no-ai`, or unavailable AI
-  - optional AI summaries may return `NONE` for maintenance-only or uninformative title samples; use commit titles as fallback; missing Homebrew summaries and comparison URLs are verbose-only
-  - supply at most 30 commit titles with explicit sampled/total counts to AI; prompts must avoid claims about unobserved changes and speculative risk assessments
-  - AI subprocesses inherit their installed CLI's configured model; only explicit install/remove `--model` arguments override it
-  - optional enrichment runs with at most four workers, preserving row order and per-row panic/failure isolation
-  - optional comparison/AI batches share one absolute deadline (10 seconds by default; `NX_SUMMARY_TIMEOUT_SECONDS=1..300` overrides); provider fallback never resets it
-  - optional commands run in owned process groups with nonblocking bounded output; deadline cancellation kills their group and reaps the leader, including when inherited pipes outlive the leader; oversized output is rejected
-  - the shared printer shows enrichment activity and its time budget; summary failure/timeout remains advisory and preserves every input/package row
-  - optional flake and Homebrew enrichment worker panics retain the input/package row, warn that its summary is unavailable, and do not abort the upgrade or discard other workers' summaries
-  - use complete locked revisions for GitHub comparison identity while keeping abbreviated revisions display-only; comparison failures are advisory and report whether command execution, the API, or response parsing failed
+  - render deterministic input/version identities immediately, before optional enrichment
+  - after Homebrew metadata is ready (or immediately when skipped), one owned background job obtains source evidence with at most four workers, then makes at most one combined inference attempt; prefer verified Claude subscription login, otherwise verified Codex ChatGPT login; do not retry a failed inference with another provider
+  - use one absolute ten-second enrichment deadline (`NX_SUMMARY_TIMEOUT_SECONDS=1..300`); cancel and join unfinished work when essential work finishes, killing/reaping owned process groups even if descendant pipes remain open; do not wait out the model budget
+  - skip enrichment for dry runs; `--no-ai` omits inference and AI prose while allowing source information
+  - use full locked revisions for flake comparison identity; Homebrew uses normalized upstream versions and published releases matching the exact version (including `v`/`V` tags), then comparisons; discover a repository only from an unambiguous matching GitHub link on its HTTPS homepage
+  - cache evidence, validated summaries/abstentions and repository discoveries privately for seven days under the XDG cache directory, bounded in size and bound to exact version/revision pairs; existing cache/receipt schemas remain compatible
+  - render completed candidate notes before the observed receipt, wrapping at terminal width (at most 100 columns, 80 redirected); label AI prose; fall back to up to three commit-title bullets, with source coverage and provider/cancellation diagnostics verbose-only
+  - supply bounded release-note excerpts or up to 30 sampled commit titles with sampled/total counts; constrain the response to known IDs and bounded prose or null for uninformative maintenance; do not infer unobserved changes or speculative risks
+  - missing evidence, model failures, invalid output and worker panics remain advisory and preserve all deterministic input/package rows
+  - AI subprocesses inherit the installed CLI model unless an install/remove `--model` overrides it; small read-only tasks request low effort without tools/hooks/MCP setup
   - normal flake check and build phases realize changed sources on demand
 3. Binary cache admission, when rebuild is enabled:
   - preserve the original `flake.lock` bytes before updating
@@ -779,6 +781,7 @@ Dry-run behavior:
 - Action groups use one blank row before the action and no blank rows between the action,
   its details, and its closing status. Overall summaries may use one blank row to separate
   them from the final action group.
+- Nx-owned status and body/detail messages wrap explicitly to terminal width, preserving detail indentation and hanging status glyphs on continuation lines, including explicit line breaks. Captured indented streams also respect narrower terminal widths.
 - Package/version rows align their value column, wrap with a hanging indent, and stack long labels on narrow terminals without truncating values.
 - Long-running operations should use the shared printer loading scope so spinner lifecycle,
   cleanup, and top-level layout remain centralized.

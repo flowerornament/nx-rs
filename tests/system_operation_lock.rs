@@ -336,7 +336,13 @@ fn relative_lock_overrides_fail_before_any_mutation() -> TestResult {
         .spawn()?)
     .finish();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("must be an absolute path"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains("must be an absolute path")
+    );
     assert!(!repo.join("relative.lock").exists());
     Ok(())
 }

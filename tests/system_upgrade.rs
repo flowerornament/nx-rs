@@ -1464,6 +1464,7 @@ fn run_case_with_extra_env(
         .env("TERM", "dumb")
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("NX_SYSTEM_PROFILE_PATH", &profile_link)
+        .env("NX_OPERATION_LOCK_PATH", home_dir.path().join("lock"))
         .env("NX_SYSTEM_IT_LOG", &log_path)
         .env("NX_SYSTEM_IT_MODE", case.mode)
         .env("NX_SYSTEM_IT_ASSERT_UPGRADE_LOCK", "1")
@@ -1520,10 +1521,7 @@ fn run_case_with_extra_env(
         .collect::<Vec<_>>();
     let essential_calls = invocations
         .iter()
-        .filter(|call| {
-            !(matches!(call.program.as_str(), "claude" | "codex" | "curl")
-                || call.program == "gh" && call.args.first().is_some_and(|arg| arg == "api"))
-        })
+        .filter(|call| essential_invocation(call))
         .cloned()
         .collect::<Vec<_>>();
     assert_invocations(case.id, repo_root.path(), &essential_calls, &expected_calls);
@@ -1540,10 +1538,24 @@ fn run_case_with_extra_env(
     })
 }
 
+fn essential_invocation(call: &support_invocations::Invocation) -> bool {
+    !(matches!(call.program.as_str(), "claude" | "codex" | "curl")
+        || call.program == "gh" && call.args.first().is_some_and(|arg| arg == "api"))
+}
+
 fn assert_rendered_upgrade(case: &UpgradeCase, stdout: &str, stderr: &str) {
     for expected in case.stdout_contains {
         assert!(
-            stdout.contains(expected) || stderr.contains(expected),
+            stdout
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .contains(expected)
+                || stderr
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .contains(expected),
             "case {}: output missing expected fragment '{}'\nstdout:\n{}\nstderr:\n{}",
             case.id,
             expected,

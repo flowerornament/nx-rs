@@ -18,7 +18,7 @@ CSI = re.compile(r"\x1b\[([0-9;?]*)([ -/]*)([@-~])")
 DEMO_TIMEOUT_SECONDS = 120
 
 
-def run_demo() -> str:
+def run_demo(columns: int = 100) -> str:
     pid, master = pty.fork()
     if pid == 0:
         os.chdir(ROOT)
@@ -27,7 +27,7 @@ def run_demo() -> str:
         env.update(TERM="xterm-256color", CARGO_TERM_COLOR="never")
         os.execvpe("bash", ["bash", "scripts/demo-output.sh"], env)
 
-    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 100, 0, 0))
+    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 40, columns, 0, 0))
     chunks = []
     deadline = time.monotonic() + DEMO_TIMEOUT_SECONDS
     status = None
@@ -114,6 +114,20 @@ class DemoOutputTest(unittest.TestCase):
         self.assertEqual(terminal_screen("abc\rx\x1b[0Kz\n"), "xz\n")
         self.assertEqual(terminal_screen("abc\rxy\x1b[2Kz\n"), "  z\n")
 
+    def test_narrow_terminal_keeps_wrapped_detail_lines_indented(self) -> None:
+        screen = terminal_screen(run_demo(columns=40))
+        block = screen.split("> Checking Homebrew updates\n", 1)[1].split("\n+ ", 1)[0]
+        lines = block.strip("\n").splitlines()
+        self.assertGreater(len(lines), 1)
+        self.assertTrue(
+            all(line.startswith("  ") and len(line) <= 40 for line in lines),
+            repr(lines),
+        )
+        self.assertEqual(
+            " ".join(line.strip() for line in lines),
+            "Includes versioned self-updating casks; latest-version casks require --greedy.",
+        )
+
     def test_final_terminal_screen_matches_reference(self) -> None:
         stream = run_demo()
         self.assert_native_nix_passthrough(stream)
@@ -123,7 +137,7 @@ class DemoOutputTest(unittest.TestCase):
             terminal_screen(stream),
         )
         screen = re.sub(
-            r"(?m)^  Update notes: .*$",
+            r"(?m)^  Update notes: .*(?:\n  [^\n]+)*",
             "  Update notes: <optional work outcome>",
             screen,
         )

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- preserves indentation when long status, detail and body messages wrap, including URLs and explicit line breaks
+
 - requires verified subscription logins for all AI features, clears API/cloud billing overrides in child processes, and inherits CLI model defaults
 - overlaps one optional update-notes batch with upgrade work, cancels unfinished notes at completion, and caches exact-version evidence and summaries
 - discovers Homebrew release sources from project homepages and fixes streaming edit failures, engine selection for services, and deterministic Codex flake-input edits

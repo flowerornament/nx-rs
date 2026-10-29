@@ -781,6 +781,7 @@ Dry-run behavior:
 - Action groups use one blank row before the action and no blank rows between the action,
   its details, and its closing status. Overall summaries may use one blank row to separate
   them from the final action group.
+- Nx-owned status and body/detail messages wrap explicitly to terminal width, preserving detail indentation and hanging status glyphs on continuation lines, including explicit line breaks. Captured indented streams also respect narrower terminal widths.
 - Package/version rows align their value column, wrap with a hanging indent, and stack long labels on narrow terminals without truncating values.
 - Long-running operations should use the shared printer loading scope so spinner lifecycle,
   cleanup, and top-level layout remain centralized.

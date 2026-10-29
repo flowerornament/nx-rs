@@ -733,7 +733,7 @@ fn rebuild_hash_mismatch_repairs_and_retries() -> Result<(), Box<dyn Error>> {
         "unexpected exit code\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
-        stdout.contains(
+        stdout.split_whitespace().collect::<Vec<_>>().join(" ").contains(
             "Auto-updated home/agent-sync.nix:4: hash sha256-old -> sha256-new (FOD content drift); retrying"
         ),
         "stdout missing repair message\nstdout:\n{stdout}\nstderr:\n{stderr}"
@@ -1189,7 +1189,10 @@ fn assert_source_cache_diagnostic_only(
         1,
     )?;
 
-    let output = format!("{stdout}\n{stderr}");
+    let output = format!("{stdout}\n{stderr}")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     for expected in [
         "Nix reported an inconsistent lazy-tree source cache",
         SOURCE_CACHE_REPORT,

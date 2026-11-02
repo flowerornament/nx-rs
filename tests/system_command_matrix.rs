@@ -81,6 +81,7 @@ fn run_case(nx_bin: &Path, repo_base: &Path, case: &MatrixCase) -> Result<(), Bo
         .current_dir(repo_root.path())
         .env("NX_REPO_ROOT", repo_root.path())
         .env("HOME", home_dir.path())
+        .env("XDG_CACHE_HOME", home_dir.path().join(".cache"))
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
         .env("PYTHONDONTWRITEBYTECODE", "1");
@@ -120,6 +121,7 @@ fn tapped_cask_declaration_lifecycle() -> Result<(), Box<dyn Error>> {
             .current_dir(repo.path())
             .env("NX_REPO_ROOT", repo.path())
             .env("HOME", home.path())
+            .env("XDG_CACHE_HOME", home.path().join(".cache"))
             .env("NX_RS_AUTO_REFRESH", "0");
         let output = run_command_with_optional_stdin(&mut command, None)?;
         assert!(

@@ -712,6 +712,7 @@ fn rebuild_hash_mismatch_repairs_and_retries() -> Result<(), Box<dyn Error>> {
         .current_dir(repo_root.path())
         .env("NX_REPO_ROOT", repo_root.path())
         .env("HOME", home_dir.path())
+        .env("XDG_CACHE_HOME", home_dir.path().join(".cache"))
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
         .env("PYTHONDONTWRITEBYTECODE", "1")
@@ -732,7 +733,7 @@ fn rebuild_hash_mismatch_repairs_and_retries() -> Result<(), Box<dyn Error>> {
         "unexpected exit code\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
-        stdout.contains(
+        stdout.split_whitespace().collect::<Vec<_>>().join(" ").contains(
             "Auto-updated home/agent-sync.nix:4: hash sha256-old -> sha256-new (FOD content drift); retrying"
         ),
         "stdout missing repair message\nstdout:\n{stdout}\nstderr:\n{stderr}"
@@ -916,6 +917,7 @@ fn split_darwin_rebuild_can_reapply_current_system() -> Result<(), Box<dyn Error
         .current_dir(repo_root.path())
         .env("NX_REPO_ROOT", repo_root.path())
         .env("HOME", home_dir.path())
+        .env("XDG_CACHE_HOME", home_dir.path().join(".cache"))
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
         .env("PYTHONDONTWRITEBYTECODE", "1")
@@ -976,6 +978,7 @@ fn migrated_brew_definition_fails_before_profile_update() -> Result<(), Box<dyn 
         .args(["--plain", "--minimal", "rebuild"])
         .current_dir(repo.path())
         .env("HOME", home.path())
+        .env("XDG_CACHE_HOME", home.path().join(".cache"))
         .env("NX_REPO_ROOT", repo.path())
         .env("NX_SPLIT_DARWIN", "1")
         .env("NX_SYSTEM_PROFILE_PATH", &profile)
@@ -1186,7 +1189,10 @@ fn assert_source_cache_diagnostic_only(
         1,
     )?;
 
-    let output = format!("{stdout}\n{stderr}");
+    let output = format!("{stdout}\n{stderr}")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     for expected in [
         "Nix reported an inconsistent lazy-tree source cache",
         SOURCE_CACHE_REPORT,
@@ -1343,6 +1349,7 @@ fn run_split_rebuild_with_expected_exit(
         .current_dir(repo_root.path())
         .env("NX_REPO_ROOT", repo_root.path())
         .env("HOME", home_dir.path())
+        .env("XDG_CACHE_HOME", home_dir.path().join(".cache"))
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
         .env("PYTHONDONTWRITEBYTECODE", "1")
@@ -1407,6 +1414,7 @@ fn run_command_case(
         .current_dir(repo_root.path())
         .env("NX_REPO_ROOT", repo_root.path())
         .env("HOME", home_dir.path())
+        .env("XDG_CACHE_HOME", home_dir.path().join(".cache"))
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
         .env("PYTHONDONTWRITEBYTECODE", "1")

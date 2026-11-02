@@ -81,15 +81,18 @@ impl Printer {
     }
 
     pub fn heading(text: &str) {
-        println!("\n{}{text}", LineLayout::Detail.indent());
+        println!(
+            "\n{}",
+            paragraph_lines_at(text, Self::width(), LineLayout::Detail).join("\n")
+        );
     }
 
     pub fn body(text: &str) {
-        println!("{}{text}", LineLayout::Detail.indent());
+        Self::paragraph(text);
     }
 
     pub fn sub_detail(text: &str) {
-        println!("{}{text}", LineLayout::SubDetail.indent());
+        Self::sub_paragraph(text);
     }
 
     /// Wrap prose and hanging bullets while preserving the shared detail indent.
@@ -200,12 +203,12 @@ impl Printer {
     }
 
     pub fn detail(text: &str) {
-        println!("{}{text}", LineLayout::Detail.indent());
+        Self::paragraph(text);
     }
 
     pub fn stream_line(text: &str, indent: &str, width: usize) {
-        for segment in wrapped_segments(text, width.saturating_sub(indent.len()).max(20)) {
-            println!("{indent}{segment}");
+        for line in prefixed_lines(text, width.min(Self::width()), indent, "") {
+            println!("{line}");
         }
     }
 
@@ -317,7 +320,13 @@ fn layout_line(layout: LineLayout, glyph: &str, text: &str) -> String {
 }
 
 fn layout_line_with_prefix(prefix: &str, layout: LineLayout, glyph: &str, text: &str) -> String {
-    format!("{prefix}{}{} {text}", layout.indent(), glyph)
+    let lines = prefixed_lines(
+        text,
+        Printer::width(),
+        layout.indent(),
+        &format!("{glyph} "),
+    );
+    format!("{prefix}{}", lines.join("\n"))
 }
 
 impl LineLayout {
@@ -426,13 +435,14 @@ fn wrapped_segments(line: &str, max_content: usize) -> Vec<&str> {
     let mut remaining = line;
     while remaining.chars().count() > max_content {
         let candidate = nth_char_boundary(remaining, max_content);
-        let split = match remaining[..candidate].rfind(' ') {
-            // Avoid producing tiny leading fragments like "File" when the first
-            // meaningful split point is near the hard width boundary.
-            Some(idx) if idx >= (candidate / 2) => idx,
-            _ => candidate,
-        }
-        .max(1);
+        let split = if remaining[candidate..].starts_with(' ') {
+            candidate
+        } else {
+            remaining[..candidate]
+                .rfind(' ')
+                .filter(|index| *index > 0)
+                .unwrap_or(candidate)
+        };
         out.push(&remaining[..split]);
         remaining = remaining[split..].trim_start();
         if remaining.is_empty() {
@@ -453,19 +463,20 @@ fn paragraph_lines_at(text: &str, width: usize, layout: LineLayout) -> Vec<Strin
     let (marker, content) = text
         .strip_prefix("- ")
         .map_or(("", text), |text| ("- ", text));
+    prefixed_lines(content, width, indent, marker)
+}
+
+fn prefixed_lines(text: &str, width: usize, indent: &str, marker: &str) -> Vec<String> {
     let width = if width == 0 { 80 } else { width.min(100) };
-    let content_width = width.saturating_sub(indent.len() + marker.len()).max(1);
-    wrapped_segments(content, content_width)
-        .into_iter()
+    let content_width = width
+        .saturating_sub(indent.chars().count() + marker.chars().count())
+        .max(1);
+    let continuation = " ".repeat(marker.chars().count());
+    text.split('\n')
+        .flat_map(|line| wrapped_segments(line, content_width))
         .enumerate()
         .map(|(index, line)| {
-            let prefix = if index == 0 {
-                marker
-            } else if marker.is_empty() {
-                ""
-            } else {
-                "  "
-            };
+            let prefix = if index == 0 { marker } else { &continuation };
             format!("{indent}{prefix}{line}")
         })
         .collect()
@@ -526,6 +537,18 @@ mod tests {
     }
 
     #[test]
+    fn wraps_between_words_before_splitting_unbroken_tokens() {
+        assert_eq!(
+            wrapped_segments("short a-longer-token", 16),
+            ["short", "a-longer-token"]
+        );
+        assert_eq!(
+            wrapped_segments("alpha beta gamma delta", 16),
+            ["alpha beta gamma", "delta"]
+        );
+    }
+
+    #[test]
     fn paragraphs_wrap_without_losing_text_or_bullet_indentation() {
         assert_eq!(
             paragraph_lines("- alpha beta gamma delta", 18),
@@ -542,6 +565,31 @@ mod tests {
                     .collect::<Vec<_>>()
                     .join(" "),
                 text
+            );
+        }
+    }
+
+    #[test]
+    fn long_messages_preserve_indent_on_soft_and_explicit_line_breaks() {
+        assert_eq!(
+            super::prefixed_lines("alpha beta gamma delta\nnext line", 18, "  ", "! "),
+            ["  ! alpha beta", "    gamma delta", "    next line"]
+        );
+        assert_eq!(
+            super::paragraph_lines_at("alpha beta gamma delta\nnext line", 18, LineLayout::Detail),
+            ["  alpha beta gamma", "  delta", "  next line"]
+        );
+        let url = "https://example.org/".repeat(4);
+        for indent in ["  ", "    "] {
+            let lines = super::prefixed_lines(&url, 32, indent, "");
+            assert!(
+                lines
+                    .iter()
+                    .all(|line| line.starts_with(indent) && line.chars().count() <= 32)
+            );
+            assert_eq!(
+                lines.iter().map(|line| line.trim()).collect::<String>(),
+                url
             );
         }
     }

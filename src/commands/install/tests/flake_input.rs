@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn gate_flake_input_refuses_codex_engine() {
+fn gate_flake_input_refuses_an_engine_without_the_required_capability() {
     let tmp = setup_install_root(DEFAULT_CLI_NIX);
     let root = tmp.path();
     let ctx = test_context(root);

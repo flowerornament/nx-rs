@@ -32,6 +32,9 @@ pub fn install_stubs(stub_dir: &Path) -> Result<(), Box<dyn Error>> {
         "readlink",
         "scutil",
         "hostname",
+        "claude",
+        "codex",
+        "curl",
         "df",
     ] {
         write_executable(&stub_dir.join(program), STUB_SCRIPT)?;
@@ -107,6 +110,35 @@ with open(path, "a") as log:
 PYLOG
 
 case "$program" in
+  curl) exit 22 ;;
+  claude)
+    [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${OPENAI_API_KEY:-}" ] || exit 71
+    case " $* " in
+      *" auth status "*)
+        if [ -n "${NX_SYSTEM_IT_AI:-}" ]; then
+          echo '{"loggedIn":true,"authMethod":"claude.ai","apiKeySource":null}'; exit 0
+        fi
+        echo '{"loggedIn":false,"authMethod":"none","apiKeySource":null}'; exit 1 ;;
+    esac
+    if [ "${NX_SYSTEM_IT_AI:-}" = "slow" ]; then sleep 60 & wait; fi
+    if [ "${NX_SYSTEM_IT_AI:-}" = "success" ]; then
+      python3 - "$@" <<'PYAI'
+import json, sys
+prompt = sys.argv[-1]
+evidence = json.loads(prompt.split("\n", 1)[1])
+print(json.dumps({item["id"]: "Restores the target after a failed push." for item in evidence}))
+PYAI
+      exit 0
+    fi
+    echo 'unexpected model inference in system test' >&2; exit 1
+    ;;
+  codex)
+    case " $* " in
+      *" login status "*) echo 'Not logged in' >&2; exit 1 ;;
+      *) echo 'unexpected model inference in system test' >&2; exit 1 ;;
+    esac
+    ;;
+
   git)
     if [ "${1:-}" = "-C" ]; then
       shift
@@ -343,6 +375,7 @@ case "$program" in
     exit 1
     ;;
   brew)
+    if [ "${1:-}" = "info" ] && [ -n "${NX_SYSTEM_IT_INVENTORY_SLEEP:-}" ]; then sleep "$NX_SYSTEM_IT_INVENTORY_SLEEP"; fi
     if [ "${1:-}" = "outdated" ] && [ "${2:-}" = "--json" ]; then
       if [ "$mode" = "upgrade_brew_query_failure" ] || [ "${NX_SYSTEM_IT_BREW_QUERY_FAIL:-0}" = "1" ]; then
         echo 'Homebrew query unavailable' >&2
@@ -412,6 +445,7 @@ PYLOCK
     fi
 
     if [ "${1:-}" = "upgrade" ]; then
+      if [ -n "${NX_SYSTEM_IT_BREW_SLEEP:-}" ]; then sleep "$NX_SYSTEM_IT_BREW_SLEEP"; fi
       if [ "${NX_OUTPUT_DEMO:-0}" = "1" ]; then
         case " $* " in
           *" --verbose "*) echo '==> Linking demo package' >&2 ;;

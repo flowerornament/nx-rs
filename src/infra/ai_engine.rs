@@ -1,6 +1,7 @@
-use std::io::BufRead;
+mod streaming;
+
 use std::path::Path;
-use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 use regex::Regex;
 use serde_json::Value;
@@ -8,7 +9,8 @@ use serde_json::Value;
 use crate::domain::config::ConfigFiles;
 use crate::domain::plan::{EditSpec, InstallPlan};
 use crate::domain::source::PackageSource;
-use crate::infra::shell::{CapturedCommand, run_captured_command};
+use crate::infra::ai_cli::{Provider, Purpose};
+use crate::infra::shell::CapturedCommand;
 use crate::output::printer::{ActivityKind, Printer};
 use crate::output::style::OutputStyle;
 
@@ -85,7 +87,7 @@ pub trait AiEngine: Send + Sync {
 
 // --- Concrete Adapters
 
-/// Fast non-interactive engine via `codex exec`.
+/// Subscription-backed non-interactive engine via `codex exec`.
 pub struct CodexEngine {
     pub model: Option<String>,
 }
@@ -112,10 +114,13 @@ impl AiEngine for CodexEngine {
             build_routing_prompt(package, description, context, Some(candidates), fallback);
         resolve_routing_run_result(
             package,
-            run_captured_command(
-                "codex",
-                &codex_exec_args(&prompt, self.model.as_deref(), "workspace-write"),
+            Provider::Codex.run(
+                Purpose::ReadOnly,
+                &codex_exec_args(&prompt, self.model.as_deref(), "read-only"),
                 Some(cwd),
+                Instant::now() + Duration::from_secs(5),
+                None,
+                |_| {},
             ),
             candidates,
             fallback,
@@ -123,10 +128,13 @@ impl AiEngine for CodexEngine {
     }
 
     fn run_edit(&self, prompt: &str, cwd: &Path) -> CommandOutcome {
-        let result = run_captured_command(
-            "codex",
+        let result = Provider::Codex.run(
+            Purpose::Edit,
             &codex_exec_args(prompt, self.model.as_deref(), "workspace-write"),
             Some(cwd),
+            Instant::now() + Duration::from_secs(120),
+            None,
+            |_| {},
         );
         match result {
             Ok(cmd) => CommandOutcome {
@@ -141,7 +149,7 @@ impl AiEngine for CodexEngine {
     }
 
     fn supports_flake_input(&self) -> bool {
-        false
+        true
     }
 
     fn name(&self) -> &'static str {
@@ -149,7 +157,7 @@ impl AiEngine for CodexEngine {
     }
 }
 
-/// Interactive engine via `claude --print`.
+/// Subscription-backed plain-output engine via `claude --print`.
 pub struct ClaudeEngine {
     pub model: Option<String>,
 }
@@ -174,7 +182,7 @@ impl AiEngine for ClaudeEngine {
     ) -> RouteDecision {
         let prompt =
             build_routing_prompt(package, description, context, Some(candidates), fallback);
-        let mut args = vec!["--print", "-p", &prompt];
+        let mut args = vec!["--print", "--tools", "", "--max-turns", "1", "-p", &prompt];
         let model_str;
         if let Some(ref m) = self.model {
             model_str = m.clone();
@@ -182,20 +190,44 @@ impl AiEngine for ClaudeEngine {
         }
         resolve_routing_run_result(
             package,
-            run_captured_command("claude", &args, Some(cwd)),
+            Provider::Claude.run(
+                Purpose::ReadOnly,
+                &args,
+                Some(cwd),
+                Instant::now() + Duration::from_secs(5),
+                None,
+                |_| {},
+            ),
             candidates,
             fallback,
         )
     }
 
     fn run_edit(&self, prompt: &str, cwd: &Path) -> CommandOutcome {
-        let mut args = vec!["--print", "-p", prompt];
+        let mut args = vec![
+            "--print",
+            "--tools",
+            "Read,Edit,Write,Glob,Grep",
+            "--allowed-tools",
+            "Read,Edit,Write,Glob,Grep",
+            "--permission-mode",
+            "acceptEdits",
+            "-p",
+            prompt,
+        ];
         let model_str;
         if let Some(ref m) = self.model {
             model_str = m.clone();
             args.extend_from_slice(&["-m", &model_str]);
         }
-        let result = run_captured_command("claude", &args, Some(cwd));
+        let result = Provider::Claude.run(
+            Purpose::Edit,
+            &args,
+            Some(cwd),
+            Instant::now() + Duration::from_secs(120),
+            None,
+            |_| {},
+        );
         match result {
             Ok(cmd) => CommandOutcome {
                 success: cmd.code == 0,
@@ -221,17 +253,13 @@ impl AiEngine for ClaudeEngine {
 pub struct ClaudeCodeEngine {
     model: Option<String>,
     style: OutputStyle,
-    max_auth: bool,
 }
 
 impl ClaudeCodeEngine {
     pub fn new(model: Option<&str>, style: OutputStyle) -> Self {
-        let max_auth =
-            std::env::var("NX_AI_BILLING").map_or(true, |v| !v.eq_ignore_ascii_case("api"));
         Self {
             model: model.map(String::from),
             style,
-            max_auth,
         }
     }
 
@@ -242,105 +270,57 @@ impl ClaudeCodeEngine {
         allowed_tools: Option<&[&str]>,
         max_turns: Option<u32>,
     ) -> anyhow::Result<String> {
-        let mut trace = crate::infra::run_trace::command("claude", &[]);
         let printer = Printer::new(self.style);
-        let session_id = uuid::Uuid::new_v4();
-
-        let mut cmd = crate::infra::shell::operation_command("claude");
-        cmd.args([
+        let mut args = vec![
             "--print",
             "--verbose",
             "--output-format",
             "stream-json",
-            "--input-format",
-            "stream-json",
-            "--session-id",
-            &session_id.to_string(),
-        ]);
-
-        if let Some(ref m) = self.model {
-            cmd.args(["-m", m.as_str()]);
+            "--no-session-persistence",
+            "-p",
+            prompt,
+        ];
+        if let Some(model) = self.model.as_deref() {
+            args.extend(["-m", model]);
         }
-
-        if let Some(tools) = allowed_tools {
-            let tool_list = tools.join(",");
-            cmd.args(["--allowed-tools", &tool_list]);
+        let tools;
+        if let Some(allowed) = allowed_tools {
+            tools = allowed.join(",");
+            args.extend([
+                "--tools",
+                &tools,
+                "--allowed-tools",
+                &tools,
+                "--permission-mode",
+                "acceptEdits",
+            ]);
+        } else {
+            args.extend(["--tools", ""]);
         }
-
-        if let Some(turns) = max_turns {
-            let turns_str = turns.to_string();
-            cmd.args(["--max-turns", &turns_str]);
+        let turns;
+        if let Some(count) = max_turns {
+            turns = count.to_string();
+            args.extend(["--max-turns", &turns]);
         }
-
-        cmd.args(["--permission-mode", "bypassPermissions"]);
-        cmd.current_dir(cwd);
-
-        if self.max_auth {
-            cmd.env("ANTHROPIC_API_KEY", "");
-        }
-
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-
-        let mut child = cmd
-            .spawn()
-            .map_err(|_| anyhow::anyhow!("claude CLI not found — is it installed?"))?;
-
-        // Send prompt via stdin as stream-json
-        let input = claude_codes::ClaudeInput::user_message(prompt, session_id);
-        if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write;
-            let json = serde_json::to_string(&input)?;
-            writeln!(stdin, "{json}")?;
-            drop(stdin);
-        }
-
-        // Read streaming JSONL from stdout
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("failed to capture claude stdout"))?;
-        let reader = std::io::BufReader::new(stdout);
-        let mut final_text = String::new();
-
-        for line in reader.lines() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            let Ok(output) = claude_codes::ClaudeOutput::parse_json_tolerant(&line) else {
-                continue;
-            };
-            match &output {
-                claude_codes::ClaudeOutput::Assistant(msg) => {
-                    for block in &msg.message.content {
-                        match block {
-                            claude_codes::ContentBlock::ToolUse(tool) => {
-                                report_tool_activity(&printer, &tool.name, &tool.input);
-                            }
-                            claude_codes::ContentBlock::Text(t) => {
-                                final_text.push_str(&t.text);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                claude_codes::ClaudeOutput::Result(res) => {
-                    if let Some(ref text) = res.result {
-                        final_text.clone_from(text);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if let Ok(status) = child.wait()
-            && let Some(trace) = trace.as_mut()
-        {
-            trace.finish(status.code().unwrap_or(1));
-        }
-        Ok(final_text)
+        let budget = if allowed_tools.is_some() {
+            Duration::from_secs(120)
+        } else {
+            Duration::from_secs(5)
+        };
+        let mut reply = streaming::Reply::default();
+        let output = Provider::Claude.run(
+            if allowed_tools.is_some() {
+                Purpose::Edit
+            } else {
+                Purpose::ReadOnly
+            },
+            &args,
+            Some(cwd),
+            Instant::now() + budget,
+            None,
+            |bytes| reply.observe(bytes, &printer),
+        )?;
+        reply.finish(&output, &printer)
     }
 }
 
@@ -370,7 +350,7 @@ impl AiEngine for ClaudeCodeEngine {
     }
 
     fn run_edit(&self, prompt: &str, cwd: &Path) -> CommandOutcome {
-        let tools = &["Read", "Edit", "Write", "Bash", "Glob", "Grep"];
+        let tools = &["Read", "Edit", "Write", "Glob", "Grep"];
         match self.run_streaming(prompt, cwd, Some(tools), None) {
             Ok(output) => CommandOutcome {
                 success: true,
@@ -1101,9 +1081,9 @@ mod tests {
     // --- Engine trait properties ---
 
     #[test]
-    fn codex_does_not_support_flake_input() {
+    fn codex_supports_deterministic_flake_input() {
         let engine = CodexEngine::new(None);
-        assert!(!engine.supports_flake_input());
+        assert!(engine.supports_flake_input());
         assert_eq!(engine.name(), "codex");
     }
 
@@ -1155,10 +1135,9 @@ mod tests {
     }
 
     #[test]
-    fn claude_code_max_auth_default() {
-        // Without NX_AI_BILLING set, max auth should be enabled
+    fn claude_code_uses_configured_model_by_default() {
         let engine = ClaudeCodeEngine::new(None, test_style());
-        assert!(engine.max_auth);
+        assert!(engine.model.is_none());
     }
 
     #[test]

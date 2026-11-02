@@ -200,8 +200,14 @@ Requirements:
 
 - `codex` and/or `claude` must be installed and available on `PATH` for the
   corresponding features.
-- Authentication and provider-specific environment variables are managed by
-  those CLIs.
+- A Claude subscription or Codex ChatGPT login is required for model requests.
+  Nx checks login, clears child API-key/provider overrides, and fails closed on
+  API-only authentication. `NX_AI_BILLING=api` is unsupported.
+- Read-only advice disables Claude tools and unrelated Codex tool startup.
+  Deterministic edits run first; required AI
+  fallbacks use the selected engine and report failures.
+
+See [AI features](docs/ai.md) for authentication, evidence, caching and budgets.
 
 ### Environment Variables
 
@@ -650,15 +656,22 @@ prove every network request. Compare only matching inputs, execution mode, cache
 conditions, and suite definitions; loaded-host observations are not regression
 thresholds. The retained artifacts can later be imported by git-evidence.
 
-Optional upgrade comparisons and AI summaries share a 10-second budget per
-batch. `NX_SUMMARY_TIMEOUT_SECONDS` accepts 1–300 seconds; `--no-ai` skips AI
-summaries. Provider failures keep the underlying input and version lists.
-Summaries wrap to the terminal width without clipping sentences. Flake entries
-show commit counts and labeled AI prose; updates of up to three commits show their
-titles too. `--verbose` shows up to three commit titles as separate bullets for
-every update. Those titles are the fallback with `--no-ai`
-or when AI is unavailable. AI descriptions are based on a sample of up to 30
-commit titles, rather than a review of the full update.
+Input revisions and Homebrew versions appear immediately. Optional update notes
+run in the background alongside essential upgrade work, using at most one
+subscription-backed model request for the whole batch. The model comes from the
+CLI's defaults. `--no-ai` skips inference. Dry runs skip enrichment entirely.
+
+The background batch has one ten-second budget (`NX_SUMMARY_TIMEOUT_SECONDS=1..300`).
+When essential work finishes, unfinished enrichment is cancelled and reaped;
+Nx does not wait out that budget. Very short upgrades may have no fresh notes.
+Completed notes and discovered repositories are cached for seven days in
+`$XDG_CACHE_HOME/nx/update-notes-v1.json` (default `~/.cache/nx/`).
+
+Candidate notes label AI prose and fall back to up to three commit-title bullets.
+Homebrew evidence uses published release notes or version comparisons, discovering
+an unambiguous GitHub repository from the project's HTTPS homepage when needed.
+These excerpts are not a review of every change or risk. Missing notes stay quiet;
+`--verbose` shows source coverage, login/provider diagnostics and cancellation.
 
 Every real upgrade ends with an observed result: installed/upgraded/removed
 Homebrew versions, changes to direct Nix environment references, system profile,

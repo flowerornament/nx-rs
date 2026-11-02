@@ -9,6 +9,7 @@ mod test;
 mod undo;
 mod update;
 mod upgrade;
+mod upgrade_notes;
 mod upgrade_output;
 
 pub use lint::cmd_lint;

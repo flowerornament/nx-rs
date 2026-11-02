@@ -44,7 +44,7 @@ impl ExpectedCall {
     }
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct Invocation {
     pub program: String,
     pub cwd: PathBuf,

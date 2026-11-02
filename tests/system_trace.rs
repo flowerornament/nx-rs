@@ -86,6 +86,7 @@ fn size_limited_trace_warns_without_changing_upgrade_result() -> Result<(), Box<
         ])
         .current_dir(repo.path())
         .env("HOME", home.path())
+        .env("XDG_CACHE_HOME", home.path().join(".cache"))
         .env("NX_REPO_ROOT", repo.path())
         .env(
             "NX_SYSTEM_PROFILE_PATH",

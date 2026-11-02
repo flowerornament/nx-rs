@@ -179,9 +179,7 @@ version = "2.1.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8e31455ac644adf66d92d35a9257a0f1aa003024587cf37efb2a5c843db59f3"
 dependencies = [
- "anyhow",
  "chrono",
- "log",
  "serde",
  "serde_json",
  "thiserror",

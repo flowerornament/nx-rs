@@ -1,5 +1,8 @@
 use super::*;
-use crate::infra::{nix_output::NixOutputMode, shell::run_nix_command_with_stdout};
+use crate::infra::{
+    nix_output::NixOutputMode,
+    shell::{command_path, run_nix_command_with_stdout},
+};
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
@@ -7,6 +10,7 @@ use std::os::unix::fs::PermissionsExt;
 
 #[test]
 fn native_capture_is_private_bounded_and_preserves_command_output() {
+    let python = command_path("python3").expect("Python test dependency");
     for case in [
         "native",
         "verbose",
@@ -18,7 +22,7 @@ fn native_capture_is_private_bounded_and_preserves_command_output() {
     ] {
         let temp = tempfile::tempdir().unwrap();
         let program = temp.path().join("nix");
-        fs::write(&program, FAKE_NIX).unwrap();
+        fs::write(&program, format!("#!{python}\n{FAKE_NIX}")).unwrap();
         fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
         let trace = temp.path().join("trace.jsonl");
         let mut command = Command::new(std::env::current_exe().unwrap());
@@ -186,8 +190,7 @@ fn child() {
     }
 }
 
-const FAKE_NIX: &str = r"#!/usr/bin/env python3
-import json, os, socket, sys
+const FAKE_NIX: &str = r"import json, os, socket, sys
 mode = os.environ['NX_NIX_CAPTURE_TEST']
 rows = [dict(action='start',id=7,type=10113,name='EvaluateFlakeDerivationOutput',payload={'nix.installable':'repo#system'}),dict(action='result',id=7,type=101,fields=['private build output']),dict(action='stop',id=7)]
 if mode == 'structured':

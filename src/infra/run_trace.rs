@@ -11,7 +11,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
+mod nix_log;
 mod storage;
+pub(crate) use nix_log::{Capture, CaptureSummary};
 
 static SINK: Mutex<Option<Sink>> = Mutex::new(None);
 static ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -186,6 +188,7 @@ pub(crate) struct Span {
     label: String,
     kind: &'static str,
     code: Option<i32>,
+    data: Option<serde_json::Value>,
 }
 
 impl Span {
@@ -211,22 +214,28 @@ impl Span {
             label,
             kind,
             code: None,
+            data: None,
         })
     }
 
     pub(crate) fn finish(&mut self, code: i32) {
         self.code = Some(code);
     }
+
+    pub(crate) fn nix_capture(&mut self, summary: CaptureSummary) {
+        self.data = Some(serde_json::json!({"nix_capture":summary}));
+    }
 }
 
 impl Drop for Span {
     fn drop(&mut self) {
-        emit(
+        emit_data(
             &format!("{}-end", self.kind),
             self.id,
             self.parent,
             &self.label,
             self.code,
+            self.data.take(),
         );
         PARENT.set(self.parent);
     }
@@ -313,28 +322,108 @@ pub(crate) fn with_parent<T>(run: impl FnOnce() -> T) -> impl FnOnce() -> T {
 /// Preserve typed Nix activity IDs, parents and targets. Diagnostics and build
 /// output remain outside the measurement trace.
 pub(crate) fn nix_activity(record: &[u8]) {
+    if let Some(raw) = record.strip_prefix(b"@nix ") {
+        nix_json_activity(raw);
+    }
+}
+
+fn nix_json_activity(raw: &[u8]) -> bool {
     if !ACTIVE.load(Ordering::Relaxed) {
-        return;
+        return false;
     }
-    let Some(raw) = record.strip_prefix(b"@nix ") else {
-        return;
+    let Some(data) = nix_activity_json_data(raw) else {
+        return false;
     };
-    let Ok(value) = serde_json::from_slice::<serde_json::Value>(raw) else {
-        return;
-    };
+    emit_data("nix-activity", 0, PARENT.get(), "nix", None, Some(data));
+    true
+}
+
+#[cfg(test)]
+fn nix_activity_data(record: &[u8]) -> Option<serde_json::Value> {
+    nix_activity_json_data(record.strip_prefix(b"@nix ")?)
+}
+
+fn nix_activity_json_data(raw: &[u8]) -> Option<serde_json::Value> {
+    let value: serde_json::Value = serde_json::from_slice(raw).ok()?;
+    value["id"].as_u64()?;
     if !matches!(value["action"].as_str(), Some("start" | "stop" | "result")) {
-        return;
+        return None;
     }
-    let data = ["action", "id", "type", "parent", "fields"]
+    // Nix result types 101/107 contain builder/post-build log lines rather than
+    // activity metadata. Leave those in command output, outside the trace.
+    if value["action"] == "result" && matches!(value["type"].as_u64(), Some(101 | 107)) {
+        return None;
+    }
+    let mut data = ["action", "id", "type", "parent", "fields", "name"]
         .into_iter()
         .filter_map(|key| value.get(key).map(|value| (key.to_string(), value.clone())))
         .collect::<serde_json::Map<_, _>>();
-    emit_data(
-        "nix-activity",
-        0,
-        PARENT.get(),
-        "nix",
-        None,
-        Some(data.into()),
-    );
+    // Determinate activities share a numeric type; their names and typed
+    // targets distinguish evaluation from source copies. Do not copy arbitrary
+    // payload or diagnostic text into the measurement trace.
+    let targets = ["nix.installable", "nix.source.path"]
+        .into_iter()
+        .filter_map(|key| {
+            value["payload"]
+                .get(key)
+                .map(|target| (key.to_string(), target.clone()))
+        })
+        .collect::<serde_json::Map<_, _>>();
+    if !targets.is_empty() {
+        data.insert("payload".into(), targets.into());
+    }
+    Some(data.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::nix_activity_data;
+    use serde_json::json;
+
+    #[test]
+    fn named_nix_targets_survive_without_arbitrary_payload_or_diagnostics() {
+        let record = br#"@nix {"action":"start","id":7,"parent":0,"type":10113,"name":"CopySourcePath","payload":{"nix.source.path":"/nix/store/source","private":"must not persist"},"text":"must not persist"}"#;
+        assert_eq!(
+            nix_activity_data(record),
+            Some(
+                json!({"action":"start","id":7,"parent":0,"type":10113,"name":"CopySourcePath","payload":{"nix.source.path":"/nix/store/source"}})
+            )
+        );
+    }
+
+    #[test]
+    fn classic_nix_activity_fields_and_named_evaluation_targets_survive() {
+        for data in [
+            json!({"action":"result","id":7,"type":105,"fields":[1,16,0,0]}),
+            json!({"action":"start","id":8,"type":10113,"name":"EvaluateFlakeDerivationOutput","payload":{"nix.installable":"repo#system"}}),
+            json!({"action":"stop","id":8}),
+        ] {
+            let line = format!("@nix {data}");
+            assert_eq!(nix_activity_data(line.as_bytes()), Some(data));
+        }
+        for line in [
+            "diagnostic",
+            "@nix invalid",
+            "@nix {\"action\":\"msg\",\"msg\":\"private\"}",
+        ] {
+            assert_eq!(nix_activity_data(line.as_bytes()), None);
+        }
+        for kind in [101, 107] {
+            let line = format!(
+                "@nix {{\"action\":\"result\",\"id\":7,\"type\":{kind},\"fields\":[\"private build output\"]}}"
+            );
+            assert_eq!(nix_activity_data(line.as_bytes()), None);
+        }
+        for id in [
+            json!(null),
+            json!([]),
+            json!({}),
+            json!(-1),
+            json!("bad"),
+            json!(true),
+        ] {
+            let line = format!("@nix {}", json!({"action":"start","id":id}));
+            assert_eq!(nix_activity_data(line.as_bytes()), None);
+        }
+    }
 }

@@ -839,6 +839,24 @@ Dry-run behavior:
 - Additive timing fields `trace_path`, `workload_start` and `workload_end`
   retain the trace location, load averages and available logical CPU count.
   Legacy readers ignore these fields and missing historical fields remain valid.
+- Nix activities retain IDs, parent IDs, type, fields and optional semantic name.
+  Named payload retains only `nix.installable` and `nix.source.path`; arbitrary
+  payload, diagnostic text and builder/post-build log results are excluded.
+  `perf_system.py --nix-activities`
+  pairs activity IDs within their enclosing command, reports longest intervals
+  and exposes unfinished activities/unmatched stops. Colliding open IDs remain
+  ambiguous rather than producing guessed durations. Nested durations overlap;
+  old traces without names remain valid and show numeric types.
+- Traced native Nix commands on Nix 2.30+ receive a per-command `json-log-path`
+  Unix socket in a private mode-0700 temporary directory. This preserves native
+  terminal rendering, adds no evaluation/capability probe, and writes no raw logs
+  to disk. Direct known Nix executables and their sudo-wrapped forms are eligible;
+  custom runners and explicit `json-log-path` options are preserved. With tracing
+  disabled no socket or worker is created. Records, clients and shutdown drains
+  are bounded. Additive `command-end.data.nix_capture` metadata reports connection
+  and retained-event counts plus completeness. The activity report distinguishes
+  unavailable/incomplete capture; missing detail does not certify absence of work.
+  Activity timestamps use receipt time; native polling has 10 ms granularity.
 
 - Upgrade timing covers the complete command flow, including early failures and
   upgrades that skip rebuild. Rebuild is a nested phase; one upgrade writes one

@@ -608,6 +608,8 @@ Active files and explicitly named traces are preserved. Limits warn and mark a
 trace incomplete without changing the command's result. `NX_TRACE_PATH` takes
 precedence and retains its exclusive-file behavior. Timing records link to their
 trace and include start/end load averages and available CPU count.
+Home Manager session variables apply in new sessions. To enable tracing in an
+existing shell immediately, export `NX_TRACE_DIR` with the configured path.
 
 Upgrade records cover the version check, flake update, cache admission, summaries,
 Homebrew, rebuild, and commit. Rebuild phases are nested inside the upgrade;
@@ -620,10 +622,27 @@ For detailed observation during your next normal upgrade, choose a new trace pat
 NX_TRACE_PATH=/tmp/my-upgrade.jsonl nx upgrade -y
 python3 ~/code/nx-rs/scripts/perf_system.py --trace /tmp/my-upgrade.jsonl
 python3 ~/code/nx-rs/scripts/perf_system.py --timeline /tmp/my-upgrade.jsonl
+python3 ~/code/nx-rs/scripts/perf_system.py --nix-activities /tmp/my-upgrade.jsonl
 ```
 
 The versioned JSON Lines trace records monotonic phase/command intervals, parent
 relationships, exit results, and available structured Nix activity IDs and targets.
+The activity report pairs IDs within each command, shows the longest activities,
+and keeps unfinished or unmatched activity records visible. Determinate activity
+names and typed installable/source-path targets distinguish evaluation from local
+copying even when they share a numeric type. Older traces remain readable but
+cannot recover names that were not recorded. Activity durations overlap.
+On Nix 2.30 and later, traced interactive Nix commands also collect structured
+events through Nix's `json-log-path` socket while preserving native progress.
+Each command uses a private temporary directory and bounded in-memory records;
+raw build logs are discarded. Explicit user `json-log-path` settings and custom
+command runners are left alone. The report marks unavailable or incomplete
+native capture rather than treating missing events as an absence of work.
+Activity timestamps record receipt by nx; the native socket reader polls at
+10 ms, so very short intervals are approximate.
+Builder/post-build log lines and arbitrary diagnostic payload remain outside
+the measurement trace. Invalid activity IDs stay unknown. Colliding IDs remain
+ambiguous for the rest of their command, rather than producing guessed intervals.
 It does not change command selection or terminal output. Command labels contain
 bounded operation names rather than arbitrary arguments, prompts, or environment
 values. Nix activity fields can contain source URLs and store paths. An existing
@@ -650,8 +669,8 @@ values must not be summed into total wall time.
 
 The controlled scenarios use stubs and captured output; their network/cache costs
 are simulated. Real configuration costs come from traces of ordinary operations.
-Structured Nix activities are retained when available; native terminal rendering
-and plain dry-run output do not supply equivalent activity detail. A trace cannot
+Structured Nix activities are retained when available; older Nix versions, custom
+runners and plain dry-run output may lack equivalent activity detail. A trace cannot
 prove every network request. Compare only matching inputs, execution mode, cache
 conditions, and suite definitions; loaded-host observations are not regression
 thresholds. The retained artifacts can later be imported by git-evidence.

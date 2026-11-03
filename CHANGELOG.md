@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- retains named Nix activities and typed targets, including interactive native progress via a private JSON socket on Nix 2.30+
+- reports longest inner Nix activities with command ownership, capture coverage and incomplete pairs via `perf_system.py --nix-activities`
+
 ## v1.5.48 - 2026-11-01
 
 - preserves indentation when long status, detail and body messages wrap, including URLs and explicit line breaks

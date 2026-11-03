@@ -431,7 +431,19 @@ fn run_native_command_observing_stderr(
         .map_err(|err| anyhow!("configuring stderr pseudoterminal: {err}"))?;
 
     let mut command = operation_command(program);
-    configure_command(&mut command, args, cwd, env);
+    configure_command(&mut command, &[], cwd, env);
+    let capture = if matches!(mode, NativeCommandMode::Nix) {
+        crate::infra::run_trace::Capture::configure(&mut command, program, args).unwrap_or_else(
+            |error| {
+                eprintln!("Nx native Nix activity capture unavailable: {error}");
+                command.args(args);
+                None
+            },
+        )
+    } else {
+        command.args(args);
+        None
+    };
     command
         .stdin(Stdio::inherit())
         .stderr(Stdio::from(pty.user));
@@ -455,9 +467,13 @@ fn run_native_command_observing_stderr(
     let status = child.wait();
     child_done.store(true, Ordering::Release);
     stderr_handle.thread().unpark();
+    let capture = capture.map(crate::infra::run_trace::Capture::finish);
     let status = status.context("waiting for child process")?;
     if let Some(trace) = trace.as_mut() {
         trace.finish(status.code().unwrap_or(1));
+        if let Some(capture) = capture {
+            trace.nix_capture(capture);
+        }
     }
     let stdout = stdout_handle
         .map(|handle| join_collector("stdout", handle))

@@ -88,6 +88,7 @@ def summarize(path: Path) -> dict:
                     "start_ns": start["offset_ns"],
                     "end_ns": event["offset_ns"],
                     "code": event["code"],
+                    "nix_capture": event.get("data", {}).get("nix_capture"),
                 }
             )
         if kind == "command-end":
@@ -152,6 +153,94 @@ def timeline(path: Path) -> None:
         f"Wall: {run['total_ns'] / 1e9:.3f}s; command union: {run['command_covered_ns'] / 1e9:.3f}s; peak concurrent commands: {run['peak_concurrent_commands']}"
     )
     print("Nested rows overlap. Command work sums elapsed intervals, not CPU time.")
+
+
+def nix_activity_intervals(events: list[dict]) -> tuple[list[dict], int]:
+    """Pair Nix IDs within their command; subprocesses can reuse the same IDs."""
+    opened = {}
+    ambiguous = set()
+    rows = []
+    unmatched_stops = 0
+    for event in events:
+        data = event["data"]
+        identifier = data.get("id")
+        if type(identifier) is not int or not 0 <= identifier < 2**64:
+            if data.get("action") == "start":
+                rows.append(dict(event, end_ns=None, invalid_id=True))
+            elif data.get("action") == "stop":
+                unmatched_stops += 1
+            continue
+        key = (event["parent"], identifier)
+        if data.get("action") == "start":
+            if key in opened:
+                # With missing stops, even later reuse cannot prove which start
+                # a stop belongs to. Keep this ID unknown until the command ends.
+                rows.append(dict(opened[key], end_ns=None, ambiguous=True))
+                ambiguous.add(key)
+            opened[key] = event
+        elif data.get("action") == "stop":
+            if key in ambiguous:
+                unmatched_stops += 1
+                continue
+            start = opened.pop(key, None)
+            if start is None:
+                unmatched_stops += 1
+                continue
+            rows.append(dict(start, end_ns=event["offset_ns"]))
+    rows.extend(
+        dict(start, end_ns=None, ambiguous=key in ambiguous)
+        for key, start in opened.items()
+    )
+    return rows, unmatched_stops
+
+
+def nix_activities(path: Path) -> None:
+    run = summarize(path)
+    rows, unmatched = nix_activity_intervals(run["nix_activities"])
+    for span in run["spans"]:
+        capture = span.get("nix_capture")
+        if capture and not capture["complete"]:
+            state = "incomplete" if capture["connections"] else "unavailable"
+            print(f"Native Nix capture {state}: {span['label']} [span {span['id']}]")
+    if not rows:
+        print(
+            "No structured Nix activities recorded; this does not establish that no Nix work occurred."
+        )
+    commands = {span["id"]: span["label"] for span in run["spans"]}
+    completed = sorted(
+        (row for row in rows if row["end_ns"] is not None),
+        key=lambda row: row["end_ns"] - row["offset_ns"],
+        reverse=True,
+    )
+    unfinished = [row for row in rows if row["end_ns"] is None]
+    print(
+        "Duration(s)  Command / Nix activity / target (20 longest, then up to 5 incomplete)"
+    )
+    for row in completed[:20] + unfinished[:5]:
+        data = row["data"]
+        duration = "unfinished"
+        if row.get("invalid_id"):
+            duration = "invalid ID"
+        elif row.get("ambiguous"):
+            duration = "ambiguous"
+        elif row["end_ns"] is not None:
+            duration = f"{(row['end_ns'] - row['offset_ns']) / 1e9:.3f}"
+        name = data.get("name") or f"type:{data.get('type', 'unknown')}"
+        targets = list(data.get("payload", {}).values()) or data.get("fields", [])
+        target = " | ".join(
+            value for value in targets if isinstance(value, str) and value
+        )
+        target = " ".join(target.split())[:180]
+        command = commands.get(row["parent"], "unknown command")
+        print(f"{duration:>11}  {command} [span {row['parent']}] / {name}")
+        if target:
+            print(f"             {target}")
+    print(
+        f"Activities: {len(rows)}; unfinished: {len(unfinished)}; unmatched stops: {unmatched}."
+    )
+    print(
+        "Nested activities overlap; durations must not be added. Type-only rows lack recorded names."
+    )
 
 
 def report(directory: Path) -> dict:
@@ -290,12 +379,20 @@ def main() -> None:
         type=Path,
         help="show phase/command intervals and concurrency in one retained trace",
     )
+    parser.add_argument(
+        "--nix-activities",
+        type=Path,
+        help="show the longest Nix activities, targets and incomplete activity pairs",
+    )
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--report", type=Path, help="report a retained run without executing commands"
     )
     args = parser.parse_args()
+    if args.nix_activities:
+        nix_activities(args.nix_activities)
+        return
     if args.timeline:
         timeline(args.timeline)
         return

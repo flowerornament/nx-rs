@@ -30,7 +30,7 @@ pkgs.rustPlatform.buildRustPackage {
     runHook postConfigure
   '';
 
-  nativeCheckInputs = [ pkgs.git pkgs.which ];
+  nativeCheckInputs = [ pkgs.git pkgs.which pkgs.python3 ];
 
   preCheck = ''
     export HOME="$TMPDIR"

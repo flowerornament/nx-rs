@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- formats upgrade elapsed time and package counts in parentheses
 - retains named Nix activities and typed targets, including interactive native progress via a private JSON socket on Nix 2.30+
 - reports longest inner Nix activities with command ownership, capture coverage and incomplete pairs via `perf_system.py --nix-activities`
 

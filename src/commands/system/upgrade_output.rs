@@ -15,7 +15,7 @@ pub(super) fn print(
 ) {
     println!();
     let title = format!(
-        "Upgrade {} · {}.{}s",
+        "Upgrade {} ({}.{}s)",
         if code == 0 { "complete" } else { "incomplete" },
         elapsed_ms / 1000,
         elapsed_ms % 1000 / 100
@@ -147,7 +147,7 @@ fn print_observations(receipt: &UpgradeReceipt, verbose: bool) {
                 }
             }
             ObservationStatus::Observed => {
-                Printer::detail(&format!("{scope} · {} changed", observed.changes.len()));
+                Printer::detail(&format!("{scope} ({} changed)", observed.changes.len()));
                 let rows = observed
                     .changes
                     .iter()

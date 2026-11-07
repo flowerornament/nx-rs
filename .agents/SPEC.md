@@ -776,7 +776,7 @@ Dry-run behavior:
 
 ## 13. Output/UX Contracts Backed By Tests
 
-- Upgrade summaries put elapsed time and observed package counts in parentheses.
+- Upgrade summaries phrase elapsed time as `complete in` or `incomplete after`; observed package counts use parentheses.
 - Top-level status glyphs, including transient loading spinners, start at column zero; only
   body/detail output is indented.
 - Action groups use one blank row before the action and no blank rows between the action,

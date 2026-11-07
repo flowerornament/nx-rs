@@ -15,8 +15,12 @@ pub(super) fn print(
 ) {
     println!();
     let title = format!(
-        "Upgrade {} ({}.{}s)",
-        if code == 0 { "complete" } else { "incomplete" },
+        "Upgrade {} {}.{}s",
+        if code == 0 {
+            "complete in"
+        } else {
+            "incomplete after"
+        },
         elapsed_ms / 1000,
         elapsed_ms % 1000 / 100
     );

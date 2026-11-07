@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- phrases upgrade elapsed time as `complete in` or `incomplete after`
+
 ## v1.5.49 - 2026-11-06
 
 - formats upgrade elapsed time and package counts in parentheses

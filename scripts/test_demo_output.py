@@ -132,8 +132,8 @@ class DemoOutputTest(unittest.TestCase):
         stream = run_demo()
         self.assert_native_nix_passthrough(stream)
         screen = re.sub(
-            r"(Upgrade (?:complete|incomplete)) · \d+\.\ds",
-            r"\1 · <elapsed>",
+            r"(Upgrade (?:complete|incomplete)) \(\d+\.\ds\)",
+            r"\1 (<elapsed>)",
             terminal_screen(stream),
         )
         screen = re.sub(

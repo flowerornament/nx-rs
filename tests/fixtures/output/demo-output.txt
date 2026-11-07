@@ -129,7 +129,7 @@ x Flake check failed
   linking generation...
 + System rebuilt
 
-+ Upgrade complete · <elapsed>
++ Upgrade complete (<elapsed>)
   Homebrew: no observed package changes
   Nix profile references: changes unknown (system profile unavailable)
   Nix system: activated
@@ -148,8 +148,8 @@ x Flake check failed
   stub brew upgrade ok
 + Homebrew packages upgraded
 
-+ Upgrade complete · <elapsed>
-  Homebrew · 1 changed
++ Upgrade complete (<elapsed>)
+  Homebrew (1 changed)
     hex (cask)  1.0 → 2.0
   Nix system: rebuild skipped
   Config: skipped; no commit needed
@@ -170,8 +170,8 @@ x Flake check failed
 + Homebrew packages upgraded
   Update notes: <optional work outcome>
 
-+ Upgrade complete · <elapsed>
-  Homebrew · 1 changed
++ Upgrade complete (<elapsed>)
+  Homebrew (1 changed)
     cask:hex  1.0 → 2.0
   Nix profile references: observation skipped
   Nix system: rebuild skipped
@@ -194,8 +194,8 @@ x Flake check failed
     ==> Linking demo package
 x Some Homebrew upgrades failed
 
-x Upgrade incomplete · <elapsed>
-  Homebrew · 1 changed
+x Upgrade incomplete (<elapsed>)
+  Homebrew (1 changed)
     hex (cask)  1.0 → 2.0
   Nix system: rebuild skipped
   Config: skipped; commit not run

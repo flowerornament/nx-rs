@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.5.50 - 2026-11-10
+
 - phrases upgrade elapsed time as `complete in` or `incomplete after`
 - keeps interactive install resolution on one aligned progress line, with static activity retained in plain output
 

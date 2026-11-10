@@ -2014,6 +2014,11 @@ fn optional_notes_use_one_subscription_batch_and_cancel_slow_inference()
     case.mode = "upgrade_flake_changed";
     case.cli_args = &["upgrade", "--skip-brew", "--skip-commit"];
     for mode in ["success", "slow"] {
+        case.id = if mode == "success" {
+            "upgrade_optional_notes_success"
+        } else {
+            "upgrade_optional_notes_cancel"
+        };
         let started = std::time::Instant::now();
         let output = run_case_with_extra_env(
             &binary,

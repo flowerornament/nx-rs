@@ -115,7 +115,9 @@ class DemoOutputTest(unittest.TestCase):
         self.assertEqual(terminal_screen("abc\rxy\x1b[2Kz\n"), "  z\n")
 
     def test_narrow_terminal_keeps_wrapped_detail_lines_indented(self) -> None:
-        screen = terminal_screen(run_demo(columns=40))
+        stream = run_demo(columns=40)
+        self.assert_install_progress(stream)
+        screen = terminal_screen(stream)
         block = screen.split("> Checking Homebrew updates\n", 1)[1].split("\n+ ", 1)[0]
         lines = block.strip("\n").splitlines()
         self.assertGreater(len(lines), 1)
@@ -130,6 +132,7 @@ class DemoOutputTest(unittest.TestCase):
 
     def test_final_terminal_screen_matches_reference(self) -> None:
         stream = run_demo()
+        self.assert_install_progress(stream)
         self.assert_native_nix_passthrough(stream)
         screen = re.sub(
             r"(Upgrade (?:complete in|incomplete after)) \d+\.\ds",
@@ -165,6 +168,21 @@ class DemoOutputTest(unittest.TestCase):
             if line.startswith("  $ "):
                 self.assertEqual(lines[index - 1], "")
                 self.assertNotEqual(lines[index + 1], "")
+
+    def assert_install_progress(self, stream: str) -> None:
+        command = "install --cask anomalyco/tap/hex --dry-run"
+        interactive = stream.split(f"  $ nx {command}", 1)[1].split("  $ ", 1)[0]
+        frames = re.findall(
+            r"\r\x1b\[2K\x1b\[35m[-\\|/] (Resolving [^\r\n\x1b]+)\x1b\[0m",
+            interactive,
+        )
+        self.assertTrue(frames, repr(interactive))
+        self.assertTrue(all(re.search(r" \(\d+s\)$", frame) for frame in frames))
+        self.assertNotIn("Resolving ", terminal_screen(interactive))
+
+        plain = stream.split(f"  $ nx --plain {command}", 1)[1].split("  $ ", 1)[0]
+        self.assertIn("  @ Resolving anomalyco/tap/hex:", plain)
+        self.assertNotIn("\x1b[2K", plain)
 
     def assert_native_nix_passthrough(self, stream: str) -> None:
         expected = {

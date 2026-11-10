@@ -790,6 +790,8 @@ Dry-run behavior:
   outdated checks) use shared loading scopes rather than one-off progress printers.
 - Loading indicators show elapsed seconds; install resolution describes its source
   scope and explicit cask shortcut.
+- Interactive install resolution uses one transient loading line in the main gutter;
+  plain/non-terminal output retains the static search activity instead of a spinner.
 - Interactive Nix updates, checks, builds, and profile updates use Nix's native `bar`
   renderer with the shared redraw cadence above; `--verbose` selects `bar-with-logs`.
   Permanent verbose build logs remain unchanged. Interactive activation inherits

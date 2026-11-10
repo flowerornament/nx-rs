@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- keeps interactive install resolution on one aligned progress line, with static activity retained in plain output
+
 ## v1.5.49 - 2026-11-06
 
 - formats upgrade elapsed time and package counts in parentheses

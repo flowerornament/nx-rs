@@ -166,13 +166,7 @@ impl Printer {
                     .filter(|width| *width > 0)
                     .unwrap_or(80);
                 let text = loading_message(&text, started.elapsed().as_secs(), columns);
-                eprint!(
-                    "\r\x1b[2K{}{}{} {text}{}",
-                    ansi_prefix(color, AnsiStyle::Activity),
-                    LineLayout::TopLevel.indent(),
-                    frame,
-                    ansi_reset(color),
-                );
+                eprint!("\r\x1b[2K{}", loading_line(color, frame, &text),);
                 let _ = io::stderr().flush();
                 index += 1;
                 match stopped.recv_timeout(Duration::from_millis(120)) {
@@ -304,7 +298,6 @@ impl Printer {
     }
 }
 
-#[cfg(test)]
 fn loading_line(color: bool, frame: &str, text: &str) -> String {
     format!(
         "{}{}{} {text}{}",
@@ -363,6 +356,10 @@ impl LoadingIndicator {
             stop: None,
             handle: None,
         }
+    }
+
+    pub(crate) fn is_visible(&self) -> bool {
+        self.handle.is_some()
     }
 
     pub(crate) fn set_text(&self, text: &str) {
@@ -747,6 +744,7 @@ mod tests {
         });
 
         let value = printer.with_loading("Working", |loading| {
+            assert!(!loading.is_visible());
             loading.set_text("Still working");
             42
         });

@@ -1163,8 +1163,10 @@ fn query_install_package(
         ),
     };
     let message = format!("Resolving {package}: {detail}");
-    printer.activity(crate::output::printer::ActivityKind::Searching, &message);
-    printer.with_loading(&message, |_| {
+    printer.with_loading(&message, |loading| {
+        if !loading.is_visible() {
+            printer.activity(crate::output::printer::ActivityKind::Searching, &message);
+        }
         query_package(package, prefs, repo_root, cache)
     })
 }

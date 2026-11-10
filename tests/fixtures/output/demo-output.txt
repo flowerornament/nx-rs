@@ -12,6 +12,35 @@
   Xcode
   test-agent
 
+  $ nx install --cask anomalyco/tap/hex --dry-run
+~ Dry Run (no changes will be made)
+
+> Installing anomalyco/tap/hex
+
+  Found (1)
+  anomalyco/tap/hex via Homebrew cask - GUI application (cask)
+
+  Analyzing (1)
+
+> Routing anomalyco/tap/hex
+
++ Would add anomalyco/tap/hex to packages/homebrew/casks.nix
+
+  $ nx --plain install --cask anomalyco/tap/hex --dry-run
+~ Dry Run (no changes will be made)
+
+> Installing anomalyco/tap/hex
+  @ Resolving anomalyco/tap/hex: explicit Homebrew cask; no source search
+
+  Found (1)
+  anomalyco/tap/hex via Homebrew cask - GUI application (cask)
+
+  Analyzing (1)
+
+> Routing anomalyco/tap/hex
+
++ Would add anomalyco/tap/hex to packages/homebrew/casks.nix
+
   $ nx rebuild --preflight
 > Checking nx routing metadata
 + Routing metadata passed

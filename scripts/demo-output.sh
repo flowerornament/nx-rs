@@ -90,6 +90,12 @@ run_nx() {
 scenario 'nx list'
 run_nx success list
 
+scenario 'nx install --cask anomalyco/tap/hex --dry-run'
+run_nx success install --cask anomalyco/tap/hex --dry-run
+
+scenario 'nx --plain install --cask anomalyco/tap/hex --dry-run'
+run_nx success --plain install --cask anomalyco/tap/hex --dry-run
+
 scenario 'nx rebuild --preflight'
 run_nx success rebuild --preflight
 

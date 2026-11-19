@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.5.51 - 2026-11-18
+
 - keeps the resolved Darwin host when using a passwordless fallback switch
 - retries activation when a previous attempt updated the profile but left the running system behind
 - keeps Nix activity timings in routine traces by omitting individual progress updates

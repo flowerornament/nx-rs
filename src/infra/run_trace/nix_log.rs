@@ -54,6 +54,33 @@ impl Capture {
             .permissions(std::fs::Permissions::from_mode(0o700))
             .tempdir()?;
         let path = directory.path().join("log");
+        let boundary = args
+            .iter()
+            .enumerate()
+            .skip(start)
+            .find(|(_, arg)| **arg == "--")
+            .map_or(args.len(), |(index, _)| index);
+        let socket_path = path.to_str().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Nix log socket path is not UTF-8",
+            )
+        })?;
+        let traced_args = args[..boundary]
+            .iter()
+            .copied()
+            .chain(["--option", "json-log-path", socket_path])
+            .chain(args[boundary..].iter().copied())
+            .collect::<Vec<_>>();
+        // The operation-lock wrapper is outside sudo. Probe the actual switch
+        // argv so optional tracing works with argument-scoped sudoers rules.
+        if program == "sudo"
+            && args.first() == Some(&"-n")
+            && !crate::infra::shell::sudo_allows_noninteractive(&traced_args[1..])
+        {
+            command.args(args);
+            return Ok(None);
+        }
         let listener = UnixListener::bind(&path)?;
         listener.set_nonblocking(true)?;
         let stop = Arc::new(AtomicBool::new(false));
@@ -61,17 +88,7 @@ impl Capture {
         let reader = std::thread::Builder::new()
             .name("nx-nix-log".into())
             .spawn(super::with_parent(move || collect(&listener, &stopping)))?;
-        let boundary = args
-            .iter()
-            .enumerate()
-            .skip(start)
-            .find(|(_, arg)| **arg == "--")
-            .map_or(args.len(), |(index, _)| index);
-        command
-            .args(&args[..boundary])
-            .args(["--option", "json-log-path"])
-            .arg(path)
-            .args(&args[boundary..]);
+        command.args(&traced_args);
         Ok(Some(Self {
             _directory: directory,
             stop,

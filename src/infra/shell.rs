@@ -448,7 +448,7 @@ fn run_native_command_observing_stderr(
 
     let mut command = operation_command(program);
     configure_command(&mut command, &[], cwd, env);
-    let mut capture = if matches!(mode, NativeCommandMode::Nix) {
+    let capture = if matches!(mode, NativeCommandMode::Nix) {
         crate::infra::run_trace::Capture::configure(&mut command, program, args).unwrap_or_else(
             |error| {
                 eprintln!("Nx native Nix activity capture unavailable: {error}");
@@ -460,20 +460,6 @@ fn run_native_command_observing_stderr(
         command.args(args);
         None
     };
-    if capture.is_some() && program == "sudo" && args.first() == Some(&"-n") {
-        // An argument-scoped sudoers rule may permit the switch but reject
-        // the optional socket argument. Keep the probed invocation in that case.
-        let traced_args = command
-            .get_args()
-            .skip(1)
-            .map(std::ffi::OsStr::to_str)
-            .collect::<Option<Vec<_>>>();
-        if !traced_args.is_some_and(|args| sudo_allows_noninteractive(&args)) {
-            capture = None;
-            command = operation_command(program);
-            configure_command(&mut command, args, cwd, env);
-        }
-    }
     command
         .stdin(Stdio::inherit())
         .stderr(Stdio::from(pty.user));

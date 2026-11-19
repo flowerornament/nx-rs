@@ -9,7 +9,8 @@ use crate::infra::nix_output::{NixLogFormat, NixOutputMode, without_log_format_a
 use crate::infra::shell::{
     CapturedCommand, first_nonempty_output, first_unpresented_output, run_captured_command,
     run_indented_command_collecting_with_env, run_native_command_with_env,
-    run_nix_command_with_stdout, run_nix_command_with_stdout_profiled, terminal_stdio_available,
+    run_nix_command_with_stdout, run_nix_command_with_stdout_profiled, sudo_allows_noninteractive,
+    terminal_stdio_available,
 };
 use crate::infra::timing::{
     TimingCommand, TimingPhase, TimingRecord, TimingSession, append_timing, timing_detail_lines,
@@ -32,6 +33,8 @@ const SPLIT_DARWIN_ENV: &str = "NX_SPLIT_DARWIN";
 const DARWIN_HOST_ENV: &str = "NX_DARWIN_HOST";
 const SYSTEM_PROFILE_PATH_ENV: &str = "NX_SYSTEM_PROFILE_PATH";
 const SYSTEM_PROFILE: &str = "/nix/var/nix/profiles/system";
+const ACTIVE_SYSTEM_PATH_ENV: &str = "NX_ACTIVE_SYSTEM_PATH";
+const ACTIVE_SYSTEM: &str = "/run/current-system";
 const RUN_CURRENT_DARWIN_REBUILD: &str = "/run/current-system/sw/bin/darwin-rebuild";
 const SUDO_SET_HOME_ARG: &str = "-H";
 const ROOT_HOME_ENV: &str = "HOME=/var/root";
@@ -600,29 +603,37 @@ enum RebuildOutcome {
 fn run_darwin_rebuild(
     args: &RebuildArgs,
     ctx: &SystemContext<'_>,
-    rebuild_command_override: Option<&str>,
+    passwordless_command: Option<&[String]>,
 ) -> anyhow::Result<(CapturedCommand, Vec<TimingPhase>)> {
     let manifest = ctx.config_files.manifest();
     let repo = ctx.repo_root.display().to_string();
     let use_sudo = manifest.is_none_or(|manifest| manifest.platform.sudo);
     let output_mode =
         NixOutputMode::for_terminal(args.verbose, native_rebuild_output_enabled(args));
-    let rebuild_cmd = build_rebuild_command_with_manifest_and_log_format(
-        &repo,
-        args,
-        manifest,
-        rebuild_command_override,
-        output_mode.log_format(),
-    );
-
-    let (runner, runner_args): (&str, Vec<&str>) = if use_sudo {
-        let arg_refs: Vec<&str> = rebuild_cmd.iter().map(String::as_str).collect();
-        ("sudo", arg_refs)
+    let rebuild_cmd;
+    let (runner, runner_args): (&str, Vec<&str>) = if let Some(command) = passwordless_command {
+        (
+            "sudo",
+            std::iter::once("-n")
+                .chain(command.iter().map(String::as_str))
+                .collect(),
+        )
     } else {
-        let (first, rest) = rebuild_cmd
-            .split_first()
-            .expect("non-empty rebuild command");
-        (first.as_str(), rest.iter().map(String::as_str).collect())
+        rebuild_cmd = build_rebuild_command_with_manifest_and_log_format(
+            &repo,
+            args,
+            manifest,
+            output_mode.log_format(),
+        );
+        if use_sudo {
+            let arg_refs: Vec<&str> = rebuild_cmd.iter().map(String::as_str).collect();
+            ("sudo", arg_refs)
+        } else {
+            let (first, rest) = rebuild_cmd
+                .split_first()
+                .expect("non-empty rebuild command");
+            (first.as_str(), rest.iter().map(String::as_str).collect())
+        }
     };
 
     let result =
@@ -689,23 +700,20 @@ fn do_split_darwin_rebuild(
     }
 
     let Some(system_config) = parse_system_config_path(&build.output.stdout) else {
-        ctx.printer
-            .warn("Split darwin rebuild could not parse nix build output; falling back");
-        return SplitDarwinResult::Fallback {
-            command: None,
-            phases,
-        };
+        let message = "Could not identify the built Darwin system; activation stopped";
+        let output = CapturedCommand::captured(1, String::new(), message.into());
+        return SplitDarwinResult::Handled(Ok((output, phases, RebuildOutcome::Rebuilt)));
     };
     ctx.printer.success("System configuration built");
 
-    let (current_system, compare_phase) =
-        match timed_phase("profile-compare", || Ok(current_system_profile_target())) {
-            Ok(result) => result,
-            Err(err) => return SplitDarwinResult::Handled(Err(err)),
-        };
-    phases.push(compare_phase);
+    let compare_started = Instant::now();
+    let already_current = system_is_active(&system_config);
+    phases.push(ok_phase(
+        "profile-compare",
+        compare_started.elapsed().as_millis(),
+    ));
 
-    if !force_activation && current_system.as_deref() == Some(system_config.as_str()) {
+    if !force_activation && already_current {
         phases.push(ok_phase("already-current", 0));
         return SplitDarwinResult::Handled(Ok((
             CapturedCommand::captured(0, String::new(), String::new()),
@@ -734,11 +742,14 @@ fn do_split_darwin_rebuild(
 
     let split_activation_needs_auth = split_activation_would_prompt(use_sudo);
     if split_activation_needs_auth
-        && let Some(rebuild_command) = legacy_darwin_rebuild_sudo_command(ctx.repo_root)
+        && let Some(rebuild_command) = legacy_darwin_rebuild_sudo_command(
+            &format!("{repo}#{host}"),
+            output_mode.build.log_format(),
+        )
     {
         Printer::detail("activation: using passwordless darwin-rebuild");
         return SplitDarwinResult::Fallback {
-            command: Some(rebuild_command.to_string()),
+            command: Some(rebuild_command),
             phases,
         };
     }
@@ -827,7 +838,7 @@ pub(super) fn split_nix_build_command_with_log_format(
 enum SplitDarwinResult {
     Handled(anyhow::Result<(CapturedCommand, Vec<TimingPhase>, RebuildOutcome)>),
     Fallback {
-        command: Option<String>,
+        command: Option<Vec<String>>,
         phases: Vec<TimingPhase>,
     },
 }
@@ -963,27 +974,16 @@ fn split_activation_would_prompt(use_sudo: bool) -> bool {
     use_sudo && !sudo_noninteractive_available()
 }
 
-fn legacy_darwin_rebuild_sudo_command(repo: &Path) -> Option<&'static str> {
+fn legacy_darwin_rebuild_sudo_command(
+    flake: &str,
+    log_format: NixLogFormat,
+) -> Option<Vec<String>> {
     [DARWIN_REBUILD, RUN_CURRENT_DARWIN_REBUILD]
         .into_iter()
-        .find(|command| legacy_darwin_rebuild_sudo_available(repo, command))
-}
-
-fn legacy_darwin_rebuild_sudo_available(repo: &Path, rebuild_command: &str) -> bool {
-    let repo = repo.display().to_string();
-    run_captured_command(
-        "sudo",
-        &["-n", "-l", rebuild_command, "switch", "--flake", &repo],
-        None,
-    )
-    .is_ok_and(|output| output.code == 0 && !sudo_password_required(&output))
-}
-
-pub(super) fn sudo_password_required(output: &crate::infra::shell::CapturedCommand) -> bool {
-    let combined = format!("{}\n{}", output.stdout, output.stderr).to_ascii_lowercase();
-    combined.contains("a password is required")
-        || combined.contains("a terminal is required to read the password")
-        || combined.contains("no tty present")
+        .map(|command| darwin_switch_args(command, flake, log_format))
+        .find(|command| {
+            sudo_allows_noninteractive(&command.iter().map(String::as_str).collect::<Vec<_>>())
+        })
 }
 
 fn authorize_split_sudo(
@@ -1022,21 +1022,14 @@ pub(super) fn system_profile_path() -> PathBuf {
         .map_or_else(|| PathBuf::from(SYSTEM_PROFILE), PathBuf::from)
 }
 
-fn current_system_profile_target() -> Option<String> {
-    let profile_path = system_profile_path();
-    fs::canonicalize(&profile_path)
-        .ok()
-        .map(|path| path.display().to_string())
-        .or_else(|| {
-            fs::read_link(&profile_path)
-                .ok()
-                .map(|path| path.display().to_string())
-        })
-        .or_else(|| {
-            profile_path
-                .to_str()
-                .and_then(|path| captured_trimmed("readlink", &[path], None))
-        })
+fn system_is_active(candidate: &str) -> bool {
+    let active = std::env::var_os(ACTIVE_SYSTEM_PATH_ENV)
+        .map_or_else(|| PathBuf::from(ACTIVE_SYSTEM), PathBuf::from);
+    [system_profile_path(), active].iter().all(|path| {
+        fs::canonicalize(path)
+            .or_else(|_| fs::read_link(path))
+            .is_ok_and(|target| target == Path::new(candidate))
+    })
 }
 
 fn captured_trimmed(program: &str, args: &[&str], cwd: Option<&Path>) -> Option<String> {
@@ -1142,7 +1135,6 @@ pub(super) fn build_rebuild_command_with_manifest(
         repo,
         args,
         manifest,
-        None,
         NixLogFormat::InternalJson,
     )
 }
@@ -1151,24 +1143,28 @@ fn build_rebuild_command_with_manifest_and_log_format(
     repo: &str,
     args: &RebuildArgs,
     manifest: Option<&Manifest>,
-    rebuild_command_override: Option<&str>,
     log_format: NixLogFormat,
 ) -> Vec<String> {
-    let rebuild_bin = rebuild_command_override
-        .or_else(|| manifest.map(|m| m.platform.rebuild_command.as_str()))
-        .unwrap_or(DARWIN_REBUILD);
+    let rebuild_bin = manifest.map_or(DARWIN_REBUILD, |m| m.platform.rebuild_command.as_str());
 
+    let mut rebuild_args = darwin_switch_args(rebuild_bin, repo, log_format);
+    if rebuild_supports_nix_log_format(rebuild_bin) {
+        rebuild_args.extend(without_log_format_args(&args.passthrough));
+    } else {
+        rebuild_args.extend(args.passthrough.iter().cloned());
+    }
+    rebuild_args
+}
+
+fn darwin_switch_args(rebuild_bin: &str, flake: &str, log_format: NixLogFormat) -> Vec<String> {
     let mut rebuild_args = vec![
         rebuild_bin.to_string(),
         "switch".to_string(),
         "--flake".to_string(),
-        repo.to_string(),
+        flake.to_string(),
     ];
     if rebuild_supports_nix_log_format(rebuild_bin) {
         rebuild_args.extend(["--log-format".to_string(), log_format.as_arg().to_string()]);
-        rebuild_args.extend(without_log_format_args(&args.passthrough));
-    } else {
-        rebuild_args.extend(args.passthrough.iter().cloned());
     }
     rebuild_args
 }

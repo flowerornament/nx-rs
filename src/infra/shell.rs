@@ -161,6 +161,22 @@ pub fn run_captured_command(
     run_captured_command_with_env(program, args, cwd, None)
 }
 
+pub(crate) fn sudo_allows_noninteractive(command: &[&str]) -> bool {
+    let args = ["-n", "-l"]
+        .into_iter()
+        .chain(command.iter().copied())
+        .collect::<Vec<_>>();
+    run_captured_command("sudo", &args, None)
+        .is_ok_and(|output| output.code == 0 && !sudo_password_required(&output))
+}
+
+pub(crate) fn sudo_password_required(output: &CapturedCommand) -> bool {
+    let combined = format!("{}\n{}", output.stdout, output.stderr).to_ascii_lowercase();
+    combined.contains("a password is required")
+        || combined.contains("a terminal is required to read the password")
+        || combined.contains("no tty present")
+}
+
 pub fn run_captured_command_with_env(
     program: &str,
     args: &[&str],
@@ -432,7 +448,7 @@ fn run_native_command_observing_stderr(
 
     let mut command = operation_command(program);
     configure_command(&mut command, &[], cwd, env);
-    let capture = if matches!(mode, NativeCommandMode::Nix) {
+    let mut capture = if matches!(mode, NativeCommandMode::Nix) {
         crate::infra::run_trace::Capture::configure(&mut command, program, args).unwrap_or_else(
             |error| {
                 eprintln!("Nx native Nix activity capture unavailable: {error}");
@@ -444,6 +460,20 @@ fn run_native_command_observing_stderr(
         command.args(args);
         None
     };
+    if capture.is_some() && program == "sudo" && args.first() == Some(&"-n") {
+        // An argument-scoped sudoers rule may permit the switch but reject
+        // the optional socket argument. Keep the probed invocation in that case.
+        let traced_args = command
+            .get_args()
+            .skip(1)
+            .map(std::ffi::OsStr::to_str)
+            .collect::<Option<Vec<_>>>();
+        if !traced_args.is_some_and(|args| sudo_allows_noninteractive(&args)) {
+            capture = None;
+            command = operation_command(program);
+            configure_command(&mut command, args, cwd, env);
+        }
+    }
     command
         .stdin(Stdio::inherit())
         .stderr(Stdio::from(pty.user));

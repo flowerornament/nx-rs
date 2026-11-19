@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- keeps the resolved Darwin host when using a passwordless fallback switch
+- retries activation when a previous attempt updated the profile but left the running system behind
 - keeps Nix activity timings in routine traces by omitting individual progress updates
 - honors explicit install sources even with a warm discovery cache and points `--source cask` users to `--cask`
 - excludes `packages/overlays/` from routing lint and discovery

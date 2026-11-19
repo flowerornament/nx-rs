@@ -506,6 +506,12 @@ PYLOCK
     fi
 
     if [ "${1:-}" = "-n" ] && [ "${2:-}" = "-l" ] && [ "${3:-}" = "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild" ]; then
+      if [ "$#" -ne 8 ] || [ "${4:-}" != "switch" ] || [ "${5:-}" != "--flake" ] ||
+         [ "${6:-}" != "$PWD#${NX_DARWIN_HOST:-test-host}" ] ||
+         [ "${7:-}" != "--log-format" ] || [ "${8:-}" != "internal-json" ]; then
+        echo "sudo: a password is required" >&2
+        exit 1
+      fi
       if [ "$mode" = "split_sudo_prompt_legacy_available" ] || [ "$mode" = "darwin_rebuild_cache_corruption" ]; then
         shift
         shift
@@ -522,6 +528,12 @@ PYLOCK
     fi
 
     if [ "${1:-}" = "-n" ] && [ "${2:-}" = "-l" ] && [ "${3:-}" = "/run/current-system/sw/bin/darwin-rebuild" ]; then
+      if [ "$#" -ne 8 ] || [ "${4:-}" != "switch" ] || [ "${5:-}" != "--flake" ] ||
+         [ "${6:-}" != "$PWD#${NX_DARWIN_HOST:-test-host}" ] ||
+         [ "${7:-}" != "--log-format" ] || [ "${8:-}" != "internal-json" ]; then
+        echo "sudo: a password is required" >&2
+        exit 1
+      fi
       if [ "$mode" = "split_sudo_prompt_run_current_legacy_available" ]; then
         shift
         shift
@@ -537,13 +549,8 @@ PYLOCK
       exit 1
     fi
 
-    if [ "${1:-}" = "-n" ] && [ "${2:-}" = "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild" ]; then
-      if [ "$mode" = "split_sudo_prompt_legacy_available" ]; then
-        echo "darwin-rebuild [--help] {edit | switch | activate | build | check}"
-        exit 0
-      fi
-      echo "sudo: a password is required" >&2
-      exit 1
+    if [ "${1:-}" = "-n" ]; then
+      shift
     fi
 
     if [ "${1:-}" = "/nix/var/nix/profiles/system/sw/bin/darwin-rebuild" ]; then

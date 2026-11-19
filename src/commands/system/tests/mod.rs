@@ -6,7 +6,7 @@ use tempfile::TempDir;
 use crate::cli::{RebuildArgs, UpgradeArgs, UpgradeFlowArgs, UpgradeSkipArgs};
 use crate::domain::upgrade::{InputChange, RootInputChanges, github_owner_repo};
 use crate::infra::nix_output::NixOutputMode;
-use crate::infra::shell::{CapturedCommand, run_captured_command};
+use crate::infra::shell::{CapturedCommand, run_captured_command, sudo_password_required};
 
 use super::cache_preflight::{
     CachePreflightMode, CachePreflightOutcome, DryRunPlan, cache_plan_from_metadata,
@@ -20,7 +20,7 @@ use super::fixed_output_hash::{
 use super::rebuild::{
     FailureOutputExcerpt, build_rebuild_command, build_rebuild_command_with_manifest,
     failure_output_excerpt, has_nix_extension, parse_system_config_path, should_use_split_darwin,
-    split_nix_build_command_with_log_format, sudo_password_required,
+    split_nix_build_command_with_log_format,
 };
 use super::undo::{git_diff_stat, git_modified_files};
 use super::upgrade::{

@@ -333,7 +333,9 @@ const SPLIT_REBUILD_LEGACY_SUDO_PROBE_CALL: ExpectedCall = ExpectedCall::new(
         DARWIN_REBUILD_CMD,
         "switch",
         "--flake",
-        REPO_ROOT_TOKEN,
+        "<REPO_ROOT>#test-host",
+        "--log-format",
+        "internal-json",
     ],
 );
 
@@ -346,7 +348,9 @@ const SPLIT_REBUILD_RUN_CURRENT_LEGACY_SUDO_PROBE_CALL: ExpectedCall = ExpectedC
         RUN_CURRENT_DARWIN_REBUILD_CMD,
         "switch",
         "--flake",
-        REPO_ROOT_TOKEN,
+        "<REPO_ROOT>#test-host",
+        "--log-format",
+        "internal-json",
     ],
 );
 
@@ -387,10 +391,11 @@ const DARWIN_REBUILD_SUDO_SWITCH_CALL: ExpectedCall = ExpectedCall::new(
     "sudo",
     EXPECTED_CWD_REPO_ROOT,
     &[
+        "-n",
         DARWIN_REBUILD_CMD,
         "switch",
         "--flake",
-        REPO_ROOT_TOKEN,
+        "<REPO_ROOT>#test-host",
         "--log-format",
         "internal-json",
     ],
@@ -402,7 +407,7 @@ const DARWIN_REBUILD_SWITCH_CALL: ExpectedCall = ExpectedCall::new(
     &[
         "switch",
         "--flake",
-        REPO_ROOT_TOKEN,
+        "<REPO_ROOT>#test-host",
         "--log-format",
         "internal-json",
     ],
@@ -450,10 +455,11 @@ fn split_rebuild_run_current_legacy_fallback_calls() -> Vec<ExpectedCall> {
         "sudo",
         EXPECTED_CWD_REPO_ROOT,
         &[
+            "-n",
             RUN_CURRENT_DARWIN_REBUILD_CMD,
             "switch",
             "--flake",
-            REPO_ROOT_TOKEN,
+            "<REPO_ROOT>#test-host",
             "--log-format",
             "internal-json",
         ],
@@ -464,7 +470,7 @@ fn split_rebuild_run_current_legacy_fallback_calls() -> Vec<ExpectedCall> {
         &[
             "switch",
             "--flake",
-            REPO_ROOT_TOKEN,
+            "<REPO_ROOT>#test-host",
             "--log-format",
             "internal-json",
         ],
@@ -894,6 +900,43 @@ fn split_darwin_rebuild_skips_activation_when_system_is_current() -> Result<(), 
 }
 
 #[test]
+fn split_darwin_rebuild_activates_when_only_the_profile_is_current() -> Result<(), Box<dyn Error>> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let result = run_split_rebuild(
+        &resolve_nx_bin(&root)?,
+        &root.join("tests/fixtures/system/repo_base"),
+        "split_rebuild_profile_ahead",
+        "split_rebuild_profile_ahead",
+        &[("NX_SPLIT_DARWIN", "1")],
+        &split_rebuild_calls(false),
+    )?;
+    assert!(result.stdout.contains("System rebuilt"));
+    assert!(!result.stdout.contains("System already current"));
+    Ok(())
+}
+
+#[test]
+fn split_darwin_rebuild_stops_when_build_output_cannot_be_identified() -> Result<(), Box<dyn Error>>
+{
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let result = run_split_rebuild_with_expected_exit(
+        &resolve_nx_bin(&root)?,
+        &root.join("tests/fixtures/system/repo_base"),
+        "split_rebuild_unidentified_output",
+        "split_build_invalid_json",
+        &[("NX_SPLIT_DARWIN", "1")],
+        SPLIT_REBUILD_BUILD_CALLS,
+        1,
+    )?;
+    assert!(
+        result
+            .stdout
+            .contains("Could not identify the built Darwin system")
+    );
+    Ok(())
+}
+
+#[test]
 fn split_darwin_rebuild_can_reapply_current_system() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let nx_bin = resolve_nx_bin(&workspace_root)?;
@@ -923,6 +966,7 @@ fn split_darwin_rebuild_can_reapply_current_system() -> Result<(), Box<dyn Error
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("NX_SPLIT_DARWIN", "1")
         .env("NX_SYSTEM_PROFILE_PATH", &profile_link)
+        .env("NX_ACTIVE_SYSTEM_PATH", &profile_link)
         .env("NX_SYSTEM_IT_LOG", &log_path)
         .env("NX_SYSTEM_IT_MODE", "success")
         .env(
@@ -1095,14 +1139,19 @@ fn split_darwin_rebuild_preserves_run_current_passwordless_legacy_sudo()
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");
     let nx_bin = resolve_nx_bin(&workspace_root)?;
-    let expected_calls = split_rebuild_run_current_legacy_fallback_calls();
+    let mut expected_calls = split_rebuild_run_current_legacy_fallback_calls();
+    expected_calls.retain(|call| !call.is("scutil", "--get"));
 
     let RunResult { stdout, stderr, .. } = run_split_rebuild(
         &nx_bin,
         &repo_base,
         "split_rebuild_run_current_passwordless_legacy_sudo",
         "split_sudo_prompt_run_current_legacy_available",
-        &[("NX_SPLIT_DARWIN", "1")],
+        &[
+            ("NX_SPLIT_DARWIN", "1"),
+            ("NX_DARWIN_HOST", "test-host"),
+            ("NX_SYSTEM_IT_DARWIN_HOST", "other-host"),
+        ],
         &expected_calls,
     )?;
 
@@ -1342,7 +1391,14 @@ fn run_split_rebuild_with_expected_exit(
 
     let home_dir = TempDir::new()?;
     let profile_link = home_dir.path().join("system-profile");
-    symlink("/nix/store/current-system", &profile_link)?;
+    let profile_target = if mode == "split_rebuild_profile_ahead" {
+        "/nix/store/new-system"
+    } else {
+        "/nix/store/current-system"
+    };
+    symlink(profile_target, &profile_link)?;
+    let active_link = home_dir.path().join("active-system");
+    symlink("/nix/store/current-system", &active_link)?;
     let mut command = Command::new(nx_bin);
     command
         .args(["--plain", "--minimal", "rebuild"])
@@ -1354,6 +1410,7 @@ fn run_split_rebuild_with_expected_exit(
         .env("TERM", "dumb")
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("NX_SYSTEM_PROFILE_PATH", &profile_link)
+        .env("NX_ACTIVE_SYSTEM_PATH", &active_link)
         .env("NX_SYSTEM_IT_LOG", &log_path)
         .env("NX_SYSTEM_IT_MODE", mode)
         .env(

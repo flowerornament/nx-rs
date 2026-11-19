@@ -65,6 +65,15 @@ fn routine_traces_are_unique_private_and_preserve_explicit_files() -> Result<(),
 
 #[test]
 fn size_limited_trace_warns_without_changing_upgrade_result() -> Result<(), Box<dyn Error>> {
+    traced_upgrade(4096, false)
+}
+
+#[test]
+fn routine_trace_keeps_activity_boundaries_after_a_progress_burst() -> Result<(), Box<dyn Error>> {
+    traced_upgrade(32 * 1024, true)
+}
+
+fn traced_upgrade(max_bytes: u64, emit_progress: bool) -> Result<(), Box<dyn Error>> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo = TempDir::new()?;
     let home = TempDir::new()?;
@@ -93,7 +102,11 @@ fn size_limited_trace_warns_without_changing_upgrade_result() -> Result<(), Box<
             home.path().join("absent-system-profile"),
         )
         .env("NX_TRACE_DIR", traces.path())
-        .env("NX_TRACE_MAX_BYTES", "4096")
+        .env("NX_TRACE_MAX_BYTES", max_bytes.to_string())
+        .env(
+            "NX_SYSTEM_IT_TRACE_PROGRESS",
+            if emit_progress { "1" } else { "0" },
+        )
         .env(
             "NX_SYSTEM_IT_LOG",
             repo.path().join(support_stubs::LOG_FILE_NAME),
@@ -108,13 +121,31 @@ fn size_limited_trace_warns_without_changing_upgrade_result() -> Result<(), Box<
         String::from_utf8_lossy(&output.stderr)
     );
     let trace = fs::read_dir(traces.path())?.next().unwrap()?.path();
-    assert!(fs::metadata(&trace)?.len() <= 4096);
+    assert!(fs::metadata(&trace)?.len() <= max_bytes);
     let contents = fs::read_to_string(&trace)?;
     let last: Value = serde_json::from_str(contents.lines().last().unwrap())?;
     assert_eq!(last["event"], "run-end");
     assert_eq!(last["code"], 0);
-    assert_eq!(last["data"]["complete"], false);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("incomplete"));
+    assert_eq!(last["data"]["complete"], emit_progress);
+    assert_ne!(
+        String::from_utf8_lossy(&output.stderr).contains("trace is incomplete"),
+        emit_progress,
+    );
+    if emit_progress {
+        let rows = contents
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<Vec<Value>, _>>()?;
+        assert!(
+            rows.iter()
+                .any(|row| row["data"]["name"] == "EvaluateFlakeDerivationOutput")
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row["data"]["action"] == "stop" && row["data"]["id"] == 3)
+        );
+        assert!(!rows.iter().any(|row| row["data"]["action"] == "result"));
+    }
     let timing = fs::read_to_string(home.path().join(".local/state/nx/timings.jsonl"))?;
     let record: Value = serde_json::from_str(timing.lines().last().unwrap())?;
     assert_eq!(record["trace_path"], trace.to_string_lossy().as_ref());

@@ -28,7 +28,7 @@ pub struct RoutingAudit {
 
 impl RoutingAudit {
     pub fn scan(repo_root: &Path) -> Self {
-        let files = collect_managed_nix_files(repo_root, NixFileScanPolicy::for_config_routing());
+        let files = collect_managed_nix_files(repo_root, NixFileScanPolicy::ConfigRouting);
         let mut issues = Vec::new();
         let mut purposes: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
         let mut keyword_matches: BTreeMap<String, KeywordMatch> = BTreeMap::new();

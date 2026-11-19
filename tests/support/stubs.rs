@@ -726,6 +726,11 @@ PYLOCK
       exit 1
     fi
     echo "building the system configuration..." >&2
+    if [ "${NX_SYSTEM_IT_TRACE_PROGRESS:-0}" = "1" ]; then
+      awk 'BEGIN { for (i = 0; i < 2000; i++) print "@nix {\"action\":\"result\",\"id\":1,\"type\":105,\"fields\":[1,16,0,0]}" }' >&2
+      echo '@nix {"action":"start","id":3,"type":10113,"name":"EvaluateFlakeDerivationOutput"}' >&2
+      echo '@nix {"action":"stop","id":3}' >&2
+    fi
     echo '@nix {"action":"start","id":1,"level":0,"parent":0,"text":"copying paths","type":103}' >&2
     echo '@nix {"action":"start","id":2,"level":0,"parent":0,"text":"building derivations","type":104}' >&2
     echo "setting up /etc..." >&2

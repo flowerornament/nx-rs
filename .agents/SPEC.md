@@ -209,7 +209,7 @@ Resolution order:
   - `system/`
   - `hosts/`
   - `packages/`
-- Skip `default.nix` and `common.nix` from the purpose-routed set and `all_files`.
+- Skip `default.nix`, `common.nix`, and the `packages/overlays/` subtree from purpose routing and its `all_files` set.
 - Read line 1 `# nx:` comment for routing purpose map.
 
 Note: the finder (Section 4) independently collects all `.nix` files in the same directories via glob, including `default.nix`. This means `default.nix` files are excluded from purpose routing but included in package discovery.
@@ -319,7 +319,7 @@ Returns `(matched_name, location)` or `(None, None)`.
 
 Package-source search order:
 
-1. forced source (`--source`: `nxs|unstable|nur|homebrew`)
+1. forced source (`--source`: `nxs|unstable|nur|homebrew`, with `brew` as an alias). Install uses `--cask` and `--mas` for explicit declarations. Forced and explicit requests bypass the shared discovery cache.
 2. explicit source shortcut:
   - `--cask` returns synthetic cask result
   - `--mas` returns synthetic mas result
@@ -835,7 +835,9 @@ Dry-run behavior:
 - `NX_TRACE_DIR` opts into unique private managed version-1 trace files.
   `NX_TRACE_PATH` takes precedence and remains exclusive. `NX_TRACE_KEEP`
   defaults to 20; `NX_TRACE_MAX_BYTES` defaults to 8 MiB and must be at least
-  4096 bytes. Size-limited traces end with `complete: false` and warn, without
+  4096 bytes. Managed traces keep Nix activity starts and stops and omit
+  intermediate Nix results. Explicit traces also retain allowed Nix results.
+  Traces that reach the size limit end with `complete: false` and warn, without
   changing command status. Retention only removes recognized managed regular
   files, preserves explicit files and active file locks, and prunes on completion.
   Active concurrent runs can temporarily exceed the retained file count.

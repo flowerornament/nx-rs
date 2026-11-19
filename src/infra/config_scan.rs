@@ -76,7 +76,7 @@ fn scan_packages_from_files(files: &[PathBuf]) -> anyhow::Result<PackageBuckets>
 /// Skips only `common.nix`. Unlike `ConfigFiles::discover`, this intentionally
 /// includes `default.nix` because it may contain launchd service definitions.
 pub fn collect_nix_files(repo_root: &Path) -> Vec<PathBuf> {
-    collect_managed_nix_files(repo_root, NixFileScanPolicy::for_package_scan())
+    collect_managed_nix_files(repo_root, NixFileScanPolicy::Packages)
 }
 
 #[derive(Default)]

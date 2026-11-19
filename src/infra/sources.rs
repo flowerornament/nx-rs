@@ -1005,7 +1005,9 @@ where
     }
 
     let outcome = search(name, prefs, flake_lock_path(repo_root).as_deref());
-    cache_search_results(cache, &outcome.results);
+    if uses_discovery_cache(prefs) {
+        cache_search_results(cache, &outcome.results);
+    }
 
     outcome
 }
@@ -1045,7 +1047,9 @@ where
     let mut fresh_results = Vec::new();
     for name in uncached_names {
         let outcome = fresh.remove(&name).unwrap_or_default();
-        fresh_results.extend(outcome.results.iter().cloned());
+        if uses_discovery_cache(prefs) {
+            fresh_results.extend(outcome.results.iter().cloned());
+        }
         outcomes.insert(
             name,
             CachedSearchOutcome {
@@ -1065,6 +1069,9 @@ fn cached_search_result(
     prefs: &SourcePreferences,
     cache: Option<&MultiSourceCache>,
 ) -> Option<CachedSearchOutcome> {
+    if !uses_discovery_cache(prefs) {
+        return None;
+    }
     let cached = cache?.get_all_with_prefs(name, prefs);
     (!cached.is_empty()).then_some(CachedSearchOutcome {
         outcome: SourceSearchOutcome {
@@ -1073,6 +1080,10 @@ fn cached_search_result(
         },
         cache_hit: true,
     })
+}
+
+fn uses_discovery_cache(prefs: &SourcePreferences) -> bool {
+    prefs.force_source.is_none() && matches!(prefs.explicit_target, ExplicitSourceTarget::Any)
 }
 
 fn flake_lock_path(repo_root: &Path) -> Option<std::path::PathBuf> {
@@ -1473,6 +1484,62 @@ mod tests {
                 .get("fd", PackageSource::Nxs)
                 .is_some(),
             "expected fresh miss results to be written back to cache"
+        );
+    }
+
+    #[test]
+    fn source_overrides_neither_read_nor_populate_the_discovery_cache() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cache =
+            Some(MultiSourceCache::load_with_cache_dir(tmp.path(), tmp.path()).unwrap());
+        let name = "example";
+        cache
+            .as_mut()
+            .unwrap()
+            .set_many(&[cache_result(name, PackageSource::Nxs, name)])
+            .unwrap();
+
+        for (prefs, source) in [
+            (
+                SourcePreferences {
+                    explicit_target: ExplicitSourceTarget::Cask,
+                    ..Default::default()
+                },
+                PackageSource::Cask,
+            ),
+            (
+                SourcePreferences {
+                    force_source: Some("homebrew".into()),
+                    ..Default::default()
+                },
+                PackageSource::Homebrew,
+            ),
+        ] {
+            let outcomes = cached_search_many_with_status_using(
+                &[name.into()],
+                &prefs,
+                tmp.path(),
+                &mut cache,
+                |_, _, _| {
+                    HashMap::from([(
+                        name.into(),
+                        SourceSearchOutcome {
+                            results: vec![cache_result(name, source, name)],
+                            unavailable_sources: Vec::new(),
+                        },
+                    )])
+                },
+            );
+            assert!(!outcomes[name].cache_hit);
+            assert_eq!(outcomes[name].outcome.results[0].source, source);
+            assert!(cache.as_ref().unwrap().get(name, source).is_none());
+        }
+        assert!(
+            cache
+                .as_ref()
+                .unwrap()
+                .get(name, PackageSource::Nxs)
+                .is_some()
         );
     }
 

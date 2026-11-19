@@ -604,6 +604,8 @@ For routine traces, set `programs.nx.tracing.directory` in Home Manager, or
 `NX_TRACE_DIR` to an absolute directory. Each command gets a unique private file.
 Managed traces retain the newest 20 files, with an 8 MiB limit per file; configure
 `tracing.maxFiles`/`tracing.maxBytes` or `NX_TRACE_KEEP`/`NX_TRACE_MAX_BYTES`.
+Managed traces keep Nix activity starts and stops. Set `NX_TRACE_PATH` for
+additional Nix result records such as progress counts.
 Active files and explicitly named traces are preserved. Limits warn and mark a
 trace incomplete without changing the command's result. `NX_TRACE_PATH` takes
 precedence and retains its exclusive-file behavior. Timing records link to their

@@ -59,6 +59,14 @@ fn emit_data(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(sink) = sink.as_mut() {
+        // Routine traces measure intervals. Nix can emit tens of thousands
+        // of progress results before the later phases have even started.
+        if sink.retention.is_some()
+            && event == "nix-activity"
+            && data.as_ref().is_some_and(|row| row["action"] == "result")
+        {
+            return;
+        }
         let row = Row {
             version: 1,
             event,

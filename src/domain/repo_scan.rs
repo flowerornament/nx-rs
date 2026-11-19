@@ -5,57 +5,11 @@ use walkdir::{DirEntry, WalkDir};
 const MANAGED_CONFIG_DIRS: [&str; 4] = ["home", "system", "hosts", "packages"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct NixFileScanPolicy {
-    include_hidden_paths: bool,
-    include_default_nix: bool,
-    include_common_nix: bool,
-}
-
-impl NixFileScanPolicy {
-    pub(crate) const fn all_files() -> Self {
-        Self {
-            include_hidden_paths: true,
-            include_default_nix: true,
-            include_common_nix: true,
-        }
-    }
-
-    pub(crate) const fn for_config_routing() -> Self {
-        Self {
-            include_hidden_paths: true,
-            include_default_nix: false,
-            include_common_nix: false,
-        }
-    }
-
-    pub(crate) const fn for_package_scan() -> Self {
-        Self {
-            include_hidden_paths: true,
-            include_default_nix: true,
-            include_common_nix: false,
-        }
-    }
-
-    pub(crate) const fn for_repo_manifest_scan() -> Self {
-        Self {
-            include_hidden_paths: false,
-            include_default_nix: true,
-            include_common_nix: true,
-        }
-    }
-
-    #[cfg(test)]
-    const fn new(
-        include_hidden_paths: bool,
-        include_default_nix: bool,
-        include_common_nix: bool,
-    ) -> Self {
-        Self {
-            include_hidden_paths,
-            include_default_nix,
-            include_common_nix,
-        }
-    }
+pub(crate) enum NixFileScanPolicy {
+    AllFiles,
+    ConfigRouting,
+    Packages,
+    RepoManifest,
 }
 
 pub(crate) fn collect_managed_nix_files(
@@ -106,10 +60,14 @@ fn extend_nix_files_from_root(
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or_default();
-        if !policy.include_default_nix && file_name == "default.nix" {
+        if policy == NixFileScanPolicy::ConfigRouting && file_name == "default.nix" {
             continue;
         }
-        if !policy.include_common_nix && file_name == "common.nix" {
+        if matches!(
+            policy,
+            NixFileScanPolicy::ConfigRouting | NixFileScanPolicy::Packages
+        ) && file_name == "common.nix"
+        {
             continue;
         }
 
@@ -118,7 +76,14 @@ fn extend_nix_files_from_root(
 }
 
 fn should_descend(entry: &DirEntry, repo_root: &Path, policy: NixFileScanPolicy) -> bool {
-    policy.include_hidden_paths || !is_hidden_path(entry.path(), repo_root)
+    match policy {
+        NixFileScanPolicy::ConfigRouting => !entry
+            .path()
+            .strip_prefix(repo_root)
+            .is_ok_and(|relative| relative == Path::new("packages/overlays")),
+        NixFileScanPolicy::RepoManifest => !is_hidden_path(entry.path(), repo_root),
+        NixFileScanPolicy::AllFiles | NixFileScanPolicy::Packages => true,
+    }
 }
 
 fn is_hidden_path(path: &Path, repo_root: &Path) -> bool {
@@ -146,21 +111,33 @@ mod tests {
         write_file(tmp.path(), "home/shell.nix");
         write_file(tmp.path(), "misc/ignored.nix");
 
-        let files = collect_managed_nix_files(tmp.path(), NixFileScanPolicy::for_package_scan());
+        let files = collect_managed_nix_files(tmp.path(), NixFileScanPolicy::Packages);
 
         assert_eq!(files, vec![tmp.path().join("home/shell.nix")]);
     }
 
     #[test]
-    fn config_routing_policy_skips_default_and_common() {
+    fn config_routing_policy_skips_default_common_and_package_overlays() {
         let tmp = TempDir::new().unwrap();
         write_file(tmp.path(), "home/default.nix");
         write_file(tmp.path(), "home/common.nix");
         write_file(tmp.path(), "home/shell.nix");
+        write_file(tmp.path(), "packages/overlays/nested/fix.nix");
+        write_file(tmp.path(), "packages/overlays-tools.nix");
 
-        let files = collect_managed_nix_files(tmp.path(), NixFileScanPolicy::for_config_routing());
+        let files = collect_managed_nix_files(tmp.path(), NixFileScanPolicy::ConfigRouting);
 
-        assert_eq!(files, vec![tmp.path().join("home/shell.nix")]);
+        assert_eq!(
+            files,
+            vec![
+                tmp.path().join("home/shell.nix"),
+                tmp.path().join("packages/overlays-tools.nix")
+            ]
+        );
+        assert!(
+            collect_managed_nix_files(tmp.path(), NixFileScanPolicy::Packages)
+                .contains(&tmp.path().join("packages/overlays/nested/fix.nix"))
+        );
     }
 
     #[test]
@@ -170,7 +147,7 @@ mod tests {
         write_file(tmp.path(), "home/common.nix");
         write_file(tmp.path(), "home/shell.nix");
 
-        let files = collect_managed_nix_files(tmp.path(), NixFileScanPolicy::for_package_scan());
+        let files = collect_managed_nix_files(tmp.path(), NixFileScanPolicy::Packages);
 
         assert_eq!(
             files,
@@ -187,8 +164,7 @@ mod tests {
         write_file(tmp.path(), "home/.private/secret.nix");
         write_file(tmp.path(), "home/visible.nix");
 
-        let files =
-            collect_managed_nix_files(tmp.path(), NixFileScanPolicy::new(false, true, true));
+        let files = collect_managed_nix_files(tmp.path(), NixFileScanPolicy::RepoManifest);
 
         assert_eq!(files, vec![tmp.path().join("home/visible.nix")]);
     }
@@ -199,7 +175,7 @@ mod tests {
         write_file(tmp.path(), "home/default.nix");
         write_file(tmp.path(), "home/common.nix");
 
-        let files = collect_managed_nix_files(tmp.path(), NixFileScanPolicy::all_files());
+        let files = collect_managed_nix_files(tmp.path(), NixFileScanPolicy::AllFiles);
 
         assert_eq!(
             files,
@@ -216,7 +192,7 @@ mod tests {
         write_file(tmp.path(), "flake.nix");
         write_file(tmp.path(), "modules/cli.nix");
 
-        let files = collect_repo_nix_files(tmp.path(), NixFileScanPolicy::for_repo_manifest_scan());
+        let files = collect_repo_nix_files(tmp.path(), NixFileScanPolicy::RepoManifest);
 
         assert_eq!(
             files,
@@ -233,7 +209,7 @@ mod tests {
         write_file(tmp.path(), ".git/hooks/pre-commit.nix");
         write_file(tmp.path(), "visible.nix");
 
-        let files = collect_repo_nix_files(tmp.path(), NixFileScanPolicy::for_repo_manifest_scan());
+        let files = collect_repo_nix_files(tmp.path(), NixFileScanPolicy::RepoManifest);
 
         assert_eq!(files, vec![tmp.path().join("visible.nix")]);
     }

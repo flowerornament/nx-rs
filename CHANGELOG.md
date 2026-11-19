@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- keeps Nix activity timings in routine traces by omitting individual progress updates
+- honors explicit install sources even with a warm discovery cache and points `--source cask` users to `--cask`
+- excludes `packages/overlays/` from routing lint and discovery
+- builds edit prompts and captures repository diffs only when install or remove falls back to AI
+
 ## v1.5.50 - 2026-11-10
 
 - phrases upgrade elapsed time as `complete in` or `incomplete after`

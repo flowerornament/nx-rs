@@ -35,8 +35,7 @@ impl ConfigFiles {
     /// Silently skips files that can't be read.
     pub fn discover(repo_root: &Path) -> Self {
         let mut by_purpose = BTreeMap::new();
-        let all_files =
-            collect_managed_nix_files(repo_root, NixFileScanPolicy::for_config_routing());
+        let all_files = collect_managed_nix_files(repo_root, NixFileScanPolicy::ConfigRouting);
 
         for path in &all_files {
             if let Some(purpose) = read_nx_comment(path) {

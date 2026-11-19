@@ -11,9 +11,7 @@ use crate::commands::shared::{
 use crate::domain::manifest::{Manifest, SlotKind};
 use crate::domain::plan::EditSpec;
 use crate::domain::source::detect_language_package;
-use crate::infra::ai_engine::{
-    ClaudeCodeEngine, CommandOutcome, build_remove_prompt, run_edit_with_callback,
-};
+use crate::infra::ai_engine::{AiEngine, ClaudeCodeEngine, build_remove_prompt};
 use crate::infra::file_edit::{EditOutcome, remove_first_edit};
 use crate::infra::finder::find_package;
 use crate::infra::persistence::write_file_atomically;
@@ -105,13 +103,6 @@ fn remove_via_ai(
     args: &RemoveArgs,
     ctx: &AppContext,
 ) -> Result<(), i32> {
-    let rel_path = file_path
-        .strip_prefix(&ctx.repo_root)
-        .unwrap_or(file_path)
-        .to_string_lossy()
-        .to_string();
-    let prompt = build_remove_prompt(package, &rel_path);
-
     if args.dry_run {
         Printer::detail(&format!("[DRY RUN] Would run AI to remove {package}"));
         ctx.printer.removal(&format!("Would remove {package}"));
@@ -126,44 +117,30 @@ fn remove_via_ai(
         }
     }
 
-    let before_diff = git_diff(&ctx.repo_root);
-
     Printer::detail(&format!("Analyzing removal of {package}"));
-
-    let engine = ClaudeCodeEngine::new(args.model.as_deref(), ctx.printer.style());
     let manifest = ctx.config_files.manifest();
-    let mut deterministic_edit = false;
-    let execution =
-        run_edit_with_callback(
-            &engine,
-            &prompt,
-            &ctx.repo_root,
-            || match try_deterministic_remove(package, file_path, manifest) {
-                Ok(Some(_)) => {
-                    deterministic_edit = true;
-                    Some(CommandOutcome {
-                        success: true,
-                        output: "deterministic removal applied".to_string(),
-                    })
-                }
-                Ok(None) => None,
-                Err(err) => Some(CommandOutcome {
-                    success: false,
-                    output: err.to_string(),
-                }),
-            },
-        );
-    let outcome = execution.outcome;
+    match try_deterministic_remove(package, file_path, manifest) {
+        Ok(Some(_)) => {
+            report_success(package, file_path, ctx);
+            return Ok(());
+        }
+        Ok(None) => {}
+        Err(err) => {
+            ctx.printer
+                .error(&format!("Failed to remove {package}: {err}"));
+            return Err(1);
+        }
+    }
 
+    let rel_path = file_path.strip_prefix(&ctx.repo_root).unwrap_or(file_path);
+    let prompt = build_remove_prompt(package, &rel_path.to_string_lossy());
+    let before_diff = git_diff(&ctx.repo_root);
+    let engine = ClaudeCodeEngine::new(args.model.as_deref(), ctx.printer.style());
+    let outcome = engine.run_edit(&prompt, &ctx.repo_root);
     if !outcome.success {
         ctx.printer
             .error(&format!("Failed to remove {package}: {}", outcome.output));
         return Err(1);
-    }
-
-    if deterministic_edit {
-        report_success(package, file_path, ctx);
-        return Ok(());
     }
 
     let after_diff = git_diff(&ctx.repo_root);

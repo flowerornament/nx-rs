@@ -85,7 +85,7 @@ fn detect_platform(repo_root: &Path) -> Option<PlatformConfig> {
 fn scan_repo_slots(repo_root: &Path) -> Vec<Slot> {
     let mut slots = Vec::new();
 
-    for nix_file in collect_repo_nix_files(repo_root, NixFileScanPolicy::for_repo_manifest_scan()) {
+    for nix_file in collect_repo_nix_files(repo_root, NixFileScanPolicy::RepoManifest) {
         let Ok(content) = fs::read_to_string(&nix_file) else {
             eprintln!(
                 "warning: could not read {}",
@@ -539,7 +539,7 @@ mod tests {
             r"{ pkgs, ... }: { home.packages = with pkgs; [ ripgrep ]; }",
         );
 
-        let files = collect_repo_nix_files(tmp.path(), NixFileScanPolicy::for_repo_manifest_scan());
+        let files = collect_repo_nix_files(tmp.path(), NixFileScanPolicy::RepoManifest);
         assert!(
             files
                 .iter()

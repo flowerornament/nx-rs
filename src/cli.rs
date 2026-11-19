@@ -435,8 +435,17 @@ pub struct PackageSourceArgs {
     pub bleeding_edge: bool,
     #[arg(long, help = "Include NUR in source selection")]
     pub nur: bool,
-    #[arg(long, help = "Pin source backend (for example: nxs, nur, homebrew)")]
+    #[arg(long, value_parser = parse_lookup_source, help = "Pin source backend (nxs, unstable, nur, homebrew)")]
     pub source: Option<String>,
+}
+
+fn parse_lookup_source(value: &str) -> Result<String, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "nxs" | "unstable" | "nur" | "homebrew" | "brew" => Ok(value.to_string()),
+        "cask" => Err("use `nx install --cask PACKAGE` to declare a cask, or `--source homebrew` to search Homebrew".into()),
+        "mas" => Err("use `nx install --mas APP_ID` to declare a Mac App Store app".into()),
+        _ => Err("expected nxs, unstable, nur, or homebrew (brew)".into()),
+    }
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -1825,5 +1834,15 @@ mod tests {
                 "unexpected short-flag set for spec block `{command}`"
             );
         }
+    }
+}
+#[test]
+fn lookup_source_rejects_unsupported_backends_before_discovery() {
+    for command in ["install", "search", "info"] {
+        let error =
+            Cli::try_parse_from(["nx", command, "example", "--source", "cask"]).unwrap_err();
+        assert!(error.to_string().contains("nx install --cask"));
+        assert!(Cli::try_parse_from(["nx", command, "example", "--source", "BrEw"]).is_ok());
+        assert!(Cli::try_parse_from(["nx", command, "example", "--source", "txpo"]).is_err());
     }
 }

@@ -16,8 +16,7 @@ use crate::domain::source::{
     is_tap_qualified,
 };
 use crate::infra::ai_engine::{
-    AiEngine, CommandOutcome, build_edit_prompt, build_routing_context, run_edit_with_callback,
-    select_engine,
+    AiEngine, CommandOutcome, build_edit_prompt, build_routing_context, select_engine,
 };
 use crate::infra::cache::MultiSourceCache;
 use crate::infra::file_edit::{
@@ -429,44 +428,21 @@ fn execute_edit(
     ctx: &AppContext,
     engine: &dyn AiEngine,
 ) -> bool {
-    let prompt = build_edit_prompt(plan);
-    let before_diff = git_diff(&ctx.repo_root);
-    let mut deterministic: Option<anyhow::Result<EditOutcome>> = None;
-
-    let execution = run_edit_with_callback(engine, &prompt, &ctx.repo_root, || {
-        match insert_edit(
-            &plan.target_file,
-            &plan.edit,
-            &plan.source_result.description,
-        ) {
-            Ok(outcome) => {
-                deterministic = Some(Ok(outcome));
-                Some(CommandOutcome {
-                    success: true,
-                    output: "deterministic edit applied".to_string(),
-                })
-            }
-            Err(err) if should_fallback_to_ai(engine, &err) => None,
-            Err(err) => {
-                let message = err.to_string();
-                deterministic = Some(Err(err));
-                Some(CommandOutcome {
-                    success: false,
-                    output: message,
-                })
-            }
-        }
-    });
-
-    if let Some(result) = deterministic {
-        return report_deterministic_edit(result, plan, rel_target, ctx);
+    match insert_edit(
+        &plan.target_file,
+        &plan.edit,
+        &plan.source_result.description,
+    ) {
+        Err(err) if should_fallback_to_ai(engine, &err) => {}
+        result => return report_deterministic_edit(result, plan, rel_target, ctx),
     }
 
-    if !execution.outcome.success {
-        ctx.printer.error(&format!(
-            "failed to edit {rel_target}: {}",
-            execution.outcome.output
-        ));
+    let prompt = build_edit_prompt(plan);
+    let before_diff = git_diff(&ctx.repo_root);
+    let outcome = engine.run_edit(&prompt, &ctx.repo_root);
+    if !outcome.success {
+        ctx.printer
+            .error(&format!("failed to edit {rel_target}: {}", outcome.output));
         return false;
     }
 

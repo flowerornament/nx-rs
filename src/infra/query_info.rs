@@ -285,7 +285,7 @@ fn collect_option_enabled_states(
 
     let mut enabled_by_path = HashMap::new();
 
-    collect_managed_nix_files(repo_root, NixFileScanPolicy::all_files())
+    collect_managed_nix_files(repo_root, NixFileScanPolicy::AllFiles)
         .into_iter()
         .filter_map(|nix_file| fs::read_to_string(&nix_file).ok())
         .for_each(|content| {

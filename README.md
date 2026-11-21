@@ -34,8 +34,8 @@ want to target a different repo.
 Run `nx init` once to scan the repo and write `.nx/manifest.toml`. The manifest
 records the files `nx` should use for package lists, services, Homebrew
 manifests, rebuild behavior, and local package alias hints. Run
-`nx init --refresh` after moving files; refresh preserves hand-edited alias
-entries while filling in known defaults for newly discovered packages.
+`nx init --refresh` after moving files. Refresh preserves hand-edited aliases
+and keeps the install default when its slot still exists.
 
 Host maintenance commands under `nx generations` and `nx clean-caches` are
 intentionally host-scoped and can run from any directory.

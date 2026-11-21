@@ -510,6 +510,7 @@ Network behavior:
 - Timestamped history produces strong evidence and can mark packages `recent` or `old`; untimestamped history produces medium evidence but keeps status `unknown`.
 - Command evidence uses generic package-name forms plus `.nx/manifest.toml` `[aliases]` entries inverted from `alias = "package"` to package evidence aliases.
 - `nx init` seeds known alias hints for declared packages; `nx init --refresh` preserves existing aliases and fills missing generated defaults.
+- Refresh preserves slot annotations for matching file and attribute paths, then infers an install default if no surviving slot has one.
 - Does not store raw commands, send telemetry, or auto-remove packages.
 - `--since <DURATION>` accepts `d`, `w`, `mo`, and `y` units; default `90d`.
 - `--source` accepts `all`, `nix`, `homebrew`, `cask`, `mas`, and `service` aliases.

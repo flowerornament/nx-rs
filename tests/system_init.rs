@@ -204,6 +204,48 @@ fn init_refresh_is_idempotent() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn init_refresh_preserves_install_default_when_another_slot_grows() -> Result<(), Box<dyn Error>> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let nx = resolve_nx_bin(&root)?;
+    let repo = TempDir::new()?;
+    let home = TempDir::new()?;
+    let home_packages = repo.path().join("home.nix");
+    let system_packages = repo.path().join("system.nix");
+    fs::write(repo.path().join("flake.nix"), "{}")?;
+    fs::write(
+        &home_packages,
+        "{ home.packages = [\n  alpha\n  beta\n]; }\n",
+    )?;
+    fs::write(
+        &system_packages,
+        "{ environment.systemPackages = [ gamma ]; }",
+    )?;
+
+    let manifest = repo.path().join(".nx/manifest.toml");
+    assert!(
+        run_nx(&nx, repo.path(), home.path(), &["init"])
+            .status
+            .success()
+    );
+    let initial = fs::read_to_string(&manifest)?;
+    assert!(initial.contains(
+        "file = \"home.nix\"\nattr_path = \"home.packages\"\ndefault_for = [\"install\"]"
+    ));
+
+    fs::write(
+        system_packages,
+        "{ environment.systemPackages = [\n  gamma\n  delta\n  epsilon\n]; }\n",
+    )?;
+    assert!(
+        run_nx(&nx, repo.path(), home.path(), &["init", "--refresh"])
+            .status
+            .success()
+    );
+    assert_eq!(fs::read_to_string(manifest)?, initial);
+    Ok(())
+}
+
+#[test]
 fn init_refresh_migrates_legacy_darwin_rebuild_command() -> Result<(), Box<dyn Error>> {
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_base = workspace_root.join("tests/fixtures/system/repo_base");

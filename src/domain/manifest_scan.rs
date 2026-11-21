@@ -25,11 +25,10 @@ pub fn manifest_from_scan(
     repo_root: &Path,
     existing: Option<&Manifest>,
 ) -> Manifest {
-    mark_default_install_slot(&mut scanned.slots, repo_root);
-
     if let Some(existing) = existing {
         merge_user_annotations(&mut scanned.slots, &existing.slots);
     }
+    mark_default_install_slot(&mut scanned.slots, repo_root);
 
     let aliases = existing.map_or_else(HashMap::new, |m| m.aliases.clone());
     let overlays = existing.map_or_else(HashMap::new, |m| m.overlays.clone());
@@ -287,7 +286,9 @@ fn find_attrpath_value_recursive(
 fn mark_default_install_slot(slots: &mut [Slot], repo_root: &Path) {
     if slots
         .iter()
-        .any(|s| s.default_for.as_ref().is_some_and(|df| !df.is_empty()))
+        .filter_map(|s| s.default_for.as_ref())
+        .flatten()
+        .any(|purpose| purpose == "install")
     {
         return;
     }
@@ -299,7 +300,10 @@ fn mark_default_install_slot(slots: &mut [Slot], repo_root: &Path) {
         .max_by_key(|(_, s)| count_list_items(&repo_root.join(&s.file)));
 
     if let Some((idx, _)) = best {
-        slots[idx].default_for = Some(vec!["install".to_string()]);
+        slots[idx]
+            .default_for
+            .get_or_insert_default()
+            .push("install".to_string());
     }
 }
 

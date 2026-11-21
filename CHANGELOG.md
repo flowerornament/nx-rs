@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v1.5.52 - 2026-11-21
+
+- preserves the saved install target when refreshing a manifest, even if another package list grows larger
+
 ## v1.5.51 - 2026-11-18
 
 - keeps the resolved Darwin host when using a passwordless fallback switch
